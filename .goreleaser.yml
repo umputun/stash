@@ -1,0 +1,71 @@
+project_name: stash
+dist: .bin
+builds:
+  - id: stash
+    binary: "stash"
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: arm64
+    dir: app
+    ldflags: "-s -w -X main.revision={{.Tag}}-{{.ShortCommit}}-{{.CommitDate}}"
+
+archives:
+  - id: stash
+    name_template: >-
+      {{.ProjectName}}_
+      {{- .Tag}}_
+      {{- if eq .Os "darwin"}}macos
+      {{- else if eq .Os "windows"}}win
+      {{- else}}{{.Os}}{{end}}_
+      {{- if eq .Arch "amd64"}}x86_64
+      {{- else if eq .Arch "386"}}i386
+      {{- else}}{{.Arch}}{{end}}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+    rlcp: true
+
+brews:
+  - name: stash
+    repository:
+      owner: umputun
+      name: homebrew-apps
+      branch: master
+    commit_author:
+      name: umputun
+      email: umputun@gmail.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    homepage: "https://github.com/umputun/stash"
+    description: "Lightweight key-value configuration service for centralized config management"
+    license: "MIT"
+
+nfpms:
+  - id: stash
+    package_name: stash
+    file_name_template: "{{.ProjectName}}_{{.Tag}}_{{.Os}}_{{.Arch}}"
+    vendor: Umputun
+    homepage: https://github.com/umputun/stash
+    maintainer: Umputun <umputun@gmail.com>
+    description: Lightweight key-value configuration service
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    epoch: 1
+    release: 1

@@ -1,6 +1,6 @@
 # Stash
 
-Simple key-value configuration service. A minimal alternative to Consul KV or etcd for storing and retrieving configuration data.
+Lightweight key-value configuration service for centralized config management. Store application settings, feature flags, and shared configuration with a simple HTTP API and web UI. Good for microservices and containerized applications that need a straightforward way to manage configuration without complex infrastructure.
 
 ## Features
 
@@ -15,11 +15,37 @@ Simple key-value configuration service. A minimal alternative to Consul KV or et
 
 ## Installation
 
+### From GitHub Releases
+
+Download the latest release for your platform from the [releases page](https://github.com/umputun/stash/releases/latest).
+
+### Homebrew (macOS)
+
 ```bash
-go install github.com/umputun/stash@latest
+brew install umputun/apps/stash
 ```
 
-Or build from source:
+### Debian/Ubuntu (deb package)
+
+```bash
+wget https://github.com/umputun/stash/releases/latest/download/stash_<version>_linux_amd64.deb
+sudo dpkg -i stash_<version>_linux_amd64.deb
+```
+
+### RHEL/CentOS/Fedora (rpm package)
+
+```bash
+wget https://github.com/umputun/stash/releases/latest/download/stash_<version>_linux_amd64.rpm
+sudo rpm -i stash_<version>_linux_amd64.rpm
+```
+
+### Docker
+
+```bash
+docker pull ghcr.io/umputun/stash:latest
+```
+
+### Build from source
 
 ```bash
 make build
@@ -41,10 +67,10 @@ stash --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
 |--------|-------------|---------|-------------|
 | `-d, --db` | `STASH_DB` | `stash.db` | Database URL (SQLite file or postgres://...) |
 | `--server.address` | `STASH_SERVER_ADDRESS` | `:8484` | Server listen address |
-| `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5` | Read timeout in seconds |
+| `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5s` | Read timeout (duration format) |
 | `--auth.password-hash` | `STASH_AUTH_PASSWORD_HASH` | - | bcrypt hash for admin password (enables auth) |
 | `--auth.token` | `STASH_AUTH_AUTH_TOKEN` | - | API token with prefix permissions (repeatable) |
-| `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `1440` | Login session TTL in minutes |
+| `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL (duration format) |
 | `--dbg` | `DEBUG` | `false` | Debug mode |
 
 ### Database URLs
