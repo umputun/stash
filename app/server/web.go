@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,6 +33,7 @@ type templateData struct {
 	IsNew    bool
 	Theme    string
 	ViewMode string
+	SortMode string
 	Search   string
 	Error    string
 }
@@ -51,7 +53,8 @@ func templateFuncs() template.FuncMap {
 			}
 			return formatFloat(float64(size)/(1024*1024)) + " MB"
 		},
-		"urlEncode": url.PathEscape,
+		"urlEncode":     url.PathEscape,
+		"sortModeLabel": sortModeLabel,
 	}
 }
 
@@ -148,6 +151,55 @@ func getViewMode(r *http.Request) string {
 	return "grid"
 }
 
+// getSortMode reads sort mode from cookie, returns "updated", "key", "size", or "created".
+func getSortMode(r *http.Request) string {
+	cookie, err := r.Cookie("sort_mode")
+	if err != nil || cookie.Value == "" {
+		return "updated" // default to updated (newest first)
+	}
+	switch cookie.Value {
+	case "updated", "key", "size", "created":
+		return cookie.Value
+	}
+	return "updated"
+}
+
+// sortModeLabel returns human-readable label for sort mode.
+func sortModeLabel(mode string) string {
+	switch mode {
+	case "key":
+		return "Key"
+	case "size":
+		return "Size"
+	case "created":
+		return "Created"
+	default:
+		return "Updated"
+	}
+}
+
+// sortKeys sorts keys by the given mode.
+func sortKeys(keys []store.KeyInfo, mode string) {
+	switch mode {
+	case "key":
+		sort.Slice(keys, func(i, j int) bool {
+			return strings.ToLower(keys[i].Key) < strings.ToLower(keys[j].Key)
+		})
+	case "size":
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].Size > keys[j].Size // largest first
+		})
+	case "created":
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].CreatedAt.After(keys[j].CreatedAt) // newest first
+		})
+	default: // "updated"
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].UpdatedAt.After(keys[j].UpdatedAt) // newest first
+		})
+	}
+}
+
 // valueForDisplay converts a byte slice to display string.
 // Returns the string and whether it's binary (base64 encoded).
 func valueForDisplay(value []byte) (string, bool) {
@@ -194,10 +246,14 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sortMode := getSortMode(r)
+	sortKeys(keys, sortMode)
+
 	data := templateData{
 		Keys:     keys,
 		Theme:    getTheme(r),
 		ViewMode: getViewMode(r),
+		SortMode: sortMode,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {
@@ -231,11 +287,28 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// check if sort_mode was just set via Set-Cookie header (from toggle handler)
+	sortMode := getSortMode(r)
+	for _, c := range w.Header()["Set-Cookie"] {
+		switch {
+		case strings.Contains(c, "sort_mode=key"):
+			sortMode = "key"
+		case strings.Contains(c, "sort_mode=size"):
+			sortMode = "size"
+		case strings.Contains(c, "sort_mode=created"):
+			sortMode = "created"
+		case strings.Contains(c, "sort_mode=updated"):
+			sortMode = "updated"
+		}
+	}
+	sortKeys(keys, sortMode)
+
 	data := templateData{
 		Keys:     keys,
 		Search:   search,
 		Theme:    getTheme(r),
 		ViewMode: viewMode,
+		SortMode: sortMode,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "keys-table", data); err != nil {
@@ -424,5 +497,33 @@ func (s *Server) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// return updated keys table with new view mode
+	s.handleKeyList(w, r)
+}
+
+// handleSortToggle cycles through sort modes: updated -> key -> size -> created -> updated.
+func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
+	currentMode := getSortMode(r)
+	var newMode string
+	switch currentMode {
+	case "updated":
+		newMode = "key"
+	case "key":
+		newMode = "size"
+	case "size":
+		newMode = "created"
+	default:
+		newMode = "updated"
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sort_mode",
+		Value:    newMode,
+		Path:     "/",
+		MaxAge:   365 * 24 * 60 * 60, // 1 year
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// return updated keys table with new sort mode
 	s.handleKeyList(w, r)
 }

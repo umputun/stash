@@ -244,6 +244,8 @@ tr.clickable-row {
     right: 0;
     bottom: 0;
     background-color: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: none;
     align-items: center;
     justify-content: center;
@@ -476,4 +478,29 @@ tr.clickable-row {
     gap: 8px;
     margin-top: auto;
     padding-top: 12px;
+}
+
+/* Sort button */
+.sort-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text);
+}
+
+.sort-button:hover {
+    background: var(--color-surface-hover);
+    border-color: var(--color-primary);
+}
+
+.sort-button svg {
+    flex-shrink: 0;
 }

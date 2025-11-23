@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -76,8 +77,8 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}()
 
-	log.Printf("[INFO] starting server on %s", s.cfg.Address)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	log.Printf("[DEBUG] started server on %s", s.cfg.Address)
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
@@ -113,6 +114,7 @@ func (s *Server) routes() http.Handler {
 		web.HandleFunc("DELETE /keys/{key...}", s.handleKeyDelete)
 		web.HandleFunc("POST /theme", s.handleThemeToggle)
 		web.HandleFunc("POST /view-mode", s.handleViewModeToggle)
+		web.HandleFunc("POST /sort", s.handleSortToggle)
 	})
 
 	// kv API routes

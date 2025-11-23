@@ -61,11 +61,13 @@
 </table>
 {{end}}
 <span id="key-count" hx-swap-oob="innerHTML" style="display:none">{{len .Keys}} {{if eq (len .Keys) 1}}key{{else}}keys{{end}}{{if .Search}} matching "{{.Search}}"{{end}}</span>
+<span id="sort-label" hx-swap-oob="innerHTML" style="display:none">{{.SortMode | sortModeLabel}}</span>
 {{else if .Search}}
 <div class="empty-state">
     <p>No keys matching "{{.Search}}"</p>
 </div>
 <span id="key-count" hx-swap-oob="innerHTML" style="display:none">no keys matching "{{.Search}}"</span>
+<span id="sort-label" hx-swap-oob="innerHTML" style="display:none">{{.SortMode | sortModeLabel}}</span>
 {{else}}
 <div class="empty-state">
     <p>No keys stored yet</p>
@@ -77,5 +79,6 @@
     </button>
 </div>
 <span id="key-count" hx-swap-oob="innerHTML" style="display:none">no keys</span>
+<span id="sort-label" hx-swap-oob="innerHTML" style="display:none">{{.SortMode | sortModeLabel}}</span>
 {{end}}
 {{end}}
