@@ -29,9 +29,12 @@ type KVStore interface {
 
 // Config holds server configuration.
 type Config struct {
-	Address     string
-	ReadTimeout time.Duration
-	Version     string
+	Address      string
+	ReadTimeout  time.Duration
+	Version      string
+	PasswordHash string        // bcrypt hash for admin password (empty = auth disabled)
+	AuthTokens   []string      // API tokens in format "token:prefix:permissions"
+	LoginTTL     time.Duration // session duration
 }
 
 // Server represents the HTTP server.
@@ -40,6 +43,7 @@ type Server struct {
 	cfg     Config
 	version string
 	tmpl    *template.Template
+	auth    *Auth
 }
 
 // New creates a new Server instance.
@@ -48,11 +52,18 @@ func New(st KVStore, cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
+
+	auth, err := NewAuth(cfg.PasswordHash, cfg.AuthTokens, cfg.LoginTTL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize auth: %w", err)
+	}
+
 	return &Server{
 		store:   st,
 		cfg:     cfg,
 		version: cfg.Version,
 		tmpl:    tmpl,
+		auth:    auth,
 	}, nil
 }
 
@@ -88,7 +99,7 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) routes() http.Handler {
 	router := routegroup.New(http.NewServeMux())
 
-	// global middleware
+	// global middleware (applies to all routes)
 	router.Use(
 		rest.Recoverer(log.Default()),
 		rest.Throttle(1000),
@@ -99,26 +110,40 @@ func (s *Server) routes() http.Handler {
 		rest.Ping,
 	)
 
-	// static files
-	router.Handle("GET /static/", staticHandler())
+	// determine auth middleware for protected routes
+	sessionAuth, tokenAuth := NoopAuth, NoopAuth
+	if s.auth.Enabled() {
+		sessionAuth = s.auth.SessionAuth
+		tokenAuth = s.auth.TokenAuth
+	}
 
-	// web UI routes
-	router.HandleFunc("GET /{$}", s.handleIndex)
-	router.Mount("/web").Route(func(web *routegroup.Bundle) {
-		web.HandleFunc("GET /keys", s.handleKeyList)
-		web.HandleFunc("GET /keys/new", s.handleKeyNew)
-		web.HandleFunc("GET /keys/view/{key...}", s.handleKeyView)
-		web.HandleFunc("GET /keys/edit/{key...}", s.handleKeyEdit)
-		web.HandleFunc("POST /keys", s.handleKeyCreate)
-		web.HandleFunc("PUT /keys/{key...}", s.handleKeyUpdate)
-		web.HandleFunc("DELETE /keys/{key...}", s.handleKeyDelete)
-		web.HandleFunc("POST /theme", s.handleThemeToggle)
-		web.HandleFunc("POST /view-mode", s.handleViewModeToggle)
-		web.HandleFunc("POST /sort", s.handleSortToggle)
+	// public routes (no auth required)
+	router.Handle("GET /static/", staticHandler())
+	if s.auth.Enabled() {
+		router.HandleFunc("GET /login", s.handleLoginForm)
+		router.HandleFunc("POST /login", s.handleLogin)
+		router.HandleFunc("POST /logout", s.handleLogout)
+	}
+
+	// web UI routes (session auth)
+	router.Group().Route(func(web *routegroup.Bundle) {
+		web.Use(sessionAuth)
+		web.HandleFunc("GET /{$}", s.handleIndex)
+		web.HandleFunc("GET /web/keys", s.handleKeyList)
+		web.HandleFunc("GET /web/keys/new", s.handleKeyNew)
+		web.HandleFunc("GET /web/keys/view/{key...}", s.handleKeyView)
+		web.HandleFunc("GET /web/keys/edit/{key...}", s.handleKeyEdit)
+		web.HandleFunc("POST /web/keys", s.handleKeyCreate)
+		web.HandleFunc("PUT /web/keys/{key...}", s.handleKeyUpdate)
+		web.HandleFunc("DELETE /web/keys/{key...}", s.handleKeyDelete)
+		web.HandleFunc("POST /web/theme", s.handleThemeToggle)
+		web.HandleFunc("POST /web/view-mode", s.handleViewModeToggle)
+		web.HandleFunc("POST /web/sort", s.handleSortToggle)
 	})
 
-	// kv API routes
+	// kv API routes (token auth)
 	router.Mount("/kv").Route(func(kv *routegroup.Bundle) {
+		kv.Use(tokenAuth)
 		kv.HandleFunc("GET /{key...}", s.handleGet)
 		kv.HandleFunc("PUT /{key...}", s.handleSet)
 		kv.HandleFunc("DELETE /{key...}", s.handleDelete)

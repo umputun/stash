@@ -27,16 +27,17 @@ var templatesFS embed.FS
 
 // templateData holds data passed to templates.
 type templateData struct {
-	Keys     []store.KeyInfo
-	Key      string
-	Value    string
-	IsBinary bool
-	IsNew    bool
-	Theme    string
-	ViewMode string
-	SortMode string
-	Search   string
-	Error    string
+	Keys        []store.KeyInfo
+	Key         string
+	Value       string
+	IsBinary    bool
+	IsNew       bool
+	Theme       string
+	ViewMode    string
+	SortMode    string
+	Search      string
+	Error       string
+	AuthEnabled bool
 }
 
 // templateFuncs returns custom template functions.
@@ -96,6 +97,16 @@ func parseTemplates() (*template.Template, error) {
 	tmpl, err = tmpl.Parse(string(indexContent))
 	if err != nil {
 		return nil, fmt.Errorf("parse index.html: %w", err)
+	}
+
+	// parse login template
+	loginContent, err := templatesFS.ReadFile("templates/login.html")
+	if err != nil {
+		return nil, fmt.Errorf("read login.html: %w", err)
+	}
+	tmpl, err = tmpl.Parse(string(loginContent))
+	if err != nil {
+		return nil, fmt.Errorf("parse login.html: %w", err)
 	}
 
 	// parse partials
@@ -251,10 +262,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	sortKeys(keys, sortMode)
 
 	data := templateData{
-		Keys:     keys,
-		Theme:    getTheme(r),
-		ViewMode: getViewMode(r),
-		SortMode: sortMode,
+		Keys:        keys,
+		Theme:       getTheme(r),
+		ViewMode:    getViewMode(r),
+		SortMode:    sortMode,
+		AuthEnabled: s.auth.Enabled(),
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {
@@ -527,4 +539,111 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 
 	// return updated keys table with new sort mode
 	s.handleKeyList(w, r)
+}
+
+// handleLoginForm renders the login page.
+func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
+	data := templateData{
+		Theme: getTheme(r),
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
+		log.Printf("[ERROR] failed to execute login template: %v", err)
+	}
+}
+
+// handleLogin processes the login form submission.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	password := r.FormValue("password")
+	if password == "" {
+		s.renderLoginError(w, r, "Password is required")
+		return
+	}
+
+	if !s.auth.ValidatePassword(password) {
+		s.renderLoginError(w, r, "Invalid password")
+		return
+	}
+
+	// create session
+	token, err := s.auth.CreateSession()
+	if err != nil {
+		log.Printf("[ERROR] failed to create session: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// set cookie - use __Host- prefix for enhanced security over HTTPS
+	cookieName := "stash-auth"
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	if secure {
+		cookieName = "__Host-stash-auth"
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   24 * 60 * 60, // 24 hours
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   secure,
+	})
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleLogout logs the user out by clearing the session.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// invalidate session
+	for _, cookieName := range []string{"__Host-stash-auth", "stash-auth"} {
+		if cookie, err := r.Cookie(cookieName); err == nil {
+			s.auth.InvalidateSession(cookie.Value)
+		}
+	}
+
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+
+	// clear both cookies
+	http.SetCookie(w, &http.Cookie{
+		Name:     "stash-auth",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   secure,
+	})
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "__Host-stash-auth",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   true,
+	})
+
+	// tell HTMX to perform a full page refresh
+	w.Header().Set("HX-Refresh", "true")
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// renderLoginError renders the login page with an error message.
+func (s *Server) renderLoginError(w http.ResponseWriter, r *http.Request, errMsg string) {
+	data := templateData{
+		Theme: getTheme(r),
+		Error: errMsg,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	if err := s.tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
+		log.Printf("[ERROR] failed to execute login template: %v", err)
+	}
 }

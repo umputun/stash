@@ -1,0 +1,34 @@
+{{define "login.html"}}
+<!DOCTYPE html>
+<html lang="en" {{if .Theme}}data-theme="{{.Theme}}"{{end}}>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Stash</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="login-container">
+            <div class="login-box">
+                <h1>Stash</h1>
+                <p class="login-subtitle">Key-Value Store</p>
+
+                {{if .Error}}
+                <div class="error-message">{{.Error}}</div>
+                {{end}}
+
+                <form method="POST" action="/login" class="login-form">
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password"
+                               placeholder="Enter password" required autofocus>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Login</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{{end}}

@@ -10,8 +10,9 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `server.go` - Server struct, config, routes, graceful shutdown
   - `handlers.go` - HTTP handlers for KV API operations
   - `web.go` - Web UI handlers, templates, static file serving
+  - `auth.go` - Authentication: sessions, tokens, middleware, prefix-based ACL
   - `static/` - Embedded CSS, JS, HTMX library
-  - `templates/` - Embedded HTML templates (base, index, partials)
+  - `templates/` - Embedded HTML templates (base, index, login, partials)
   - `mocks/` - Generated mocks (moq)
 - **app/store/** - SQLite storage layer
   - `store.go` - Types (KeyInfo), errors
@@ -57,6 +58,14 @@ POST   /web/keys                 # create new key
 PUT    /web/keys/{key...}        # update key value
 DELETE /web/keys/{key...}        # delete key
 POST   /web/theme                # toggle theme (light/dark)
+```
+
+## Auth Routes (when enabled)
+
+```
+GET    /login                    # login form
+POST   /login                    # authenticate, set session cookie
+POST   /logout                   # clear session, redirect to login
 ```
 
 ## Development Notes

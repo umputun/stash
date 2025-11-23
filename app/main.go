@@ -26,6 +26,12 @@ var opts struct {
 		ReadTimeout int    `long:"read-timeout" env:"READ_TIMEOUT" default:"5" description:"read timeout in seconds"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
+	Auth struct {
+		PasswordHash string   `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for admin password (enables auth)"`
+		Tokens       []string `long:"token" env:"AUTH_TOKEN" env-delim:"," description:"API token with prefix permissions (token:prefix:rw)"`
+		LoginTTL     int      `long:"login-ttl" env:"LOGIN_TTL" default:"1440" description:"login session TTL in minutes"`
+	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
+
 	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
 	Version bool `long:"version" description:"show version and exit"`
 }
@@ -70,6 +76,9 @@ func main() {
 
 func run(ctx context.Context) error {
 	log.Printf("[INFO] starting stash server on %s", opts.Server.Address)
+	if opts.Auth.PasswordHash != "" {
+		log.Printf("[INFO] authentication enabled with %d API token(s)", len(opts.Auth.Tokens))
+	}
 
 	// initialize storage
 	kvStore, err := store.NewSQLite(opts.Store)
@@ -80,9 +89,12 @@ func run(ctx context.Context) error {
 
 	// initialize and start HTTP server
 	srv, err := server.New(kvStore, server.Config{
-		Address:     opts.Server.Address,
-		ReadTimeout: time.Duration(opts.Server.ReadTimeout) * time.Second,
-		Version:     revision,
+		Address:      opts.Server.Address,
+		ReadTimeout:  time.Duration(opts.Server.ReadTimeout) * time.Second,
+		Version:      revision,
+		PasswordHash: opts.Auth.PasswordHash,
+		AuthTokens:   opts.Auth.Tokens,
+		LoginTTL:     time.Duration(opts.Auth.LoginTTL) * time.Minute,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)

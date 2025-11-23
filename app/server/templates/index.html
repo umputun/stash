@@ -40,6 +40,13 @@
                 {{if eq .Theme "dark"}}☀{{else}}☾{{end}}
             </button>
         </form>
+        {{if .AuthEnabled}}
+        <form method="POST" action="/logout">
+            <button type="submit" class="btn-icon btn-logout" title="Logout">
+                ⏻
+            </button>
+        </form>
+        {{end}}
     </div>
 </div>
 
