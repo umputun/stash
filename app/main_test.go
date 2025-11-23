@@ -19,7 +19,6 @@ func TestIntegration(t *testing.T) {
 	opts.Store = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18484" // use non-standard port to avoid conflicts
 	opts.Server.ReadTimeout = 5
-	opts.Log.Enabled = false
 
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())

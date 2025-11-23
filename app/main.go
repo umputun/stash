@@ -25,11 +25,7 @@ var opts struct {
 		ReadTimeout int    `long:"read-timeout" env:"READ_TIMEOUT" default:"5" description:"read timeout in seconds"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
-	Log struct {
-		Enabled bool `long:"enabled" env:"ENABLED" description:"enable logging"`
-		Debug   bool `long:"debug" env:"DEBUG" description:"debug mode"`
-	} `group:"log" namespace:"log" env-namespace:"STASH_LOG"`
-
+	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
 	Version bool `long:"version" description:"show version and exit"`
 }
 
@@ -97,17 +93,10 @@ func run(ctx context.Context) error {
 }
 
 func setupLogs() io.Writer {
-	if !opts.Log.Enabled {
-		log.Setup(log.Out(io.Discard), log.Err(io.Discard))
-		return os.Stdout
-	}
-
 	log.Setup(log.Msec)
-
-	if opts.Log.Debug {
+	if opts.Debug {
 		log.Setup(log.Debug, log.CallerFunc, log.CallerPkg, log.CallerFile)
 	}
-
 	return os.Stdout
 }
 
