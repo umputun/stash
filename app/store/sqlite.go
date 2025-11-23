@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -66,7 +67,7 @@ func (s *SQLite) Get(key string) ([]byte, error) {
 
 	var value []byte
 	err := s.db.Get(&value, "SELECT value FROM kv WHERE key = ?", key)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {

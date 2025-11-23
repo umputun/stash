@@ -3,6 +3,7 @@ package server
 import (
 	"embed"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -332,7 +333,7 @@ func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	value, err := s.store.Get(key)
 	if err != nil {
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
 		}
@@ -359,7 +360,7 @@ func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	value, err := s.store.Get(key)
 	if err != nil {
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
 		}
@@ -444,7 +445,7 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	if err := s.store.Delete(key); err != nil {
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
 		}

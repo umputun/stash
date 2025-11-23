@@ -20,6 +20,9 @@ linters:
     - nestif
     - testifylint
     - wrapcheck
+    - errorlint
+    - bodyclose
+    - godoclint
   settings:
     dupl:
       threshold: 100
