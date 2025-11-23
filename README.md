@@ -4,10 +4,10 @@ Simple key-value configuration service. A minimal alternative to Consul KV or et
 
 ## Features
 
-- HTTP API for key-value operations
-- File-based persistent storage
-- TTL caching support
-- Hierarchical keys (e.g., `app/config/database`)
+- HTTP API for key-value operations (GET, PUT, DELETE)
+- SQLite-based persistent storage
+- Hierarchical keys with slashes (e.g., `app/config/database`)
+- Binary-safe values
 
 ## Installation
 
@@ -15,10 +15,10 @@ Simple key-value configuration service. A minimal alternative to Consul KV or et
 go install github.com/umputun/stash@latest
 ```
 
-Or with Docker:
+Or build from source:
 
 ```bash
-docker pull ghcr.io/umputun/stash:latest
+make build
 ```
 
 ## Usage
@@ -31,34 +31,60 @@ stash --store=/path/to/stash.db --server.address=:8484 --log.enabled
 
 | Option | Environment | Default | Description |
 |--------|-------------|---------|-------------|
-| `-s, --store` | `STASH_STORE` | `stash.db` | Path to storage file |
+| `-s, --store` | `STASH_STORE` | `stash.db` | Path to SQLite database file |
 | `--server.address` | `STASH_SERVER_ADDRESS` | `:8484` | Server listen address |
+| `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5` | Read timeout in seconds |
 | `--log.enabled` | `STASH_LOG_ENABLED` | `false` | Enable logging |
 | `--log.debug` | `STASH_LOG_DEBUG` | `false` | Debug mode |
 
 ## API
 
 ### Get value
+
+```bash
+curl http://localhost:8484/kv/mykey
 ```
-GET /kv/{key}
-```
+
+Returns the raw value with status 200, or 404 if key not found.
 
 ### Set value
-```
-PUT /kv/{key}
-Content-Type: application/json
 
-{"value": ...}
+```bash
+curl -X PUT -d 'my value' http://localhost:8484/kv/mykey
 ```
 
-### List keys
-```
-GET /kv?prefix={prefix}
-```
+Body contains the raw value. Returns 200 on success.
 
 ### Delete key
+
+```bash
+curl -X DELETE http://localhost:8484/kv/mykey
 ```
-DELETE /kv/{key}
+
+Returns 204 on success, or 404 if key not found.
+
+### Health check
+
+```bash
+curl http://localhost:8484/ping
+```
+
+Returns `pong` with status 200.
+
+## Examples
+
+```bash
+# set a simple value
+curl -X PUT -d 'production' http://localhost:8484/kv/app/env
+
+# set JSON configuration
+curl -X PUT -d '{"host":"db.example.com","port":5432}' http://localhost:8484/kv/app/config/database
+
+# get the value
+curl http://localhost:8484/kv/app/config/database
+
+# delete a key
+curl -X DELETE http://localhost:8484/kv/app/env
 ```
 
 ## Docker

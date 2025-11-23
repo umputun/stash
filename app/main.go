@@ -8,9 +8,13 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/umputun/go-flags"
+
+	"github.com/umputun/stash/app/server"
+	"github.com/umputun/stash/app/store"
 )
 
 var opts struct {
@@ -66,15 +70,26 @@ func main() {
 	}
 }
 
-func run(ctx context.Context) error { //nolint:unparam // will return errors when implemented
+func run(ctx context.Context) error {
 	log.Printf("[INFO] starting stash server on %s", opts.Server.Address)
 
-	// TODO: initialize storage
-	// TODO: initialize HTTP server
-	// TODO: start server
+	// initialize storage
+	kvStore, err := store.NewSQLite(opts.Store)
+	if err != nil {
+		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+	defer kvStore.Close()
 
-	<-ctx.Done()
-	log.Printf("[INFO] shutting down")
+	// initialize and start HTTP server
+	srv := server.New(kvStore, server.Config{
+		Address:     opts.Server.Address,
+		ReadTimeout: time.Duration(opts.Server.ReadTimeout) * time.Second,
+		Version:     revision,
+	})
+
+	if err := srv.Run(ctx); err != nil {
+		return fmt.Errorf("server failed: %w", err)
+	}
 	return nil
 }
 
