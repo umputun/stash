@@ -12,7 +12,7 @@ import (
 	"time"
 
 	log "github.com/go-pkgz/lgr"
-	"github.com/umputun/go-flags"
+	"github.com/jessevdk/go-flags"
 
 	"github.com/umputun/stash/app/server"
 	"github.com/umputun/stash/app/store"
