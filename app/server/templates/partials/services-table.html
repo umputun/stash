@@ -1,0 +1,51 @@
+{{define "services-table"}}
+{{if .Services}}
+<table>
+    <thead>
+        <tr>
+            <th>Service</th>
+            <th>Instances</th>
+            <th>Healthy</th>
+            <th>Status</th>
+            <th class="actions-cell">Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Services}}
+        <tr class="clickable-row"
+            hx-get="/web/services/{{.Name}}"
+            hx-target="#modal-content"
+            hx-swap="innerHTML"
+            hx-trigger="click target:td:not(.actions-cell)">
+            <td class="key-cell">{{.Name}}</td>
+            <td class="size-cell">{{.Instances}}</td>
+            <td class="size-cell">{{.Healthy}}</td>
+            <td class="status-cell">
+                {{if eq .Healthy .Instances}}
+                <span class="health-status health-healthy" title="All instances healthy">●</span>
+                {{else if eq .Healthy 0}}
+                <span class="health-status health-critical" title="No healthy instances">●</span>
+                {{else}}
+                <span class="health-status health-warning" title="Some instances unhealthy">●</span>
+                {{end}}
+            </td>
+            <td class="actions-cell">
+                <button class="btn btn-secondary btn-small"
+                        hx-get="/web/services/{{.Name}}"
+                        hx-target="#modal-content"
+                        hx-swap="innerHTML">Details</button>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+<span id="service-count" hx-swap-oob="innerHTML" style="display:none">{{len .Services}} {{if eq (len .Services) 1}}service{{else}}services{{end}}</span>
+{{else}}
+<div class="empty-state">
+    <p>No services registered</p>
+    <p class="hint">Services can be registered via the API:</p>
+    <code>curl -X PUT -d '{"address":"10.0.0.1","port":8080}' http://localhost:8484/service/my-service</code>
+</div>
+<span id="service-count" hx-swap-oob="innerHTML" style="display:none">no services</span>
+{{end}}
+{{end}}

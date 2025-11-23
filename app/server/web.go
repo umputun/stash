@@ -38,6 +38,11 @@ type templateData struct {
 	Search      string
 	Error       string
 	AuthEnabled bool
+
+	// services data
+	Services         []store.ServiceSummary
+	ServiceInstances []store.ServiceInstance
+	ServiceName      string
 }
 
 // templateFuncs returns custom template functions.
@@ -109,11 +114,23 @@ func parseTemplates() (*template.Template, error) {
 		return nil, fmt.Errorf("parse login.html: %w", err)
 	}
 
+	// parse services template
+	servicesContent, err := templatesFS.ReadFile("templates/services.html")
+	if err != nil {
+		return nil, fmt.Errorf("read services.html: %w", err)
+	}
+	tmpl, err = tmpl.Parse(string(servicesContent))
+	if err != nil {
+		return nil, fmt.Errorf("parse services.html: %w", err)
+	}
+
 	// parse partials
 	partials := []string{
 		"templates/partials/keys-table.html",
 		"templates/partials/view.html",
 		"templates/partials/form.html",
+		"templates/partials/services-table.html",
+		"templates/partials/service-detail.html",
 	}
 	for _, p := range partials {
 		content, err := templatesFS.ReadFile(p)
@@ -539,6 +556,116 @@ func (s *Server) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 
 	// return updated keys table with new sort mode
 	s.handleKeyList(w, r)
+}
+
+// handleServicesPage renders the services page.
+func (s *Server) handleServicesPage(w http.ResponseWriter, r *http.Request) {
+	if s.svcStore == nil {
+		http.Error(w, "service discovery not available", http.StatusNotImplemented)
+		return
+	}
+
+	summaries, err := s.svcStore.ListServicesSummary()
+	if err != nil {
+		log.Printf("[ERROR] failed to list services: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	data := templateData{
+		Services:    summaries,
+		Theme:       getTheme(r),
+		AuthEnabled: s.auth.Enabled(),
+	}
+
+	if err := s.tmpl.ExecuteTemplate(w, "services.html", data); err != nil {
+		log.Printf("[ERROR] failed to execute services template: %v", err)
+	}
+}
+
+// handleServicesList renders the services table partial (for HTMX).
+func (s *Server) handleServicesList(w http.ResponseWriter, r *http.Request) {
+	if s.svcStore == nil {
+		http.Error(w, "service discovery not available", http.StatusNotImplemented)
+		return
+	}
+
+	summaries, err := s.svcStore.ListServicesSummary()
+	if err != nil {
+		log.Printf("[ERROR] failed to list services: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	data := templateData{
+		Services: summaries,
+		Theme:    getTheme(r),
+	}
+
+	if err := s.tmpl.ExecuteTemplate(w, "services-table", data); err != nil {
+		log.Printf("[ERROR] failed to execute template: %v", err)
+	}
+}
+
+// handleServiceDetail renders service instances for a given service name.
+func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
+	if s.svcStore == nil {
+		http.Error(w, "service discovery not available", http.StatusNotImplemented)
+		return
+	}
+
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+
+	// show all instances, not just healthy
+	instances, err := s.svcStore.GetServices(name, false)
+	if err != nil {
+		log.Printf("[ERROR] failed to get service instances: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	data := templateData{
+		ServiceName:      name,
+		ServiceInstances: instances,
+		Theme:            getTheme(r),
+	}
+
+	if err := s.tmpl.ExecuteTemplate(w, "service-detail", data); err != nil {
+		log.Printf("[ERROR] failed to execute template: %v", err)
+	}
+}
+
+// handleServiceDeregisterWeb deregisters a service instance from the web UI.
+func (s *Server) handleServiceDeregisterWeb(w http.ResponseWriter, r *http.Request) {
+	if s.svcStore == nil {
+		http.Error(w, "service discovery not available", http.StatusNotImplemented)
+		return
+	}
+
+	name := r.PathValue("name")
+	id := r.PathValue("id")
+
+	if name == "" || id == "" {
+		http.Error(w, "service name and id required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.svcStore.DeregisterService(name, id); err != nil {
+		if errors.Is(err, store.ErrServiceNotFound) {
+			http.Error(w, "service not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("[ERROR] failed to deregister service: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// return updated services list
+	s.handleServicesList(w, r)
 }
 
 // handleLoginForm renders the login page.

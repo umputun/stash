@@ -324,3 +324,217 @@ func TestAdoptQuery(t *testing.T) {
 	assert.Equal(t, "SELECT * FROM kv WHERE key = $1", pgStore.adoptQuery("SELECT * FROM kv WHERE key = ?"))
 	assert.Equal(t, "INSERT INTO kv VALUES ($1, $2, $3)", pgStore.adoptQuery("INSERT INTO kv VALUES (?, ?, ?)"))
 }
+
+// Service Discovery Tests
+
+func TestStore_RegisterService(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	t.Run("register new service", func(t *testing.T) {
+		svc := ServiceInstance{
+			ID:        "svc-1",
+			Name:      "api",
+			Address:   "10.0.0.1",
+			Port:      8080,
+			Tags:      []string{"primary", "zone-a"},
+			CheckType: HealthCheckTTL,
+			TTL:       30,
+		}
+		err := store.RegisterService(svc)
+		require.NoError(t, err)
+
+		// verify service exists
+		services, err := store.GetServices("api", false)
+		require.NoError(t, err)
+		require.Len(t, services, 1)
+		assert.Equal(t, "svc-1", services[0].ID)
+		assert.Equal(t, "10.0.0.1", services[0].Address)
+		assert.Equal(t, 8080, services[0].Port)
+		assert.Equal(t, []string{"primary", "zone-a"}, services[0].Tags)
+		assert.True(t, services[0].Healthy)
+	})
+
+	t.Run("update existing service", func(t *testing.T) {
+		svc := ServiceInstance{
+			ID:      "svc-1",
+			Name:    "api",
+			Address: "10.0.0.2", // changed
+			Port:    9090,       // changed
+		}
+		err := store.RegisterService(svc)
+		require.NoError(t, err)
+
+		services, err := store.GetServices("api", false)
+		require.NoError(t, err)
+		require.Len(t, services, 1)
+		assert.Equal(t, "10.0.0.2", services[0].Address)
+		assert.Equal(t, 9090, services[0].Port)
+	})
+}
+
+func TestStore_DeregisterService(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	svc := ServiceInstance{ID: "svc-del", Name: "api", Address: "10.0.0.1", Port: 8080}
+	require.NoError(t, store.RegisterService(svc))
+
+	t.Run("deregister existing service", func(t *testing.T) {
+		err := store.DeregisterService("api", "svc-del")
+		require.NoError(t, err)
+
+		services, err := store.GetServices("api", false)
+		require.NoError(t, err)
+		assert.Empty(t, services)
+	})
+
+	t.Run("deregister nonexistent service", func(t *testing.T) {
+		err := store.DeregisterService("api", "nonexistent")
+		require.ErrorIs(t, err, ErrServiceNotFound)
+	})
+}
+
+func TestStore_UpdateServiceHealth(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	svc := ServiceInstance{ID: "svc-health", Name: "api", Address: "10.0.0.1", Port: 8080, CheckType: HealthCheckTTL, TTL: 30}
+	require.NoError(t, store.RegisterService(svc))
+
+	t.Run("update health of existing service", func(t *testing.T) {
+		err := store.UpdateServiceHealth("api", "svc-health")
+		require.NoError(t, err)
+	})
+
+	t.Run("update health of nonexistent service", func(t *testing.T) {
+		err := store.UpdateServiceHealth("api", "nonexistent")
+		require.ErrorIs(t, err, ErrServiceNotFound)
+	})
+}
+
+func TestStore_SetServiceHealthStatus(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	svc := ServiceInstance{ID: "svc-status", Name: "api", Address: "10.0.0.1", Port: 8080}
+	require.NoError(t, store.RegisterService(svc))
+
+	t.Run("set service unhealthy", func(t *testing.T) {
+		err := store.SetServiceHealthStatus("api", "svc-status", false)
+		require.NoError(t, err)
+
+		services, err := store.GetServices("api", false)
+		require.NoError(t, err)
+		require.Len(t, services, 1)
+		assert.False(t, services[0].Healthy)
+	})
+
+	t.Run("set service healthy", func(t *testing.T) {
+		err := store.SetServiceHealthStatus("api", "svc-status", true)
+		require.NoError(t, err)
+
+		services, err := store.GetServices("api", false)
+		require.NoError(t, err)
+		require.Len(t, services, 1)
+		assert.True(t, services[0].Healthy)
+	})
+}
+
+func TestStore_GetServices(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// register multiple services
+	require.NoError(t, store.RegisterService(ServiceInstance{ID: "svc-1", Name: "api", Address: "10.0.0.1", Port: 8080}))
+	require.NoError(t, store.RegisterService(ServiceInstance{ID: "svc-2", Name: "api", Address: "10.0.0.2", Port: 8080}))
+	require.NoError(t, store.RegisterService(ServiceInstance{ID: "svc-3", Name: "db", Address: "10.0.0.3", Port: 5432}))
+
+	// mark one as unhealthy
+	require.NoError(t, store.SetServiceHealthStatus("api", "svc-2", false))
+
+	t.Run("get all services by name", func(t *testing.T) {
+		services, err := store.GetServices("api", false)
+		require.NoError(t, err)
+		assert.Len(t, services, 2)
+	})
+
+	t.Run("get only healthy services", func(t *testing.T) {
+		services, err := store.GetServices("api", true)
+		require.NoError(t, err)
+		assert.Len(t, services, 1)
+		assert.Equal(t, "svc-1", services[0].ID)
+	})
+
+	t.Run("get services for different name", func(t *testing.T) {
+		services, err := store.GetServices("db", false)
+		require.NoError(t, err)
+		assert.Len(t, services, 1)
+		assert.Equal(t, "svc-3", services[0].ID)
+	})
+}
+
+func TestStore_ListServicesSummary(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	require.NoError(t, store.RegisterService(ServiceInstance{ID: "api-1", Name: "api", Address: "10.0.0.1", Port: 8080}))
+	require.NoError(t, store.RegisterService(ServiceInstance{ID: "api-2", Name: "api", Address: "10.0.0.2", Port: 8080}))
+	require.NoError(t, store.RegisterService(ServiceInstance{ID: "db-1", Name: "db", Address: "10.0.0.3", Port: 5432}))
+	require.NoError(t, store.SetServiceHealthStatus("api", "api-2", false))
+
+	summaries, err := store.ListServicesSummary()
+	require.NoError(t, err)
+	require.Len(t, summaries, 2)
+
+	// find api summary
+	var apiSummary, dbSummary *ServiceSummary
+	for i := range summaries {
+		if summaries[i].Name == "api" {
+			apiSummary = &summaries[i]
+		}
+		if summaries[i].Name == "db" {
+			dbSummary = &summaries[i]
+		}
+	}
+
+	require.NotNil(t, apiSummary)
+	assert.Equal(t, 2, apiSummary.Instances)
+	assert.Equal(t, 1, apiSummary.Healthy)
+
+	require.NotNil(t, dbSummary)
+	assert.Equal(t, 1, dbSummary.Instances)
+	assert.Equal(t, 1, dbSummary.Healthy)
+}
+
+func TestStore_MarkExpiredTTLServices(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// register service with 1 second TTL
+	svc := ServiceInstance{ID: "svc-ttl", Name: "api", Address: "10.0.0.1", Port: 8080, CheckType: HealthCheckTTL, TTL: 1}
+	require.NoError(t, store.RegisterService(svc))
+
+	// should be healthy initially
+	services, err := store.GetServices("api", true)
+	require.NoError(t, err)
+	assert.Len(t, services, 1)
+
+	// wait for TTL to expire (2s to ensure clear second boundary crossing)
+	time.Sleep(2 * time.Second)
+
+	// mark expired services
+	count, err := store.MarkExpiredTTLServices()
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	// should now be unhealthy
+	services, err = store.GetServices("api", true)
+	require.NoError(t, err)
+	assert.Empty(t, services)
+
+	services, err = store.GetServices("api", false)
+	require.NoError(t, err)
+	assert.Len(t, services, 1)
+	assert.False(t, services[0].Healthy)
+}

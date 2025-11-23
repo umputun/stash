@@ -5,7 +5,8 @@ Simple key-value configuration service. A minimal alternative to Consul KV or et
 ## Features
 
 - HTTP API for key-value operations (GET, PUT, DELETE)
-- Web UI for managing keys (view, create, edit, delete)
+- Service discovery with TTL and HTTP health checks
+- Web UI for managing keys and viewing services
 - SQLite or PostgreSQL storage (auto-detected from URL)
 - Hierarchical keys with slashes (e.g., `app/config/database`)
 - Binary-safe values
@@ -45,6 +46,9 @@ stash --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
 | `--auth.password-hash` | `STASH_AUTH_PASSWORD_HASH` | - | bcrypt hash for admin password (enables auth) |
 | `--auth.token` | `STASH_AUTH_AUTH_TOKEN` | - | API token with prefix permissions (repeatable) |
 | `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `1440` | Login session TTL in minutes |
+| `--discovery.ttl-check-interval` | `STASH_DISCOVERY_TTL_CHECK_INTERVAL` | `5` | TTL expiration check interval in seconds |
+| `--discovery.http-check-interval` | `STASH_DISCOVERY_HTTP_CHECK_INTERVAL` | `10` | HTTP health check interval in seconds |
+| `--discovery.http-check-timeout` | `STASH_DISCOVERY_HTTP_CHECK_TIMEOUT` | `5` | HTTP health check timeout in seconds |
 | `--dbg` | `DEBUG` | `false` | Debug mode |
 
 ### Database URLs
@@ -148,6 +152,57 @@ curl http://localhost:8484/ping
 ```
 
 Returns `pong` with status 200.
+
+## Service Discovery
+
+Stash provides simple service discovery similar to Consul. Services register themselves, send heartbeats (TTL) or respond to HTTP health checks, and clients can discover healthy instances.
+
+### Register a service
+
+```bash
+# TTL-based health check (service sends heartbeats)
+curl -X PUT -H "Content-Type: application/json" \
+  -d '{"address":"10.0.0.5","port":8080,"tags":["primary"],"check":{"type":"ttl","ttl":30}}' \
+  http://localhost:8484/service/api
+# Response: {"id":"svc-abc123"}
+
+# HTTP-based health check (stash polls the endpoint)
+curl -X PUT -H "Content-Type: application/json" \
+  -d '{"address":"10.0.0.5","port":8080,"check":{"type":"http","url":"http://10.0.0.5:8080/health","interval":10}}' \
+  http://localhost:8484/service/api
+```
+
+### Send heartbeat (TTL)
+
+```bash
+curl -X PUT http://localhost:8484/service/api/svc-abc123/health
+```
+
+### Discover services
+
+```bash
+# Get all healthy instances
+curl http://localhost:8484/service/api
+
+# Filter by tags
+curl "http://localhost:8484/service/api?tag=primary"
+
+# Include unhealthy instances
+curl "http://localhost:8484/service/api?healthy=all"
+```
+
+### List all services
+
+```bash
+curl http://localhost:8484/services
+# Response: [{"name":"api","instances":3,"healthy":2},{"name":"db","instances":1,"healthy":1}]
+```
+
+### Deregister a service
+
+```bash
+curl -X DELETE http://localhost:8484/service/api/svc-abc123
+```
 
 ## Web UI
 

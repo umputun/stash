@@ -1,0 +1,78 @@
+{{define "services.html"}}
+<!DOCTYPE html>
+<html lang="en" {{if .Theme}}data-theme="{{.Theme}}"{{end}}>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stash - Services</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Stash</h1>
+            <div class="header-actions">
+                <a href="/" class="btn btn-secondary">Keys</a>
+                <a href="/web/services" class="btn btn-primary">Services</a>
+                <form hx-post="/web/theme" hx-swap="none">
+                    <button type="submit" class="btn-icon" title="Toggle theme">
+                        {{if eq .Theme "dark"}}☀{{else}}☾{{end}}
+                    </button>
+                </form>
+                {{if .AuthEnabled}}
+                <form method="POST" action="/logout">
+                    <button type="submit" class="btn-icon btn-logout" title="Logout">
+                        ⏻
+                    </button>
+                </form>
+                {{end}}
+            </div>
+        </div>
+
+        <div class="stats">
+            <span id="service-count">{{if eq (len .Services) 0}}no services{{else}}{{len .Services}} {{if eq (len .Services) 1}}service{{else}}services{{end}}{{end}}</span>
+        </div>
+
+        <div class="table-container">
+            <div id="services-table">
+                {{template "services-table" .}}
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail modal for service instances -->
+    <div id="main-modal" class="modal-backdrop">
+        <div class="modal">
+            <div id="modal-content">
+                <!-- Content loaded via HTMX -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm deregister modal -->
+    <div id="confirm-modal" class="modal-backdrop">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Confirm Deregister</h2>
+                <button class="modal-close" onclick="hideModal('confirm-modal')">&times;</button>
+            </div>
+            <div class="modal-body confirm-dialog">
+                <p>Are you sure you want to deregister this service instance?</p>
+                <p class="key-name" id="confirm-key"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="hideModal('confirm-modal')">Cancel</button>
+                <button id="confirm-delete-btn" class="btn btn-danger"
+                        hx-delete=""
+                        hx-target="#services-table"
+                        hx-swap="innerHTML"
+                        data-close-modal>Deregister</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

@@ -27,6 +27,19 @@ type KVStore interface {
 	List() ([]store.KeyInfo, error)
 }
 
+// ServiceStore defines the interface for service discovery operations.
+//
+//go:generate moq -out mocks/servicestore.go -pkg mocks -skip-ensure -fmt goimports . ServiceStore
+type ServiceStore interface {
+	RegisterService(svc store.ServiceInstance) error
+	DeregisterService(name, id string) error
+	UpdateServiceHealth(name, id string) error
+	SetServiceHealthStatus(name, id string, healthy bool) error
+	GetServices(name string, healthyOnly bool) ([]store.ServiceInstance, error)
+	GetServicesForHealthCheck(checkType store.HealthCheckType) ([]store.ServiceInstance, error)
+	ListServicesSummary() ([]store.ServiceSummary, error)
+}
+
 // Config holds server configuration.
 type Config struct {
 	Address      string
@@ -39,15 +52,16 @@ type Config struct {
 
 // Server represents the HTTP server.
 type Server struct {
-	store   KVStore
-	cfg     Config
-	version string
-	tmpl    *template.Template
-	auth    *Auth
+	store    KVStore
+	svcStore ServiceStore
+	cfg      Config
+	version  string
+	tmpl     *template.Template
+	auth     *Auth
 }
 
 // New creates a new Server instance.
-func New(st KVStore, cfg Config) (*Server, error) {
+func New(st KVStore, svcSt ServiceStore, cfg Config) (*Server, error) {
 	tmpl, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
@@ -59,11 +73,12 @@ func New(st KVStore, cfg Config) (*Server, error) {
 	}
 
 	return &Server{
-		store:   st,
-		cfg:     cfg,
-		version: cfg.Version,
-		tmpl:    tmpl,
-		auth:    auth,
+		store:    st,
+		svcStore: svcSt,
+		cfg:      cfg,
+		version:  cfg.Version,
+		tmpl:     tmpl,
+		auth:     auth,
 	}, nil
 }
 
@@ -139,6 +154,12 @@ func (s *Server) routes() http.Handler {
 		web.HandleFunc("POST /web/theme", s.handleThemeToggle)
 		web.HandleFunc("POST /web/view-mode", s.handleViewModeToggle)
 		web.HandleFunc("POST /web/sort", s.handleSortToggle)
+
+		// services web UI
+		web.HandleFunc("GET /web/services", s.handleServicesPage)
+		web.HandleFunc("GET /web/services/list", s.handleServicesList)
+		web.HandleFunc("GET /web/services/{name}", s.handleServiceDetail)
+		web.HandleFunc("DELETE /web/services/{name}/{id}", s.handleServiceDeregisterWeb)
 	})
 
 	// kv API routes (token auth)
@@ -147,6 +168,16 @@ func (s *Server) routes() http.Handler {
 		kv.HandleFunc("GET /{key...}", s.handleGet)
 		kv.HandleFunc("PUT /{key...}", s.handleSet)
 		kv.HandleFunc("DELETE /{key...}", s.handleDelete)
+	})
+
+	// service discovery API routes (token auth)
+	router.Group().Route(func(svc *routegroup.Bundle) {
+		svc.Use(tokenAuth)
+		svc.HandleFunc("PUT /service/{name}", s.handleServiceRegister)
+		svc.HandleFunc("DELETE /service/{name}/{id}", s.handleServiceDeregister)
+		svc.HandleFunc("PUT /service/{name}/{id}/health", s.handleServiceHealth)
+		svc.HandleFunc("GET /service/{name}", s.handleServiceDiscover)
+		svc.HandleFunc("GET /services", s.handleServiceList)
 	})
 
 	return router

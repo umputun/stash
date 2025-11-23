@@ -1,0 +1,56 @@
+{{define "service-detail"}}
+<div class="modal-header">
+    <h2>{{.ServiceName}}</h2>
+    <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
+</div>
+<div class="modal-body">
+    {{if .ServiceInstances}}
+    <table class="service-instances-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Address</th>
+                <th>Port</th>
+                <th>Tags</th>
+                <th>Health</th>
+                <th>Last Seen</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .ServiceInstances}}
+            <tr>
+                <td class="instance-id">{{.ID}}</td>
+                <td>{{.Address}}</td>
+                <td>{{.Port}}</td>
+                <td class="tags-cell">
+                    {{range .Tags}}
+                    <span class="tag">{{.}}</span>
+                    {{end}}
+                </td>
+                <td>
+                    {{if .Healthy}}
+                    <span class="health-status health-healthy" title="Healthy">●</span>
+                    {{else}}
+                    <span class="health-status health-critical" title="Unhealthy">●</span>
+                    {{end}}
+                </td>
+                <td class="date-cell">{{.LastSeen | formatTime}}</td>
+                <td>
+                    <button class="btn btn-danger btn-small"
+                            onclick="showConfirmDelete('{{.ID | js}}', '/web/services/{{$.ServiceName}}/{{.ID}}')">
+                        Deregister
+                    </button>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="empty-state">No instances registered for this service</p>
+    {{end}}
+</div>
+<div class="modal-footer">
+    <button class="btn btn-secondary" onclick="hideModal('main-modal')">Close</button>
+</div>
+{{end}}

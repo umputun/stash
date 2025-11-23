@@ -32,6 +32,12 @@ var opts struct {
 		LoginTTL     int      `long:"login-ttl" env:"LOGIN_TTL" default:"1440" description:"login session TTL in minutes"`
 	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
 
+	Discovery struct {
+		TTLCheckInterval  int `long:"ttl-check-interval" env:"TTL_CHECK_INTERVAL" default:"5" description:"TTL expiration check interval in seconds"`
+		HTTPCheckInterval int `long:"http-check-interval" env:"HTTP_CHECK_INTERVAL" default:"10" description:"HTTP health check interval in seconds"`
+		HTTPCheckTimeout  int `long:"http-check-timeout" env:"HTTP_CHECK_TIMEOUT" default:"5" description:"HTTP health check timeout in seconds"`
+	} `group:"discovery" namespace:"discovery" env-namespace:"STASH_DISCOVERY"`
+
 	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
 	Version bool `long:"version" description:"show version and exit"`
 }
@@ -88,7 +94,7 @@ func run(ctx context.Context) error {
 	defer kvStore.Close()
 
 	// initialize and start HTTP server
-	srv, err := server.New(kvStore, server.Config{
+	srv, err := server.New(kvStore, kvStore, server.Config{
 		Address:      opts.Server.Address,
 		ReadTimeout:  time.Duration(opts.Server.ReadTimeout) * time.Second,
 		Version:      revision,
@@ -99,6 +105,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
+
+	// start health checker for service discovery
+	healthChecker := server.NewHealthChecker(kvStore, server.HealthCheckerConfig{
+		TTLCheckInterval:  time.Duration(opts.Discovery.TTLCheckInterval) * time.Second,
+		HTTPCheckInterval: time.Duration(opts.Discovery.HTTPCheckInterval) * time.Second,
+		HTTPCheckTimeout:  time.Duration(opts.Discovery.HTTPCheckTimeout) * time.Second,
+	})
+	go healthChecker.Run(ctx)
 
 	if err := srv.Run(ctx); err != nil {
 		return fmt.Errorf("server failed: %w", err)

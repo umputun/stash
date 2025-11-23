@@ -9,13 +9,15 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **app/server/** - HTTP server with routegroup
   - `server.go` - Server struct, config, routes, graceful shutdown
   - `handlers.go` - HTTP handlers for KV API operations
+  - `discovery.go` - HTTP handlers for service discovery API
+  - `healthcheck.go` - Background health checker for TTL/HTTP checks
   - `web.go` - Web UI handlers, templates, static file serving
   - `auth.go` - Authentication: sessions, tokens, middleware, prefix-based ACL
   - `static/` - Embedded CSS, JS, HTMX library
-  - `templates/` - Embedded HTML templates (base, index, login, partials)
+  - `templates/` - Embedded HTML templates (base, index, login, services, partials)
   - `mocks/` - Generated mocks (moq)
 - **app/store/** - Database storage layer (SQLite/PostgreSQL)
-  - `store.go` - Types (KeyInfo), errors
+  - `store.go` - Types (KeyInfo, ServiceInstance, ServiceSummary), errors
   - `sqlite.go` - Unified Store with SQLite and PostgreSQL support
 
 ## Key Dependencies
@@ -37,6 +39,8 @@ make run      # run with logging enabled
 
 ## API
 
+### Key-Value
+
 ```
 GET    /kv/{key...}   # get value (returns raw body, 200/404)
 PUT    /kv/{key...}   # set value (body is value, returns 200)
@@ -45,6 +49,16 @@ GET    /ping          # health check (returns "pong")
 ```
 
 Keys can contain slashes (e.g., `app/config/database`).
+
+### Service Discovery
+
+```
+PUT    /service/{name}               # register service instance
+DELETE /service/{name}/{id}          # deregister service
+PUT    /service/{name}/{id}/health   # send TTL heartbeat
+GET    /service/{name}               # discover instances (?tag=, ?healthy=all)
+GET    /services                     # list all services summary
+```
 
 ## Web UI Routes
 
@@ -58,6 +72,15 @@ POST   /web/keys                 # create new key
 PUT    /web/keys/{key...}        # update key value
 DELETE /web/keys/{key...}        # delete key
 POST   /web/theme                # toggle theme (light/dark)
+```
+
+### Services Web UI
+
+```
+GET    /web/services             # services page
+GET    /web/services/list        # HTMX partial: services table
+GET    /web/services/{name}      # HTMX partial: service instances
+DELETE /web/services/{name}/{id} # deregister instance
 ```
 
 ## Auth Routes (when enabled)

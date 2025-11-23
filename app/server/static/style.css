@@ -570,3 +570,90 @@ tr.clickable-row {
     background-color: var(--color-danger);
     color: white;
 }
+
+/* Health status indicators */
+.health-status {
+    font-size: 16px;
+    display: inline-block;
+    width: 20px;
+    text-align: center;
+}
+
+.health-healthy {
+    color: var(--color-success);
+}
+
+.health-warning {
+    color: #f59e0b;
+}
+
+.health-critical {
+    color: var(--color-danger);
+}
+
+.status-cell {
+    text-align: center;
+    width: 60px;
+}
+
+/* Tags */
+.tags-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.tag {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    color: var(--color-text-muted);
+}
+
+/* Service instances table in modal */
+.service-instances-table {
+    font-size: 13px;
+}
+
+.service-instances-table th,
+.service-instances-table td {
+    padding: 8px 12px;
+}
+
+.instance-id {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Wider modal for service details */
+#main-modal .modal {
+    max-width: 900px;
+}
+
+/* Empty state hint */
+.empty-state .hint {
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.empty-state code {
+    display: block;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+    font-size: 12px;
+    text-align: left;
+    overflow-x: auto;
+    white-space: pre;
+}

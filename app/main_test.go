@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -21,6 +22,9 @@ func TestIntegration(t *testing.T) {
 	opts.Server.ReadTimeout = 5
 	opts.Auth.PasswordHash = ""
 	opts.Auth.Tokens = nil
+	opts.Discovery.TTLCheckInterval = 5
+	opts.Discovery.HTTPCheckInterval = 10
+	opts.Discovery.HTTPCheckTimeout = 5
 
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,6 +125,9 @@ func TestIntegration_WithAuth(t *testing.T) {
 	opts.Auth.PasswordHash = "$2a$10$kE1cSYqrktsr5iVW2pbB3OOmZAgGRggfXbvs/q0XUpyqvzLywEQ5y"
 	opts.Auth.Tokens = []string{"apikey:*:rw", "readonly:*:r", "scoped:app/*:rw"}
 	opts.Auth.LoginTTL = 60
+	opts.Discovery.TTLCheckInterval = 5
+	opts.Discovery.HTTPCheckInterval = 10
+	opts.Discovery.HTTPCheckTimeout = 5
 
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -307,6 +314,156 @@ func TestIntegration_WithAuth(t *testing.T) {
 	// reset auth opts for other tests
 	opts.Auth.PasswordHash = ""
 	opts.Auth.Tokens = nil
+}
+
+func TestIntegration_ServiceDiscovery(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18486"
+	opts.Server.ReadTimeout = 5
+	opts.Auth.PasswordHash = ""
+	opts.Auth.Tokens = nil
+	opts.Discovery.TTLCheckInterval = 5
+	opts.Discovery.HTTPCheckInterval = 10
+	opts.Discovery.HTTPCheckTimeout = 5
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- run(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18486/ping", 2*time.Second)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("register and discover service", func(t *testing.T) {
+		// register service
+		body := `{"address":"10.0.0.1","port":8080,"tags":["primary"],"check":{"type":"ttl","ttl":60}}`
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18486/service/api", bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// parse response to get ID
+		var regResp struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&regResp))
+		assert.Contains(t, regResp.ID, "svc-")
+
+		// discover service
+		resp, err = client.Get("http://127.0.0.1:18486/service/api")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var services []struct {
+			ID      string   `json:"id"`
+			Name    string   `json:"name"`
+			Address string   `json:"address"`
+			Port    int      `json:"port"`
+			Tags    []string `json:"tags"`
+			Healthy bool     `json:"healthy"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&services))
+		require.Len(t, services, 1)
+		assert.Equal(t, regResp.ID, services[0].ID)
+		assert.Equal(t, "api", services[0].Name)
+		assert.Equal(t, "10.0.0.1", services[0].Address)
+		assert.Equal(t, 8080, services[0].Port)
+		assert.True(t, services[0].Healthy)
+	})
+
+	t.Run("send heartbeat", func(t *testing.T) {
+		// first register a service
+		body := `{"id":"heartbeat-svc","address":"10.0.0.2","port":9090,"check":{"type":"ttl","ttl":60}}`
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18486/service/worker", bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		// send heartbeat
+		req, err = http.NewRequest(http.MethodPut, "http://127.0.0.1:18486/service/worker/heartbeat-svc/health", http.NoBody)
+		require.NoError(t, err)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("deregister service", func(t *testing.T) {
+		// register
+		body := `{"id":"to-delete","address":"10.0.0.3","port":7070}`
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18486/service/temp", bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		// deregister
+		req, err = http.NewRequest(http.MethodDelete, "http://127.0.0.1:18486/service/temp/to-delete", http.NoBody)
+		require.NoError(t, err)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+
+		// verify gone
+		resp, err = client.Get("http://127.0.0.1:18486/service/temp")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		var services []interface{}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&services))
+		assert.Empty(t, services)
+	})
+
+	t.Run("list all services", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18486/services")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var summaries []struct {
+			Name      string `json:"name"`
+			Instances int    `json:"instances"`
+			Healthy   int    `json:"healthy"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&summaries))
+		// should have api and worker from previous tests
+		assert.GreaterOrEqual(t, len(summaries), 2)
+	})
+
+	t.Run("filter by tags", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18486/service/api?tag=primary")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var services []struct {
+			Tags []string `json:"tags"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&services))
+		if len(services) > 0 {
+			assert.Contains(t, services[0].Tags, "primary")
+		}
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
 }
 
 func waitForServer(t *testing.T, url string, timeout time.Duration) {

@@ -150,7 +150,7 @@ func TestServer_Ping(t *testing.T) {
 
 func newTestServer(t *testing.T, st KVStore) *Server {
 	t.Helper()
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
+	srv, err := New(st, nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
 	require.NoError(t, err)
 	return srv
 }
