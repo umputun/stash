@@ -214,7 +214,11 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// check URL query first, then form values (for POST requests with hx-include)
 	search := r.URL.Query().Get("search")
+	if search == "" {
+		search = r.FormValue("search")
+	}
 	keys = filterKeys(keys, search)
 
 	// check if view_mode was just set via Set-Cookie header (from toggle handler)
