@@ -1,6 +1,6 @@
 # Stash
 
-Lightweight key-value configuration service for centralized config management. Store application settings, feature flags, and shared configuration with a simple HTTP API and web UI. Good for microservices and containerized applications that need a straightforward way to manage configuration without complex infrastructure.
+Lightweight key-value configuration service for centralized config management. Store application settings, feature flags, and shared configuration with a simple HTTP API and web UI. A minimal alternative to Consul KV or etcd for microservices and containerized applications that need a straightforward way to manage configuration without complex infrastructure. Not a secrets vault - see [Security Note](#security-note).
 
 ## Features
 
@@ -12,6 +12,14 @@ Lightweight key-value configuration service for centralized config management. S
 - Light/dark theme with system preference detection
 - Optional authentication with password login and API tokens
 - Prefix-based access control for API tokens (read/write permissions)
+
+## Security Note
+
+Stash stores values in plaintext and is designed for application configuration, not secrets management. For sensitive credentials, consider:
+
+- [HashiCorp Vault](https://www.vaultproject.io/) or similar secrets managers
+- Client-side encryption before storing values in Stash
+- Filesystem-level encryption (LUKS, FileVault) for the database file
 
 ## Installation
 
