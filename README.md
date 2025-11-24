@@ -161,29 +161,36 @@ stash --auth.password-hash '$2a$10$...'
 
 ### API Tokens
 
+Generate secure random tokens (use UUID or similar):
+
+```bash
+# generate secure tokens
+uuidgen  # macOS/Linux
+openssl rand -hex 16  # alternative
+```
+
 Define API tokens with prefix-based permissions using `--auth.token`:
 
 ```bash
-# format: token:prefix:permissions
+# format: <token>:<prefix>:<permissions>
+# token: secure random string (NOT a simple name)
+# prefix: key pattern (* for all, app/* for prefix, exact for single key)
 # permissions: r (read), w (write), rw (read-write)
 
 stash server --auth.password-hash '$2a$10$...' \
-      --auth.token "admin-api:*:rw" \
-      --auth.token "app1-svc:app1/*:rw" \
-      --auth.token "monitoring:*:r"
+      --auth.token "a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d:*:rw" \
+      --auth.token "b7e4c2a1-9d8f-4e3b-8a2c-1f7e6d5c4b3a:app1/*:rw" \
+      --auth.token "c3a9f8e7-2b1d-4c5a-9f8e-7d6c5b4a3f2e:*:r"
 ```
+
+**Warning**: Do not use simple names like "admin" or "monitoring" as tokens - they are easy to guess.
 
 Use tokens via Bearer authentication:
 
 ```bash
-# full access token
-curl -H "Authorization: Bearer admin-api" http://localhost:8080/kv/any/key
-
-# scoped token - can read/write only app1/* keys
-curl -H "Authorization: Bearer app1-svc" -X PUT -d 'value' http://localhost:8080/kv/app1/config
-
-# read-only token
-curl -H "Authorization: Bearer monitoring" http://localhost:8080/kv/app1/config
+# using the token
+curl -H "Authorization: Bearer a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d" \
+     http://localhost:8080/kv/any/key
 ```
 
 ### Prefix Matching
