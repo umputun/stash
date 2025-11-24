@@ -15,13 +15,24 @@ import (
 	log "github.com/go-pkgz/lgr"
 	"github.com/jessevdk/go-flags"
 
+	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server"
 	"github.com/umputun/stash/app/store"
 )
 
-// opts is kept for backward compatibility with existing tests
 var opts struct {
 	DB string `short:"d" long:"db" env:"STASH_DB" default:"stash.db" description:"database URL (sqlite file or postgres://...)"`
+
+	Git struct {
+		Enabled bool   `long:"enabled" env:"ENABLED" description:"enable git tracking"`
+		Path    string `long:"path" env:"PATH" default:".history" description:"git repository path"`
+		Branch  string `long:"branch" env:"BRANCH" default:"master" description:"git branch"`
+		Remote  string `long:"remote" env:"REMOTE" description:"git remote name (optional)"`
+		Push    bool   `long:"push" env:"PUSH" description:"auto-push after commits"`
+	} `group:"git" namespace:"git" env-namespace:"STASH_GIT"`
+
+	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
+	Version bool `long:"version" description:"show version and exit"`
 
 	Server struct {
 		Address     string        `long:"address" env:"ADDRESS" default:":8080" description:"server listen address"`
@@ -35,8 +46,12 @@ var opts struct {
 		LoginTTL     time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
 	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
 
-	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
-	Version bool `long:"version" description:"show version and exit"`
+	ServerCmd struct {
+	} `command:"server" description:"run the stash server"`
+
+	RestoreCmd struct {
+		Rev string `long:"rev" required:"true" description:"git revision to restore (commit/tag/branch)"`
+	} `command:"restore" description:"restore database from a git revision"`
 }
 
 var revision = "unknown"
@@ -44,49 +59,50 @@ var revision = "unknown"
 func main() {
 	fmt.Printf("stash %s\n", revision)
 
-	var globalOpts struct {
-		Version bool `long:"version" description:"show version and exit"`
-	}
-
-	p := flags.NewParser(&globalOpts, flags.PassDoubleDash|flags.HelpFlag)
-
-	serverCmd := &ServerCmd{}
-	_, err := p.AddCommand("server", "Run the stash server", "Start the HTTP server for key-value storage", serverCmd)
-	if err != nil {
-		fmt.Printf("failed to add server command: %v\n", err)
-		os.Exit(1)
-	}
-
-	restoreCmd := &RestoreCmd{}
-	_, err = p.AddCommand("restore", "Restore from git revision", "Restore database from a git revision", restoreCmd)
-	if err != nil {
-		fmt.Printf("failed to add restore command: %v\n", err)
-		os.Exit(1)
-	}
+	p := flags.NewParser(&opts, flags.Default)
 
 	if _, err := p.Parse(); err != nil {
 		var flagsErr *flags.Error
-		if errors.As(err, &flagsErr) {
-			switch flagsErr.Type {
-			case flags.ErrHelp:
-				fmt.Println(flagsErr.Message)
-				os.Exit(0)
-			case flags.ErrCommandRequired:
-				p.WriteHelp(os.Stderr)
-				os.Exit(2)
-			}
+		if errors.As(err, &flagsErr) && flagsErr.Type == flags.ErrHelp {
+			os.Exit(0)
 		}
-		fmt.Printf("%v\n", err)
 		os.Exit(1)
 	}
 
-	if globalOpts.Version {
+	if opts.Version {
 		os.Exit(0)
+	}
+
+	setupLogs(opts.Debug)
+
+	defer func() {
+		if x := recover(); x != nil {
+			log.Printf("[WARN] run time panic:\n%v", x)
+			panic(x)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	signals(cancel)
+
+	var err error
+	switch {
+	case p.Active != nil && p.Find("server") == p.Active:
+		err = runServer(ctx)
+	case p.Active != nil && p.Find("restore") == p.Active:
+		err = runRestore()
+	default:
+		p.WriteHelp(os.Stderr)
+		os.Exit(2)
+	}
+
+	if err != nil {
+		log.Printf("[ERROR] %v", err)
+		os.Exit(1)
 	}
 }
 
-// run is kept for backward compatibility with existing tests
-func run(ctx context.Context) error {
+func runServer(ctx context.Context) error {
 	baseURL, err := validateBaseURL(opts.Server.BaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid base URL: %w", err)
@@ -98,6 +114,9 @@ func run(ctx context.Context) error {
 	}
 	if opts.Auth.PasswordHash != "" {
 		log.Printf("[INFO] authentication enabled with %d API token(s)", len(opts.Auth.Tokens))
+	}
+	if opts.Git.Enabled {
+		log.Printf("[INFO] git tracking enabled, path: %s, branch: %s", opts.Git.Path, opts.Git.Branch)
 	}
 
 	// initialize storage
@@ -116,14 +135,96 @@ func run(ctx context.Context) error {
 		AuthTokens:   opts.Auth.Tokens,
 		LoginTTL:     opts.Auth.LoginTTL,
 		BaseURL:      baseURL,
+		GitPush:      opts.Git.Push,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
+	// initialize git store if enabled
+	if opts.Git.Enabled {
+		gitStore, gitErr := git.New(git.Config{
+			Path:   opts.Git.Path,
+			Branch: opts.Git.Branch,
+			Remote: opts.Git.Remote,
+		})
+		if gitErr != nil {
+			return fmt.Errorf("failed to initialize git store: %w", gitErr)
+		}
+		srv.SetGitStore(gitStore)
+	}
+
 	if err := srv.Run(ctx); err != nil {
 		return fmt.Errorf("server failed: %w", err)
 	}
+	return nil
+}
+
+func runRestore() error {
+	log.Printf("[INFO] restoring from revision %s", opts.RestoreCmd.Rev)
+	log.Printf("[INFO] git path: %s, db: %s", opts.Git.Path, opts.DB)
+
+	// initialize git store
+	gitStore, err := git.New(git.Config{
+		Path:   opts.Git.Path,
+		Branch: opts.Git.Branch,
+		Remote: opts.Git.Remote,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize git store: %w", err)
+	}
+
+	// pull from remote if configured
+	if opts.Git.Remote != "" {
+		log.Printf("[INFO] pulling from remote %s", opts.Git.Remote)
+		if pullErr := gitStore.Pull(); pullErr != nil {
+			log.Printf("[WARN] pull failed: %v", pullErr)
+		}
+	}
+
+	// checkout specified revision
+	log.Printf("[INFO] checking out revision %s", opts.RestoreCmd.Rev)
+	if chkErr := gitStore.Checkout(opts.RestoreCmd.Rev); chkErr != nil {
+		return fmt.Errorf("failed to checkout revision %s: %w", opts.RestoreCmd.Rev, chkErr)
+	}
+
+	// read all key-value pairs from git
+	kvPairs, readErr := gitStore.ReadAll()
+	if readErr != nil {
+		return fmt.Errorf("failed to read keys from git: %w", readErr)
+	}
+
+	// initialize database store
+	kvStore, dbErr := store.New(opts.DB)
+	if dbErr != nil {
+		return fmt.Errorf("failed to initialize store: %w", dbErr)
+	}
+	defer kvStore.Close()
+
+	// clear all keys from database
+	existingKeys, listErr := kvStore.List()
+	if listErr != nil {
+		return fmt.Errorf("failed to list existing keys: %w", listErr)
+	}
+	for _, k := range existingKeys {
+		if delErr := kvStore.Delete(k.Key); delErr != nil {
+			log.Printf("[WARN] failed to delete key %s: %v", k.Key, delErr)
+		}
+	}
+	log.Printf("[INFO] cleared %d existing keys", len(existingKeys))
+
+	// insert all key-value pairs from git
+	var restored int
+	for key, value := range kvPairs {
+		if setErr := kvStore.Set(key, value); setErr != nil {
+			log.Printf("[WARN] failed to restore key %s: %v", key, setErr)
+			continue
+		}
+		restored++
+	}
+
+	log.Printf("[INFO] restored %d keys from revision %s", restored, opts.RestoreCmd.Rev)
+	fmt.Printf("restored %d keys from revision %s\n", restored, opts.RestoreCmd.Rev)
 	return nil
 }
 
