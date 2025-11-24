@@ -73,6 +73,27 @@ body {
     margin: 0;
     font-size: 24px;
     font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.logo-icon {
+    width: 26px;
+    height: 26px;
+    color: var(--color-primary);
+}
+
+[data-theme="dark"] .logo-icon,
+[data-theme="dark"] .logo-icon-large {
+    color: #93c5fd;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .logo-icon,
+    :root:not([data-theme="light"]) .logo-icon-large {
+        color: #93c5fd;
+    }
 }
 
 .header-actions {
@@ -529,6 +550,16 @@ tr.clickable-row {
     margin: 0 0 8px;
     font-size: 28px;
     font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.logo-icon-large {
+    width: 32px;
+    height: 32px;
+    color: var(--color-primary);
 }
 
 .login-subtitle {
