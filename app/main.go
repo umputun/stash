@@ -23,7 +23,7 @@ var opts struct {
 	DB string `short:"d" long:"db" env:"STASH_DB" default:"stash.db" description:"database URL (sqlite file or postgres://...)"`
 
 	Server struct {
-		Address     string        `long:"address" env:"ADDRESS" default:":8484" description:"server listen address"`
+		Address     string        `long:"address" env:"ADDRESS" default:":8080" description:"server listen address"`
 		ReadTimeout time.Duration `long:"read-timeout" env:"READ_TIMEOUT" default:"5s" description:"read timeout"`
 		BaseURL     string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /stash)"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`

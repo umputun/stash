@@ -63,7 +63,7 @@ make build
 
 ```bash
 # SQLite (default)
-stash --db=/path/to/stash.db --server.address=:8484
+stash --db=/path/to/stash.db --server.address=:8080
 
 # PostgreSQL
 stash --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
@@ -74,7 +74,7 @@ stash --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
 | Option | Environment | Default | Description |
 |--------|-------------|---------|-------------|
 | `-d, --db` | `STASH_DB` | `stash.db` | Database URL (SQLite file or postgres://...) |
-| `--server.address` | `STASH_SERVER_ADDRESS` | `:8484` | Server listen address |
+| `--server.address` | `STASH_SERVER_ADDRESS` | `:8080` | Server listen address |
 | `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5s` | Read timeout (duration format) |
 | `--server.base-url` | `STASH_SERVER_BASE_URL` | - | Base URL path for reverse proxy (e.g., `/stash`) |
 | `--auth.password-hash` | `STASH_AUTH_PASSWORD_HASH` | - | bcrypt hash for admin password (enables auth) |
@@ -106,7 +106,7 @@ When using a reverse proxy, forward requests with the path intact (do not strip 
 labels:
   - reproxy.server=example.com
   - reproxy.route=^/stash/
-  - reproxy.port=8484
+  - reproxy.port=8080
 ```
 
 ## Authentication
@@ -152,13 +152,13 @@ Use tokens via Bearer authentication:
 
 ```bash
 # full access token
-curl -H "Authorization: Bearer admin-api" http://localhost:8484/kv/any/key
+curl -H "Authorization: Bearer admin-api" http://localhost:8080/kv/any/key
 
 # scoped token - can read/write only app1/* keys
-curl -H "Authorization: Bearer app1-svc" -X PUT -d 'value' http://localhost:8484/kv/app1/config
+curl -H "Authorization: Bearer app1-svc" -X PUT -d 'value' http://localhost:8080/kv/app1/config
 
 # read-only token
-curl -H "Authorization: Bearer monitoring" http://localhost:8484/kv/app1/config
+curl -H "Authorization: Bearer monitoring" http://localhost:8080/kv/app1/config
 ```
 
 ### Prefix Matching
@@ -174,7 +174,7 @@ When multiple prefixes match, the longest (most specific) wins.
 ### Get value
 
 ```bash
-curl http://localhost:8484/kv/mykey
+curl http://localhost:8080/kv/mykey
 ```
 
 Returns the raw value with status 200, or 404 if key not found.
@@ -182,7 +182,7 @@ Returns the raw value with status 200, or 404 if key not found.
 ### Set value
 
 ```bash
-curl -X PUT -d 'my value' http://localhost:8484/kv/mykey
+curl -X PUT -d 'my value' http://localhost:8080/kv/mykey
 ```
 
 Body contains the raw value. Returns 200 on success.
@@ -190,7 +190,7 @@ Body contains the raw value. Returns 200 on success.
 ### Delete key
 
 ```bash
-curl -X DELETE http://localhost:8484/kv/mykey
+curl -X DELETE http://localhost:8080/kv/mykey
 ```
 
 Returns 204 on success, or 404 if key not found.
@@ -198,14 +198,14 @@ Returns 204 on success, or 404 if key not found.
 ### Health check
 
 ```bash
-curl http://localhost:8484/ping
+curl http://localhost:8080/ping
 ```
 
 Returns `pong` with status 200.
 
 ## Web UI
 
-Access the web interface at `http://localhost:8484/`. Features:
+Access the web interface at `http://localhost:8080/`. Features:
 
 - Table view of all keys with size and timestamps
 - Search keys by name
@@ -217,16 +217,16 @@ Access the web interface at `http://localhost:8484/`. Features:
 
 ```bash
 # set a simple value
-curl -X PUT -d 'production' http://localhost:8484/kv/app/env
+curl -X PUT -d 'production' http://localhost:8080/kv/app/env
 
 # set JSON configuration
-curl -X PUT -d '{"host":"db.example.com","port":5432}' http://localhost:8484/kv/app/config/database
+curl -X PUT -d '{"host":"db.example.com","port":5432}' http://localhost:8080/kv/app/config/database
 
 # get the value
-curl http://localhost:8484/kv/app/config/database
+curl http://localhost:8080/kv/app/config/database
 
 # delete a key
-curl -X DELETE http://localhost:8484/kv/app/env
+curl -X DELETE http://localhost:8080/kv/app/env
 ```
 
 ## Docker
@@ -234,7 +234,7 @@ curl -X DELETE http://localhost:8484/kv/app/env
 ### SQLite
 
 ```bash
-docker run -p 8484:8484 -v /data:/srv/data ghcr.io/umputun/stash \
+docker run -p 8080:8080 -v /data:/srv/data ghcr.io/umputun/stash \
     --db=/srv/data/stash.db
 ```
 
@@ -250,7 +250,7 @@ services:
     depends_on:
       - postgres
     ports:
-      - "8484:8484"
+      - "8080:8080"
 
   postgres:
     image: postgres:16-alpine

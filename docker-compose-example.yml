@@ -48,7 +48,7 @@ services:
       - reproxy.server=stash.example.com
       - reproxy.route=^/(.*)
       - reproxy.dest=/$1
-      - reproxy.port=8484
+      - reproxy.port=8080
 
   postgres:
     image: postgres:16-alpine

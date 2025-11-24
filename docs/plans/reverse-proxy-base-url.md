@@ -106,5 +106,5 @@ Forward requests with path intact (do NOT strip the prefix):
 labels:
   - reproxy.server=example.com
   - reproxy.route=^/stash/
-  - reproxy.port=8484
+  - reproxy.port=8080
 ```
