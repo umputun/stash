@@ -12,6 +12,7 @@ Lightweight key-value configuration service for centralized config management. S
 - Light/dark theme with system preference detection
 - Optional authentication with password login and API tokens
 - Prefix-based access control for API tokens (read/write permissions)
+- Optional git versioning with full audit trail and point-in-time recovery
 
 ## Security Note
 
@@ -61,15 +62,23 @@ make build
 
 ## Usage
 
+Stash uses subcommands: `server` for running the service and `restore` for recovering data from git history.
+
 ```bash
 # SQLite (default)
-stash --db=/path/to/stash.db --server.address=:8080
+stash server --db=/path/to/stash.db --server.address=:8080
 
 # PostgreSQL
-stash --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
+stash server --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
+
+# With git versioning enabled
+stash server --git.enabled --git.path=/data/.history
+
+# Restore from git revision
+stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 ```
 
-### Command Line Options
+### Server Options
 
 | Option | Environment | Default | Description |
 |--------|-------------|---------|-------------|
@@ -80,6 +89,22 @@ stash --db="postgres://user:pass@localhost:5432/stash?sslmode=disable"
 | `--auth.password-hash` | `STASH_AUTH_PASSWORD_HASH` | - | bcrypt hash for admin password (enables auth) |
 | `--auth.token` | `STASH_AUTH_AUTH_TOKEN` | - | API token with prefix permissions (repeatable) |
 | `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL (duration format) |
+| `--git.enabled` | `STASH_GIT_ENABLED` | `false` | Enable git versioning |
+| `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
+| `--git.branch` | `STASH_GIT_BRANCH` | `master` | Git branch name |
+| `--git.remote` | `STASH_GIT_REMOTE` | - | Git remote name (for push) |
+| `--git.push` | `STASH_GIT_PUSH` | `false` | Auto-push after commits |
+| `--dbg` | `DEBUG` | `false` | Debug mode |
+
+### Restore Options
+
+| Option | Environment | Default | Description |
+|--------|-------------|---------|-------------|
+| `--rev` | - | (required) | Git revision to restore (commit hash, tag, or branch) |
+| `-d, --db` | `STASH_DB` | `stash.db` | Database URL |
+| `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
+| `--git.branch` | `STASH_GIT_BRANCH` | `master` | Git branch name |
+| `--git.remote` | `STASH_GIT_REMOTE` | - | Git remote name (pulls before restore if set) |
 | `--dbg` | `DEBUG` | `false` | Debug mode |
 
 ### Database URLs
@@ -142,7 +167,7 @@ Define API tokens with prefix-based permissions using `--auth.token`:
 # format: token:prefix:permissions
 # permissions: r (read), w (write), rw (read-write)
 
-stash --auth.password-hash '$2a$10$...' \
+stash server --auth.password-hash '$2a$10$...' \
       --auth.token "admin-api:*:rw" \
       --auth.token "app1-svc:app1/*:rw" \
       --auth.token "monitoring:*:r"
@@ -168,6 +193,70 @@ curl -H "Authorization: Bearer monitoring" http://localhost:8080/kv/app1/config
 - `app/config` matches exact key only
 
 When multiple prefixes match, the longest (most specific) wins.
+
+## Git Versioning
+
+Optional git versioning tracks all key changes in a local git repository. Every set or delete operation creates a git commit, providing a full audit trail and point-in-time recovery.
+
+### Enabling Git Versioning
+
+```bash
+stash server --git.enabled --git.path=/data/.history
+```
+
+### Storage Format
+
+Keys are stored as files with `.val` extension. The key path maps directly to the file path:
+
+| Key | File Path |
+|-----|-----------|
+| `app/config/db` | `.history/app/config/db.val` |
+| `app/config/redis` | `.history/app/config/redis.val` |
+| `service/timeout` | `.history/service/timeout.val` |
+
+Directory structure example:
+
+```
+.history/
+├── app/
+│   └── config/
+│       ├── db.val       # key: app/config/db
+│       └── redis.val    # key: app/config/redis
+└── service/
+    └── timeout.val      # key: service/timeout
+```
+
+### Remote Sync
+
+Enable auto-push to a remote repository for backup:
+
+```bash
+# initialize git repo with remote first
+cd /data/.history
+git init
+git remote add origin git@github.com:user/config-backup.git
+
+# run with auto-push
+stash server --git.enabled --git.path=/data/.history --git.remote=origin --git.push
+```
+
+### Restore from History
+
+Recover the database to any point in git history:
+
+```bash
+# list available commits
+cd /data/.history && git log --oneline
+
+# restore to specific revision
+stash restore --rev=abc1234 --db=/data/stash.db --git.path=/data/.history
+```
+
+The restore command:
+1. Pulls from remote if configured
+2. Checks out the specified revision
+3. Clears all keys from the database
+4. Restores all keys from the git repository
 
 ## API
 
@@ -235,7 +324,14 @@ curl -X DELETE http://localhost:8080/kv/app/env
 
 ```bash
 docker run -p 8080:8080 -v /data:/srv/data ghcr.io/umputun/stash \
-    --db=/srv/data/stash.db
+    server --db=/srv/data/stash.db
+```
+
+### With Git Versioning
+
+```bash
+docker run -p 8080:8080 -v /data:/srv/data ghcr.io/umputun/stash \
+    server --db=/srv/data/stash.db --git.enabled --git.path=/srv/data/.history
 ```
 
 ### PostgreSQL with Docker Compose

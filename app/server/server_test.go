@@ -306,3 +306,66 @@ func newTestServer(t *testing.T, st KVStore) *Server {
 	require.NoError(t, err)
 	return srv
 }
+
+func TestServer_WebHandlers_GitIntegration(t *testing.T) {
+	t.Run("handleKeyCreate calls gitCommit", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		gs := &mocks.GitStoreMock{
+			CommitFunc: func(key string, value []byte, operation string) error { return nil },
+		}
+		srv := newTestServer(t, st)
+		srv.SetGitStore(gs)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Form = map[string][]string{"key": {"testkey"}, "value": {"testvalue"}}
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		require.Len(t, gs.CommitCalls(), 1, "gitCommit should be called")
+		assert.Equal(t, "testkey", gs.CommitCalls()[0].Key)
+		assert.Equal(t, []byte("testvalue"), gs.CommitCalls()[0].Value)
+	})
+
+	t.Run("handleKeyUpdate calls gitCommit", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		gs := &mocks.GitStoreMock{
+			CommitFunc: func(key string, value []byte, operation string) error { return nil },
+		}
+		srv := newTestServer(t, st)
+		srv.SetGitStore(gs)
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/app/config", http.NoBody)
+		req.Form = map[string][]string{"value": {"newvalue"}}
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		require.Len(t, gs.CommitCalls(), 1, "gitCommit should be called")
+		assert.Equal(t, "app/config", gs.CommitCalls()[0].Key)
+		assert.Equal(t, []byte("newvalue"), gs.CommitCalls()[0].Value)
+	})
+
+	t.Run("handleKeyDelete calls gitDelete", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(key string) error { return nil },
+			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		gs := &mocks.GitStoreMock{
+			DeleteFunc: func(key string) error { return nil },
+		}
+		srv := newTestServer(t, st)
+		srv.SetGitStore(gs)
+
+		req := httptest.NewRequest(http.MethodDelete, "/web/keys/app/config", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		require.Len(t, gs.DeleteCalls(), 1, "gitDelete should be called")
+		assert.Equal(t, "app/config", gs.DeleteCalls()[0].Key)
+	})
+}

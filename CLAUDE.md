@@ -4,11 +4,11 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 
 ## Project Structure
 
-- **app/main.go** - Entry point with CLI options, logging, signal handling, wiring
+- **app/main.go** - Entry point with CLI subcommands (server, restore), logging, signal handling
 - **app/main_test.go** - Integration tests
 - **app/server/** - HTTP server with routegroup
-  - `server.go` - Server struct, config, routes, graceful shutdown
-  - `handlers.go` - HTTP handlers for KV API operations
+  - `server.go` - Server struct, config, routes, graceful shutdown, GitStore interface
+  - `handlers.go` - HTTP handlers for KV API operations (with git integration)
   - `web.go` - Web UI handlers, templates, static file serving
   - `auth.go` - Authentication: sessions, tokens, middleware, prefix-based ACL
   - `static/` - Embedded CSS, JS, HTMX library
@@ -17,13 +17,17 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **app/store/** - Database storage layer (SQLite/PostgreSQL)
   - `store.go` - Types (KeyInfo), errors
   - `sqlite.go` - Unified Store with SQLite and PostgreSQL support
+- **app/git/** - Git versioning for key-value storage
+  - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
+  - `git_test.go` - Unit tests
 
 ## Key Dependencies
 
-- **CLI**: `github.com/umputun/go-flags`
+- **CLI**: `github.com/jessevdk/go-flags`
 - **Logging**: `github.com/go-pkgz/lgr`
 - **HTTP**: `github.com/go-pkgz/routegroup`, `github.com/go-pkgz/rest`
 - **Database**: `github.com/jmoiron/sqlx`, `modernc.org/sqlite`, `github.com/jackc/pgx/v5`
+- **Git**: `github.com/go-git/go-git/v5`
 - **Testing**: `github.com/stretchr/testify`
 
 ## Build & Test
@@ -68,12 +72,19 @@ POST   /login                    # authenticate, set session cookie
 POST   /logout                   # clear session, redirect to login
 ```
 
+## CLI Commands
+
+- `stash server` - Run the HTTP server
+- `stash restore --rev=<commit>` - Restore database from git revision
+
 ## Development Notes
 
-- Consumer-side interfaces (KVStore defined in server package)
+- Consumer-side interfaces (KVStore, GitStore defined in server package)
 - Return concrete types, accept interfaces
 - Database type auto-detected from URL (postgres:// vs file path)
 - SQLite: WAL mode, SetMaxOpenConns(1), busy timeout, sync.RWMutex for locking
 - PostgreSQL: standard connection pool, MVCC handles concurrency (no app-level locking)
 - Query placeholders: SQLite uses `?`, PostgreSQL uses `$1, $2, ...` (adoptQuery converts)
+- Git versioning: optional, logs WARN on failures (DB is source of truth)
+- Git storage: path-based with `.val` suffix (app/config → .history/app/config.val)
 - Keep it simple - no over-engineering

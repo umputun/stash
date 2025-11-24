@@ -427,6 +427,9 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// commit to git if enabled
+	s.gitCommit(key, value, "set")
+
 	// return updated keys table
 	s.handleKeyList(w, r)
 }
@@ -454,6 +457,9 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// commit to git if enabled
+	s.gitCommit(key, value, "set")
+
 	// return updated keys table
 	s.handleKeyList(w, r)
 }
@@ -470,6 +476,9 @@ func (s *Server) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+
+	// delete from git if enabled
+	s.gitDelete(key)
 
 	// return updated keys table
 	s.handleKeyList(w, r)

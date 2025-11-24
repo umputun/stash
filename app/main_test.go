@@ -11,6 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/git"
+	"github.com/umputun/stash/app/store"
 )
 
 func TestIntegration(t *testing.T) {
@@ -28,11 +31,11 @@ func TestIntegration(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(ctx)
+		errCh <- runServer(ctx)
 	}()
 
 	// wait for server to start
-	waitForServer(t, "http://127.0.0.1:18484/ping", 2*time.Second)
+	waitForServer(t, "http://127.0.0.1:18484/ping")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -128,11 +131,11 @@ func TestIntegration_WithAuth(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(ctx)
+		errCh <- runServer(ctx)
 	}()
 
 	// wait for server to start
-	waitForServer(t, "http://127.0.0.1:18485/ping", 2*time.Second)
+	waitForServer(t, "http://127.0.0.1:18485/ping")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -309,35 +312,28 @@ func TestIntegration_WithAuth(t *testing.T) {
 	opts.Auth.Tokens = nil
 }
 
-func waitForServer(t *testing.T, url string, timeout time.Duration) {
+func waitForServer(t *testing.T, url string) {
 	t.Helper()
 	client := &http.Client{Timeout: 100 * time.Millisecond}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	require.Eventually(t, func() bool {
 		resp, err := client.Get(url)
-		if err == nil {
-			_ = resp.Body.Close() // ignore error in polling loop
-			if resp.StatusCode == http.StatusOK {
-				return
-			}
+		if err != nil {
+			return false
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("server did not start within %v", timeout)
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Second, 50*time.Millisecond, "server did not start")
 }
 
 func TestSetupLogs(t *testing.T) {
 	t.Run("default mode", func(t *testing.T) {
-		opts.Debug = false
-		w := setupLogs()
+		w := setupLogs(false)
 		assert.NotNil(t, w)
 	})
 
 	t.Run("debug mode", func(t *testing.T) {
-		opts.Debug = true
-		w := setupLogs()
+		w := setupLogs(true)
 		assert.NotNil(t, w)
-		opts.Debug = false // reset
 	})
 }
 
@@ -351,7 +347,7 @@ func TestRun_InvalidDB(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := run(ctx)
+	err := runServer(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to initialize store")
 }
@@ -367,7 +363,7 @@ func TestRun_InvalidAuthToken(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := run(ctx)
+	err := runServer(ctx)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to initialize server")
 
@@ -429,11 +425,11 @@ func TestIntegration_WithBaseURL(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- run(ctx)
+		errCh <- runServer(ctx)
 	}()
 
 	// wait for server to start
-	waitForServer(t, "http://127.0.0.1:18488/stash/ping", 2*time.Second)
+	waitForServer(t, "http://127.0.0.1:18488/stash/ping")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -488,4 +484,99 @@ func TestIntegration_WithBaseURL(t *testing.T) {
 
 	// reset base URL for other tests
 	opts.Server.BaseURL = ""
+}
+
+func TestRunRestore(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitPath := filepath.Join(tmpDir, ".history")
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	// create git store and add some test data
+	gitStore, err := git.New(git.Config{Path: gitPath, Branch: "master"})
+	require.NoError(t, err)
+
+	// commit test keys
+	require.NoError(t, gitStore.Commit("app/key1", []byte("value1"), "set"))
+	require.NoError(t, gitStore.Commit("app/key2", []byte("value2"), "set"))
+	require.NoError(t, gitStore.Commit("config/db", []byte("postgres://localhost"), "set"))
+
+	// get current HEAD commit hash
+	headRef, err := gitStore.Head()
+	require.NoError(t, err)
+
+	// setup opts for restore
+	opts.DB = dbPath
+	opts.Git.Path = gitPath
+	opts.Git.Branch = "master"
+	opts.RestoreCmd.Rev = headRef
+
+	err = runRestore()
+	require.NoError(t, err)
+
+	// verify keys were restored to database
+	kvStore, err := store.New(dbPath)
+	require.NoError(t, err)
+	defer kvStore.Close()
+
+	val1, err := kvStore.Get("app/key1")
+	require.NoError(t, err)
+	assert.Equal(t, "value1", string(val1))
+
+	val2, err := kvStore.Get("app/key2")
+	require.NoError(t, err)
+	assert.Equal(t, "value2", string(val2))
+
+	val3, err := kvStore.Get("config/db")
+	require.NoError(t, err)
+	assert.Equal(t, "postgres://localhost", string(val3))
+}
+
+func TestRunRestore_InvalidRevision(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitPath := filepath.Join(tmpDir, ".history")
+
+	// create git store (empty)
+	_, err := git.New(git.Config{Path: gitPath, Branch: "master"})
+	require.NoError(t, err)
+
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Git.Path = gitPath
+	opts.Git.Branch = "master"
+	opts.RestoreCmd.Rev = "abc123"
+
+	err = runRestore()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to checkout revision")
+}
+
+func TestRunServer_WithGit(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18492"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Git.Enabled = true
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	// wait for server to start
+	waitForServer(t, "http://127.0.0.1:18492/ping")
+
+	// shutdown
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset git opts
+	opts.Git.Enabled = false
 }
