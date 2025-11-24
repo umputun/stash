@@ -30,6 +30,8 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[DEBUG] get %s (%d bytes)", key, len(value))
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(value); err != nil {
@@ -57,6 +59,8 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("[DEBUG] set %s (%d bytes)", key, len(value))
+
 	// commit to git if enabled
 	s.gitCommit(key, value, "set")
 
@@ -81,6 +85,8 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to delete key")
 		return
 	}
+
+	log.Printf("[DEBUG] delete %s", key)
 
 	// delete from git if enabled
 	s.gitDelete(key)

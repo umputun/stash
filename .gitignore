@@ -24,6 +24,6 @@ coverage.html
 *.db-wal
 
 .playwright-mcp/
-
+.history/
 # vendor (if not committed)
 # vendor/
