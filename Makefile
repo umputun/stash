@@ -17,7 +17,7 @@ run:
 
 prep_site:
 	cp -fv README.md site/docs/index.md
-	sed -i '' 's|^# Stash \[!\[.*$$|# Stash|' site/docs/index.md
-	cd site && mkdocs build
+	sed -i 's|^# Stash \[!\[.*$$|# Stash|' site/docs/index.md
+	cd site && pip install -r requirements.txt && mkdocs build
 
 .PHONY: build test lint docker run prep_site
