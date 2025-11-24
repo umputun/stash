@@ -605,3 +605,191 @@ tr.clickable-row {
     background-color: var(--color-danger);
     color: white;
 }
+
+/* Responsive Design */
+
+/* Tablet and smaller */
+@media (max-width: 768px) {
+    .container {
+        padding: 16px;
+    }
+
+    .header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 16px;
+    }
+
+    .header h1 {
+        justify-content: center;
+    }
+
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .search-input {
+        width: 100%;
+        order: -1;
+    }
+
+    .stats {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    /* Table adjustments */
+    .table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    table {
+        min-width: 500px;
+    }
+
+    th, td {
+        padding: 10px 12px;
+    }
+
+    /* Cards grid on tablet */
+    .cards-container {
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+    }
+
+    /* Modal adjustments */
+    .modal {
+        margin: 16px;
+        max-width: calc(100% - 32px);
+    }
+}
+
+/* Mobile */
+@media (max-width: 480px) {
+    .container {
+        padding: 12px;
+    }
+
+    .header h1 {
+        font-size: 20px;
+    }
+
+    .logo-icon {
+        width: 22px;
+        height: 22px;
+    }
+
+    .header-actions {
+        gap: 6px;
+    }
+
+    .btn {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .btn-icon {
+        padding: 8px;
+        font-size: 16px;
+    }
+
+    .sort-button {
+        padding: 6px 10px;
+        font-size: 12px;
+    }
+
+    /* Hide sort label on small screens */
+    .sort-button span {
+        display: none;
+    }
+
+    /* Full width cards on mobile */
+    .cards-container {
+        grid-template-columns: 1fr;
+    }
+
+    .key-card {
+        padding: 12px;
+    }
+
+    .key-card-name {
+        font-size: 13px;
+    }
+
+    .key-card-meta {
+        gap: 12px;
+        font-size: 11px;
+    }
+
+    .key-card-actions {
+        flex-wrap: wrap;
+    }
+
+    .key-card-actions .btn {
+        flex: 1;
+        justify-content: center;
+        min-width: 70px;
+    }
+
+    /* Modal full screen on mobile */
+    .modal {
+        margin: 0;
+        max-width: 100%;
+        max-height: 100vh;
+        border-radius: 0;
+        height: 100vh;
+    }
+
+    .modal-header {
+        padding: 12px 16px;
+    }
+
+    .modal-header h2 {
+        font-size: 16px;
+    }
+
+    .modal-body {
+        padding: 16px;
+    }
+
+    .modal-footer {
+        padding: 12px 16px;
+        flex-wrap: wrap;
+    }
+
+    .modal-footer .btn {
+        flex: 1;
+        justify-content: center;
+    }
+
+    .form-group textarea {
+        min-height: 120px;
+    }
+
+    .value-display {
+        font-size: 12px;
+        max-height: 300px;
+    }
+
+    /* Empty state */
+    .empty-state {
+        padding: 32px 16px;
+    }
+
+    /* Login page adjustments */
+    .login-box {
+        padding: 24px;
+        max-width: 100%;
+    }
+
+    .login-box h1 {
+        font-size: 24px;
+    }
+
+    .logo-icon-large {
+        width: 28px;
+        height: 28px;
+    }
+}
