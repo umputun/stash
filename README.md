@@ -395,6 +395,10 @@ echo 'STASH_AUTH_TOKEN=mytoken:*:rw' >> .env
 docker-compose up -d
 ```
 
+## Notes
+
+- **Concurrency**: Stash uses last-write-wins semantics with no conflict detection. Concurrent updates to the same key will silently overwrite.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
