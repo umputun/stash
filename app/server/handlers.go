@@ -57,6 +57,9 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// commit to git if enabled
+	s.gitCommit(key, value, "set")
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -79,5 +82,46 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// delete from git if enabled
+	s.gitDelete(key)
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// gitCommit commits a key-value change to git if enabled.
+// logs warning on failure but does not fail the API request.
+func (s *Server) gitCommit(key string, value []byte, operation string) {
+	if s.gitStore == nil {
+		return
+	}
+
+	if err := s.gitStore.Commit(key, value, operation); err != nil {
+		log.Printf("[WARN] git commit failed for %s: %v", key, err)
+		return
+	}
+
+	if s.cfg.GitPush {
+		if err := s.gitStore.Push(); err != nil {
+			log.Printf("[WARN] git push failed: %v", err)
+		}
+	}
+}
+
+// gitDelete deletes a key from git if enabled.
+// logs warning on failure but does not fail the API request.
+func (s *Server) gitDelete(key string) {
+	if s.gitStore == nil {
+		return
+	}
+
+	if err := s.gitStore.Delete(key); err != nil {
+		log.Printf("[WARN] git delete failed for %s: %v", key, err)
+		return
+	}
+
+	if s.cfg.GitPush {
+		if err := s.gitStore.Push(); err != nil {
+			log.Printf("[WARN] git push failed: %v", err)
+		}
+	}
 }

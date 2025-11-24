@@ -16,15 +16,35 @@ import (
 	"github.com/umputun/stash/app/store"
 )
 
+//go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
+//go:generate moq -out mocks/gitstore.go -pkg mocks -skip-ensure -fmt goimports . GitStore
+
+// Server represents the HTTP server.
+type Server struct {
+	store    KVStore
+	gitStore GitStore // optional git store for versioning
+	cfg      Config
+	version  string
+	baseURL  string
+	tmpl     *template.Template
+	auth     *Auth
+}
+
 // KVStore defines the interface for key-value storage operations.
 // Defined here (consumer side) to allow different store implementations.
-//
-//go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
 type KVStore interface {
 	Get(key string) ([]byte, error)
 	Set(key string, value []byte) error
 	Delete(key string) error
 	List() ([]store.KeyInfo, error)
+}
+
+// GitStore defines the interface for git-based versioning operations.
+// Defined here (consumer side) to allow different git implementations.
+type GitStore interface {
+	Commit(key string, value []byte, operation string) error
+	Delete(key string) error
+	Push() error
 }
 
 // Config holds server configuration.
@@ -36,16 +56,7 @@ type Config struct {
 	AuthTokens   []string      // API tokens in format "token:prefix:permissions"
 	LoginTTL     time.Duration // session duration
 	BaseURL      string        // base URL path for reverse proxy (e.g., /stash)
-}
-
-// Server represents the HTTP server.
-type Server struct {
-	store   KVStore
-	cfg     Config
-	version string
-	baseURL string
-	tmpl    *template.Template
-	auth    *Auth
+	GitPush      bool          // auto-push git commits
 }
 
 // New creates a new Server instance.
@@ -73,6 +84,11 @@ func New(st KVStore, cfg Config) (*Server, error) {
 		tmpl:    tmpl,
 		auth:    auth,
 	}, nil
+}
+
+// SetGitStore sets the git store for versioning.
+func (s *Server) SetGitStore(gs GitStore) {
+	s.gitStore = gs
 }
 
 // Run starts the HTTP server and blocks until context is canceled.

@@ -24,5 +24,5 @@ RUN chmod +x /srv/stash
 
 WORKDIR /srv
 
-CMD ["/srv/stash"]
+CMD ["/srv/stash", "server"]
 ENTRYPOINT ["/init.sh"]
