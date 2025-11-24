@@ -52,7 +52,7 @@ func (s *Store) initRepo() error {
 	repo, err := git.PlainOpen(s.cfg.Path)
 	if err == nil {
 		s.repo = repo
-		return nil
+		return s.ensureBranch()
 	}
 
 	// create new repo if not exists
@@ -61,6 +61,33 @@ func (s *Store) initRepo() error {
 	}
 
 	return fmt.Errorf("failed to open repo: %w", err)
+}
+
+// ensureBranch checks out the configured branch, creating it if necessary
+func (s *Store) ensureBranch() error {
+	wt, err := s.repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	branchRef := plumbing.NewBranchReferenceName(s.cfg.Branch)
+
+	// try to checkout existing branch
+	if chkErr := wt.Checkout(&git.CheckoutOptions{Branch: branchRef}); chkErr == nil {
+		return nil
+	}
+
+	// branch doesn't exist, create it from HEAD
+	head, headErr := s.repo.Head()
+	if headErr != nil {
+		return fmt.Errorf("failed to get HEAD: %w", headErr)
+	}
+
+	// create and checkout the branch
+	if chkErr := wt.Checkout(&git.CheckoutOptions{Branch: branchRef, Hash: head.Hash(), Create: true}); chkErr != nil {
+		return fmt.Errorf("failed to checkout branch %s: %w", s.cfg.Branch, chkErr)
+	}
+	return nil
 }
 
 func (s *Store) createNewRepo() error {
@@ -96,15 +123,19 @@ func (s *Store) createNewRepo() error {
 		return fmt.Errorf("failed to create initial commit: %w", commitErr)
 	}
 
-	// create branch if not master
+	// checkout configured branch (create if not master)
 	if s.cfg.Branch != "master" {
 		head, headErr := repo.Head()
 		if headErr != nil {
 			return fmt.Errorf("failed to get HEAD: %w", headErr)
 		}
-		ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(s.cfg.Branch), head.Hash())
-		if setErr := repo.Storer.SetReference(ref); setErr != nil {
-			return fmt.Errorf("failed to create branch: %w", setErr)
+		branchRef := plumbing.NewBranchReferenceName(s.cfg.Branch)
+		if chkErr := wt.Checkout(&git.CheckoutOptions{
+			Branch: branchRef,
+			Hash:   head.Hash(),
+			Create: true,
+		}); chkErr != nil {
+			return fmt.Errorf("failed to checkout branch %s: %w", s.cfg.Branch, chkErr)
 		}
 	}
 
@@ -191,9 +222,7 @@ func (s *Store) Delete(key string) error {
 	}
 
 	// commit deletion
-	msg := fmt.Sprintf("delete %s\n\ntimestamp: %s\noperation: delete\nkey: %s",
-		key, time.Now().Format(time.RFC3339), key)
-
+	msg := fmt.Sprintf("delete %s\n\ntimestamp: %s\noperation: delete\nkey: %s", key, time.Now().Format(time.RFC3339), key)
 	_, commitErr := wt.Commit(msg, &git.CommitOptions{
 		Author: &object.Signature{
 			Name:  "stash",

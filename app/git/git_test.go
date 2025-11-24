@@ -318,3 +318,44 @@ func TestPathToKey(t *testing.T) {
 		})
 	}
 }
+
+func TestStore_BranchUsage(t *testing.T) {
+	t.Run("commits go to configured branch for new repo", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history"), Branch: "develop"})
+		require.NoError(t, err)
+
+		// commit a key
+		require.NoError(t, store.Commit("key1", []byte("value1"), "set"))
+
+		// verify HEAD is on the configured branch
+		head, err := store.repo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, "refs/heads/develop", head.Name().String(), "HEAD should be on develop branch")
+
+		// verify commit is on the develop branch (not master)
+		developRef, err := store.repo.Reference("refs/heads/develop", true)
+		require.NoError(t, err)
+		assert.Equal(t, head.Hash(), developRef.Hash(), "develop branch should have the latest commit")
+	})
+
+	t.Run("commits go to configured branch for existing repo", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		repoPath := filepath.Join(tmpDir, ".history")
+
+		// create repo on master first
+		store1, err := New(Config{Path: repoPath, Branch: "master"})
+		require.NoError(t, err)
+		require.NoError(t, store1.Commit("key1", []byte("value1"), "set"))
+
+		// reopen with different branch
+		store2, err := New(Config{Path: repoPath, Branch: "develop"})
+		require.NoError(t, err)
+		require.NoError(t, store2.Commit("key2", []byte("value2"), "set"))
+
+		// verify HEAD is on develop
+		head, err := store2.repo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, "refs/heads/develop", head.Name().String(), "HEAD should be on develop branch")
+	})
+}
