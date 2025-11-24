@@ -14,3 +14,10 @@ docker:
 
 run:
 	go run ./app --log.enabled --log.debug
+
+prep_site:
+	cp -fv README.md site/docs/index.md
+	sed -i '' 's|^# Stash \[!\[.*$$|# Stash|' site/docs/index.md
+	cd site && mkdocs build
+
+.PHONY: build test lint docker run prep_site
