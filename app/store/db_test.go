@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-pkgz/testutils/containers"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +33,7 @@ func TestSQLite_SetGet(t *testing.T) {
 	defer store.Close()
 
 	t.Run("set and get value", func(t *testing.T) {
-		err := store.Set("key1", []byte("value1"))
+		err := store.Set("key1", []byte("value1"), "text")
 		require.NoError(t, err)
 
 		value, err := store.Get("key1")
@@ -41,10 +42,10 @@ func TestSQLite_SetGet(t *testing.T) {
 	})
 
 	t.Run("update existing key", func(t *testing.T) {
-		err := store.Set("key2", []byte("original"))
+		err := store.Set("key2", []byte("original"), "text")
 		require.NoError(t, err)
 
-		err = store.Set("key2", []byte("updated"))
+		err = store.Set("key2", []byte("updated"), "text")
 		require.NoError(t, err)
 
 		value, err := store.Get("key2")
@@ -59,7 +60,7 @@ func TestSQLite_SetGet(t *testing.T) {
 
 	t.Run("handles binary data", func(t *testing.T) {
 		binary := []byte{0x00, 0x01, 0xFF, 0xFE}
-		err := store.Set("binary", binary)
+		err := store.Set("binary", binary, "text")
 		require.NoError(t, err)
 
 		value, err := store.Get("binary")
@@ -68,7 +69,7 @@ func TestSQLite_SetGet(t *testing.T) {
 	})
 
 	t.Run("handles empty value", func(t *testing.T) {
-		err := store.Set("empty", []byte{})
+		err := store.Set("empty", []byte{}, "text")
 		require.NoError(t, err)
 
 		value, err := store.Get("empty")
@@ -82,7 +83,7 @@ func TestSQLite_UpdatedAt(t *testing.T) {
 	defer store.Close()
 
 	// set initial value
-	err := store.Set("timekey", []byte("v1"))
+	err := store.Set("timekey", []byte("v1"), "text")
 	require.NoError(t, err)
 
 	// get created_at
@@ -95,7 +96,7 @@ func TestSQLite_UpdatedAt(t *testing.T) {
 
 	// update value (wait to ensure different timestamp - RFC3339 has second precision)
 	time.Sleep(1100 * time.Millisecond)
-	err = store.Set("timekey", []byte("v2"))
+	err = store.Set("timekey", []byte("v2"), "text")
 	require.NoError(t, err)
 
 	// verify updated_at changed but created_at didn't
@@ -114,7 +115,7 @@ func TestSQLite_Delete(t *testing.T) {
 	defer store.Close()
 
 	t.Run("delete existing key", func(t *testing.T) {
-		err := store.Set("todelete", []byte("value"))
+		err := store.Set("todelete", []byte("value"), "text")
 		require.NoError(t, err)
 
 		err = store.Delete("todelete")
@@ -141,9 +142,9 @@ func TestSQLite_List(t *testing.T) {
 	})
 
 	t.Run("returns keys with correct metadata", func(t *testing.T) {
-		err := store.Set("key1", []byte("short"))
+		err := store.Set("key1", []byte("short"), "text")
 		require.NoError(t, err)
-		err = store.Set("key2", []byte("longer value here"))
+		err = store.Set("key2", []byte("longer value here"), "json")
 		require.NoError(t, err)
 
 		keys, err := store.List()
@@ -165,6 +166,8 @@ func TestSQLite_List(t *testing.T) {
 
 		assert.Equal(t, 5, key1Info.Size)  // len("short")
 		assert.Equal(t, 17, key2Info.Size) // len("longer value here")
+		assert.Equal(t, "text", key1Info.Format)
+		assert.Equal(t, "json", key2Info.Format)
 		assert.False(t, key1Info.CreatedAt.IsZero())
 		assert.False(t, key1Info.UpdatedAt.IsZero())
 	})
@@ -174,10 +177,10 @@ func TestSQLite_List(t *testing.T) {
 		defer store2.Close()
 
 		// create keys with delay to ensure different timestamps
-		err := store2.Set("first", []byte("1"))
+		err := store2.Set("first", []byte("1"), "text")
 		require.NoError(t, err)
 		time.Sleep(1100 * time.Millisecond) // RFC3339 has second precision
-		err = store2.Set("second", []byte("2"))
+		err = store2.Set("second", []byte("2"), "yaml")
 		require.NoError(t, err)
 
 		keys, err := store2.List()
@@ -215,7 +218,7 @@ func TestStore_Postgres(t *testing.T) {
 	assert.Equal(t, DBTypePostgres, store.dbType)
 
 	t.Run("set and get value", func(t *testing.T) {
-		err := store.Set("pgkey1", []byte("pgvalue1"))
+		err := store.Set("pgkey1", []byte("pgvalue1"), "text")
 		require.NoError(t, err)
 
 		value, err := store.Get("pgkey1")
@@ -224,10 +227,10 @@ func TestStore_Postgres(t *testing.T) {
 	})
 
 	t.Run("update existing key", func(t *testing.T) {
-		err := store.Set("pgkey2", []byte("original"))
+		err := store.Set("pgkey2", []byte("original"), "text")
 		require.NoError(t, err)
 
-		err = store.Set("pgkey2", []byte("updated"))
+		err = store.Set("pgkey2", []byte("updated"), "json")
 		require.NoError(t, err)
 
 		value, err := store.Get("pgkey2")
@@ -242,7 +245,7 @@ func TestStore_Postgres(t *testing.T) {
 
 	t.Run("handles binary data", func(t *testing.T) {
 		binary := []byte{0x00, 0x01, 0xFF, 0xFE}
-		err := store.Set("pgbinary", binary)
+		err := store.Set("pgbinary", binary, "text")
 		require.NoError(t, err)
 
 		value, err := store.Get("pgbinary")
@@ -251,7 +254,7 @@ func TestStore_Postgres(t *testing.T) {
 	})
 
 	t.Run("delete existing key", func(t *testing.T) {
-		err := store.Set("pgtodelete", []byte("value"))
+		err := store.Set("pgtodelete", []byte("value"), "text")
 		require.NoError(t, err)
 
 		err = store.Delete("pgtodelete")
@@ -267,9 +270,9 @@ func TestStore_Postgres(t *testing.T) {
 	})
 
 	t.Run("list returns keys with metadata", func(t *testing.T) {
-		err := store.Set("pglist1", []byte("short"))
+		err := store.Set("pglist1", []byte("short"), "yaml")
 		require.NoError(t, err)
-		err = store.Set("pglist2", []byte("longer value"))
+		err = store.Set("pglist2", []byte("longer value"), "json")
 		require.NoError(t, err)
 
 		keys, err := store.List()
@@ -281,10 +284,12 @@ func TestStore_Postgres(t *testing.T) {
 		for _, k := range keys {
 			if k.Key == "pglist1" {
 				assert.Equal(t, 5, k.Size)
+				assert.Equal(t, "yaml", k.Format)
 				found1 = true
 			}
 			if k.Key == "pglist2" {
 				assert.Equal(t, 12, k.Size)
+				assert.Equal(t, "json", k.Format)
 				found2 = true
 			}
 		}
@@ -323,4 +328,134 @@ func TestAdoptQuery(t *testing.T) {
 	pgStore := &Store{dbType: DBTypePostgres}
 	assert.Equal(t, "SELECT * FROM kv WHERE key = $1", pgStore.adoptQuery("SELECT * FROM kv WHERE key = ?"))
 	assert.Equal(t, "INSERT INTO kv VALUES ($1, $2, $3)", pgStore.adoptQuery("INSERT INTO kv VALUES (?, ?, ?)"))
+}
+
+func TestSQLite_Format(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	t.Run("set with format and get with format", func(t *testing.T) {
+		err := store.Set("jsonkey", []byte(`{"key": "value"}`), "json")
+		require.NoError(t, err)
+
+		value, format, err := store.GetWithFormat("jsonkey")
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"key": "value"}`, string(value))
+		assert.Equal(t, "json", format)
+	})
+
+	t.Run("empty format defaults to text", func(t *testing.T) {
+		err := store.Set("defaultkey", []byte("some value"), "")
+		require.NoError(t, err)
+
+		value, format, err := store.GetWithFormat("defaultkey")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("some value"), value)
+		assert.Equal(t, "text", format)
+	})
+
+	t.Run("format updates when key is updated", func(t *testing.T) {
+		err := store.Set("updatekey", []byte("original"), "text")
+		require.NoError(t, err)
+
+		_, format, err := store.GetWithFormat("updatekey")
+		require.NoError(t, err)
+		assert.Equal(t, "text", format)
+
+		err = store.Set("updatekey", []byte(`{"new": "value"}`), "json")
+		require.NoError(t, err)
+
+		value, format, err := store.GetWithFormat("updatekey")
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"new": "value"}`, string(value))
+		assert.Equal(t, "json", format)
+	})
+
+	t.Run("GetWithFormat returns ErrNotFound for nonexistent key", func(t *testing.T) {
+		_, _, err := store.GetWithFormat("nonexistent")
+		require.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("various formats", func(t *testing.T) {
+		formats := []string{"text", "json", "yaml", "xml", "toml", "ini", "shell"}
+		for _, fmt := range formats {
+			key := "fmt_" + fmt
+			err := store.Set(key, []byte("content"), fmt)
+			require.NoError(t, err)
+
+			_, gotFmt, err := store.GetWithFormat(key)
+			require.NoError(t, err)
+			assert.Equal(t, fmt, gotFmt)
+		}
+	})
+}
+
+func TestMigration_SQLite_AddFormatColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+
+	// create old schema without format column (simulates pre-migration database)
+	db, err := sqlx.Connect("sqlite", dbPath)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		CREATE TABLE kv (
+			key TEXT PRIMARY KEY,
+			value BLOB NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	require.NoError(t, err)
+
+	// insert data using old schema
+	_, err = db.Exec(`INSERT INTO kv (key, value) VALUES (?, ?)`, "legacy-key", []byte("legacy-value"))
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	// open with New() - should run migration
+	store, err := New(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	// verify format column exists and has default value
+	value, format, err := store.GetWithFormat("legacy-key")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("legacy-value"), value)
+	assert.Equal(t, "text", format, "migrated row should have default format 'text'")
+
+	// verify new data can be written with format
+	err = store.Set("new-key", []byte("new-value"), "json")
+	require.NoError(t, err)
+
+	value, format, err = store.GetWithFormat("new-key")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("new-value"), value)
+	assert.Equal(t, "json", format)
+
+	// verify List works with migrated data
+	keys, err := store.List()
+	require.NoError(t, err)
+	assert.Len(t, keys, 2)
+}
+
+func TestMigration_SQLite_AlreadyMigrated(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "already-migrated.db")
+
+	// create new schema with format column
+	store1, err := New(dbPath)
+	require.NoError(t, err)
+
+	err = store1.Set("test-key", []byte("test-value"), "yaml")
+	require.NoError(t, err)
+	require.NoError(t, store1.Close())
+
+	// open again - migration should be no-op
+	store2, err := New(dbPath)
+	require.NoError(t, err)
+	defer store2.Close()
+
+	value, format, err := store2.GetWithFormat("test-key")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("test-value"), value)
+	assert.Equal(t, "yaml", format)
 }

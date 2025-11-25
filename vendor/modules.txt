@@ -36,6 +36,12 @@ github.com/ProtonMail/go-crypto/openpgp/packet
 github.com/ProtonMail/go-crypto/openpgp/s2k
 github.com/ProtonMail/go-crypto/openpgp/x25519
 github.com/ProtonMail/go-crypto/openpgp/x448
+# github.com/alecthomas/chroma/v2 v2.20.0
+## explicit; go 1.22
+github.com/alecthomas/chroma/v2
+github.com/alecthomas/chroma/v2/formatters/html
+github.com/alecthomas/chroma/v2/lexers
+github.com/alecthomas/chroma/v2/styles
 # github.com/aws/aws-sdk-go-v2 v1.36.3
 ## explicit; go 1.22
 github.com/aws/aws-sdk-go-v2/aws
@@ -197,6 +203,10 @@ github.com/davecgh/go-spew/spew
 # github.com/distribution/reference v0.6.0
 ## explicit; go 1.20
 github.com/distribution/reference
+# github.com/dlclark/regexp2 v1.11.5
+## explicit; go 1.13
+github.com/dlclark/regexp2
+github.com/dlclark/regexp2/syntax
 # github.com/docker/docker v28.1.1+incompatible
 ## explicit
 github.com/docker/docker/api

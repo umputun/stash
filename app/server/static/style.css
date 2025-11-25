@@ -297,6 +297,7 @@ tr.clickable-row {
 
 .modal {
     background-color: var(--color-bg);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
     width: clamp(var(--modal-min-width), var(--modal-width), min(var(--modal-max-width), 90vw));
@@ -341,6 +342,22 @@ tr.clickable-row {
 
 .modal-close:hover {
     color: var(--color-text);
+}
+
+.modal-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.format-select {
+    padding: 4px 8px;
+    font-size: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    text-transform: uppercase;
 }
 
 .modal-body {
@@ -806,4 +823,64 @@ tr.clickable-row {
         width: 28px;
         height: 28px;
     }
+}
+
+/* Select dropdown styling */
+.form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    cursor: pointer;
+}
+
+.form-group select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* Format badge - passive label style */
+.format-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 500;
+    background-color: var(--color-surface);
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border);
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+}
+
+/* Highlighted code container */
+.highlighted-code {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 0;
+    overflow: auto;
+}
+
+.highlighted-code pre {
+    margin: 0;
+    padding: 12px;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Modal form border */
+.modal form {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    margin: -1px;
 }

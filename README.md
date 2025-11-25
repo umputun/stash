@@ -10,6 +10,7 @@ Lightweight key-value configuration service for centralized config management. S
 - Hierarchical keys with slashes (e.g., `app/config/database`)
 - Binary-safe values
 - Light/dark theme with system preference detection
+- Syntax highlighting for values (json, yaml, xml, toml, ini, shell)
 - Optional authentication with username/password login and API tokens
 - Prefix-based access control for both users and API tokens (read/write permissions)
 - Optional git versioning with full audit trail and point-in-time recovery
@@ -312,6 +313,18 @@ curl -X PUT -d 'my value' http://localhost:8080/kv/mykey
 
 Body contains the raw value. Returns 200 on success.
 
+Optionally specify format for syntax highlighting via header or query parameter:
+
+```bash
+# using header
+curl -X PUT -H "X-Stash-Format: json" -d '{"key": "value"}' http://localhost:8080/kv/config
+
+# using query parameter
+curl -X PUT -d '{"key": "value"}' "http://localhost:8080/kv/config?format=json"
+```
+
+Supported formats: `text` (default), `json`, `yaml`, `xml`, `toml`, `ini`, `shell`.
+
 ### Delete key
 
 ```bash
@@ -335,8 +348,34 @@ Access the web interface at `http://localhost:8080/`. Features:
 - Table view of all keys with size and timestamps
 - Search keys by name
 - View, create, edit, and delete keys
+- Syntax highlighting for json, yaml, xml, toml, ini, shell formats (selectable via dropdown)
 - Binary value display (base64 encoded)
 - Light/dark theme toggle
+
+<details markdown>
+  <summary>Screenshots</summary>
+
+### Dashboard - Dark Theme
+
+![Dashboard Dark](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/dashboard-dark-desktop.png)
+
+### Dashboard - Light Theme
+
+![Dashboard Light](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/dashboard-light-desktop.png)
+
+### View with Syntax Highlighting
+
+![View Modal](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/view-modal-json.png)
+
+### Edit Form with Format Selector
+
+![Edit Form](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/edit-form.png)
+
+### Login Form
+
+![Login Form](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/login-form.png)
+
+</details>
 
 ## Examples
 

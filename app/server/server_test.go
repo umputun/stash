@@ -61,7 +61,7 @@ func TestServer_HandleGet(t *testing.T) {
 func TestServer_HandleSet(t *testing.T) {
 	t.Run("set new key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return nil },
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -79,7 +79,7 @@ func TestServer_HandleSet(t *testing.T) {
 
 	t.Run("update existing key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return nil },
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -97,7 +97,7 @@ func TestServer_HandleSet(t *testing.T) {
 
 	t.Run("set key with slashes", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return nil },
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -111,6 +111,76 @@ func TestServer_HandleSet(t *testing.T) {
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "a/b/c", st.SetCalls()[0].Key)
 		assert.Equal(t, []byte("nested"), st.SetCalls()[0].Value)
+	})
+
+	t.Run("valid format via header", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		body := bytes.NewBufferString(`{"key": "value"}`)
+		req := httptest.NewRequest(http.MethodPut, "/kv/config", body)
+		req.Header.Set("X-Stash-Format", "json")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1)
+		assert.Equal(t, "json", st.SetCalls()[0].Format)
+	})
+
+	t.Run("valid format via query param", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		body := bytes.NewBufferString("key: value")
+		req := httptest.NewRequest(http.MethodPut, "/kv/config?format=yaml", body)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1)
+		assert.Equal(t, "yaml", st.SetCalls()[0].Format)
+	})
+
+	t.Run("invalid format defaults to text", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		body := bytes.NewBufferString("value")
+		req := httptest.NewRequest(http.MethodPut, "/kv/config", body)
+		req.Header.Set("X-Stash-Format", "invalid-format")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1)
+		assert.Equal(t, "text", st.SetCalls()[0].Format)
+	})
+
+	t.Run("empty format defaults to text", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		body := bytes.NewBufferString("value")
+		req := httptest.NewRequest(http.MethodPut, "/kv/config", body)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1)
+		assert.Equal(t, "text", st.SetCalls()[0].Format)
 	})
 }
 
@@ -180,7 +250,7 @@ func TestServer_HandleGet_InternalError(t *testing.T) {
 
 func TestServer_HandleSet_InternalError(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte) error { return errors.New("db error") },
+		SetFunc:  func(key string, value []byte, format string) error { return errors.New("db error") },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
@@ -232,7 +302,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 			}
 			return nil, store.ErrNotFound
 		},
-		SetFunc:  func(key string, value []byte) error { return nil },
+		SetFunc:  func(key string, value []byte, format string) error { return nil },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 
@@ -309,7 +379,7 @@ func newTestServer(t *testing.T, st KVStore) *Server {
 func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 	t.Run("handleKeyCreate calls gitCommit", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return nil },
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
@@ -330,7 +400,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 
 	t.Run("handleKeyUpdate calls gitCommit", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return nil },
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{

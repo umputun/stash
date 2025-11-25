@@ -13,6 +13,7 @@ var ErrNotFound = errors.New("key not found")
 type KeyInfo struct {
 	Key       string    `db:"key"`
 	Size      int       `db:"size"`
+	Format    string    `db:"format"`
 	CreatedAt time.Time `db:"created_at"`
 	UpdatedAt time.Time `db:"updated_at"`
 }

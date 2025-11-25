@@ -21,10 +21,13 @@ import (
 //			GetFunc: func(key string) ([]byte, error) {
 //				panic("mock out the Get method")
 //			},
+//			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+//				panic("mock out the GetWithFormat method")
+//			},
 //			ListFunc: func() ([]store.KeyInfo, error) {
 //				panic("mock out the List method")
 //			},
-//			SetFunc: func(key string, value []byte) error {
+//			SetFunc: func(key string, value []byte, format string) error {
 //				panic("mock out the Set method")
 //			},
 //		}
@@ -40,11 +43,14 @@ type KVStoreMock struct {
 	// GetFunc mocks the Get method.
 	GetFunc func(key string) ([]byte, error)
 
+	// GetWithFormatFunc mocks the GetWithFormat method.
+	GetWithFormatFunc func(key string) ([]byte, string, error)
+
 	// ListFunc mocks the List method.
 	ListFunc func() ([]store.KeyInfo, error)
 
 	// SetFunc mocks the Set method.
-	SetFunc func(key string, value []byte) error
+	SetFunc func(key string, value []byte, format string) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -58,6 +64,11 @@ type KVStoreMock struct {
 			// Key is the key argument value.
 			Key string
 		}
+		// GetWithFormat holds details about calls to the GetWithFormat method.
+		GetWithFormat []struct {
+			// Key is the key argument value.
+			Key string
+		}
 		// List holds details about calls to the List method.
 		List []struct {
 		}
@@ -67,12 +78,15 @@ type KVStoreMock struct {
 			Key string
 			// Value is the value argument value.
 			Value []byte
+			// Format is the format argument value.
+			Format string
 		}
 	}
-	lockDelete sync.RWMutex
-	lockGet    sync.RWMutex
-	lockList   sync.RWMutex
-	lockSet    sync.RWMutex
+	lockDelete        sync.RWMutex
+	lockGet           sync.RWMutex
+	lockGetWithFormat sync.RWMutex
+	lockList          sync.RWMutex
+	lockSet           sync.RWMutex
 }
 
 // Delete calls DeleteFunc.
@@ -139,6 +153,38 @@ func (mock *KVStoreMock) GetCalls() []struct {
 	return calls
 }
 
+// GetWithFormat calls GetWithFormatFunc.
+func (mock *KVStoreMock) GetWithFormat(key string) ([]byte, string, error) {
+	if mock.GetWithFormatFunc == nil {
+		panic("KVStoreMock.GetWithFormatFunc: method is nil but KVStore.GetWithFormat was just called")
+	}
+	callInfo := struct {
+		Key string
+	}{
+		Key: key,
+	}
+	mock.lockGetWithFormat.Lock()
+	mock.calls.GetWithFormat = append(mock.calls.GetWithFormat, callInfo)
+	mock.lockGetWithFormat.Unlock()
+	return mock.GetWithFormatFunc(key)
+}
+
+// GetWithFormatCalls gets all the calls that were made to GetWithFormat.
+// Check the length with:
+//
+//	len(mockedKVStore.GetWithFormatCalls())
+func (mock *KVStoreMock) GetWithFormatCalls() []struct {
+	Key string
+} {
+	var calls []struct {
+		Key string
+	}
+	mock.lockGetWithFormat.RLock()
+	calls = mock.calls.GetWithFormat
+	mock.lockGetWithFormat.RUnlock()
+	return calls
+}
+
 // List calls ListFunc.
 func (mock *KVStoreMock) List() ([]store.KeyInfo, error) {
 	if mock.ListFunc == nil {
@@ -167,21 +213,23 @@ func (mock *KVStoreMock) ListCalls() []struct {
 }
 
 // Set calls SetFunc.
-func (mock *KVStoreMock) Set(key string, value []byte) error {
+func (mock *KVStoreMock) Set(key string, value []byte, format string) error {
 	if mock.SetFunc == nil {
 		panic("KVStoreMock.SetFunc: method is nil but KVStore.Set was just called")
 	}
 	callInfo := struct {
-		Key   string
-		Value []byte
+		Key    string
+		Value  []byte
+		Format string
 	}{
-		Key:   key,
-		Value: value,
+		Key:    key,
+		Value:  value,
+		Format: format,
 	}
 	mock.lockSet.Lock()
 	mock.calls.Set = append(mock.calls.Set, callInfo)
 	mock.lockSet.Unlock()
-	return mock.SetFunc(key, value)
+	return mock.SetFunc(key, value, format)
 }
 
 // SetCalls gets all the calls that were made to Set.
@@ -189,12 +237,14 @@ func (mock *KVStoreMock) Set(key string, value []byte) error {
 //
 //	len(mockedKVStore.SetCalls())
 func (mock *KVStoreMock) SetCalls() []struct {
-	Key   string
-	Value []byte
+	Key    string
+	Value  []byte
+	Format string
 } {
 	var calls []struct {
-		Key   string
-		Value []byte
+		Key    string
+		Value  []byte
+		Format string
 	}
 	mock.lockSet.RLock()
 	calls = mock.calls.Set

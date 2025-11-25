@@ -1,9 +1,16 @@
 {{define "form"}}
 <div class="modal-header">
     <h2>{{if .IsNew}}Create Key{{else}}Edit Key{{end}}</h2>
-    <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
+    <div class="modal-header-right">
+        <select id="format" name="format" form="kv-form" class="format-select">
+            {{range .Formats}}
+            <option value="{{.}}"{{if eq . $.Format}} selected{{end}}>{{.}}</option>
+            {{end}}
+        </select>
+        <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
+    </div>
 </div>
-<form {{if .IsNew}}hx-post="{{.BaseURL}}/web/keys"{{else}}hx-put="{{.BaseURL}}/web/keys/{{.Key | urlEncode}}"{{end}}
+<form id="kv-form" {{if .IsNew}}hx-post="{{.BaseURL}}/web/keys"{{else}}hx-put="{{.BaseURL}}/web/keys/{{.Key | urlEncode}}"{{end}}
       hx-target="#keys-table"
       hx-swap="innerHTML"
       data-close-modal>

@@ -1,7 +1,10 @@
 {{define "view"}}
 <div class="modal-header">
     <h2>View Key</h2>
-    <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
+    <div class="modal-header-right">
+        {{if and .Format (ne .Format "text")}}<span class="format-badge">{{.Format}}</span>{{end}}
+        <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
+    </div>
 </div>
 <div class="modal-body">
     <div class="form-group">
@@ -13,7 +16,7 @@
         {{if .IsBinary}}
         <span class="binary-indicator">Base64 encoded</span>
         {{end}}
-        <div class="value-display value-content">{{.Value}}</div>
+        <div class="value-display value-content highlighted-code">{{.HighlightedVal}}</div>
     </div>
 </div>
 <div class="modal-footer">

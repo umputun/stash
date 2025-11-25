@@ -214,7 +214,7 @@ func runRestore() error {
 	// insert all key-value pairs from git
 	var restored int
 	for key, value := range kvPairs {
-		if setErr := kvStore.Set(key, value); setErr != nil {
+		if setErr := kvStore.Set(key, value, "text"); setErr != nil {
 			log.Printf("[WARN] failed to restore key %s: %v", key, setErr)
 			continue
 		}
