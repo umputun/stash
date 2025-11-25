@@ -17,6 +17,17 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
+// Author represents the author of a git commit.
+type Author struct {
+	Name  string
+	Email string
+}
+
+// DefaultAuthor returns the default author for git commits.
+func DefaultAuthor() Author {
+	return Author{Name: "stash", Email: "stash@localhost"}
+}
+
 // Config holds git repository configuration
 type Config struct {
 	Path   string // local repository path
@@ -142,8 +153,9 @@ func (s *Store) createNewRepo() error {
 	return nil
 }
 
-// Commit writes key-value to file and commits to git
-func (s *Store) Commit(key string, value []byte, operation string) error {
+// Commit writes key-value to file and commits to git.
+// The author parameter specifies who made the change.
+func (s *Store) Commit(key string, value []byte, operation string, author Author) error {
 	// validate key before any file operations
 	if err := s.validateKey(key); err != nil {
 		return err
@@ -179,8 +191,8 @@ func (s *Store) Commit(key string, value []byte, operation string) error {
 
 	_, commitErr := wt.Commit(msg, &git.CommitOptions{
 		Author: &object.Signature{
-			Name:  "stash",
-			Email: "stash@localhost",
+			Name:  author.Name,
+			Email: author.Email,
 			When:  time.Now(),
 		},
 	})
@@ -191,8 +203,9 @@ func (s *Store) Commit(key string, value []byte, operation string) error {
 	return nil
 }
 
-// Delete removes key file and commits the deletion
-func (s *Store) Delete(key string) error {
+// Delete removes key file and commits the deletion.
+// The author parameter specifies who made the change.
+func (s *Store) Delete(key string, author Author) error {
 	// validate key before any file operations
 	if err := s.validateKey(key); err != nil {
 		return err
@@ -225,8 +238,8 @@ func (s *Store) Delete(key string) error {
 	msg := fmt.Sprintf("delete %s\n\ntimestamp: %s\noperation: delete\nkey: %s", key, time.Now().Format(time.RFC3339), key)
 	_, commitErr := wt.Commit(msg, &git.CommitOptions{
 		Author: &object.Signature{
-			Name:  "stash",
-			Email: "stash@localhost",
+			Name:  author.Name,
+			Email: author.Email,
 			When:  time.Now(),
 		},
 	})

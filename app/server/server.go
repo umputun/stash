@@ -13,6 +13,7 @@ import (
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/routegroup"
 
+	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -48,8 +49,8 @@ type KVStore interface {
 // GitStore defines the interface for git-based versioning operations.
 // Defined here (consumer side) to allow different git implementations.
 type GitStore interface {
-	Commit(key string, value []byte, operation string) error
-	Delete(key string) error
+	Commit(key string, value []byte, operation string, author git.Author) error
+	Delete(key string, author git.Author) error
 	Pull() error
 	Push() error
 }

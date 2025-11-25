@@ -8,6 +8,7 @@ import (
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/rest"
 
+	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -72,7 +73,7 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] set %s (%d bytes, format=%s)", key, len(value), format)
 
 	// commit to git if enabled
-	s.gitCommit(key, value, "set")
+	s.gitCommit(r, key, value, "set")
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -99,19 +100,20 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] delete %s", key)
 
 	// delete from git if enabled
-	s.gitDelete(key)
+	s.gitDelete(r, key)
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // gitCommit commits a key-value change to git if enabled.
 // logs warning on failure but does not fail the API request.
-func (s *Server) gitCommit(key string, value []byte, operation string) {
+func (s *Server) gitCommit(r *http.Request, key string, value []byte, operation string) {
 	if s.gitStore == nil {
 		return
 	}
 
-	if err := s.gitStore.Commit(key, value, operation); err != nil {
+	author := s.getAuthorFromRequest(r)
+	if err := s.gitStore.Commit(key, value, operation, author); err != nil {
 		log.Printf("[WARN] git commit failed for %s: %v", key, err)
 		return
 	}
@@ -123,12 +125,13 @@ func (s *Server) gitCommit(key string, value []byte, operation string) {
 
 // gitDelete deletes a key from git if enabled.
 // logs warning on failure but does not fail the API request.
-func (s *Server) gitDelete(key string) {
+func (s *Server) gitDelete(r *http.Request, key string) {
 	if s.gitStore == nil {
 		return
 	}
 
-	if err := s.gitStore.Delete(key); err != nil {
+	author := s.getAuthorFromRequest(r)
+	if err := s.gitStore.Delete(key, author); err != nil {
 		log.Printf("[WARN] git delete failed for %s: %v", key, err)
 		return
 	}
@@ -136,6 +139,29 @@ func (s *Server) gitDelete(key string) {
 	if s.cfg.GitPush {
 		s.gitPullAndPush()
 	}
+}
+
+// getAuthorFromRequest extracts the git author from request context.
+// returns username from session cookie for web UI users, default author otherwise.
+func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
+	if s.auth == nil {
+		return git.DefaultAuthor()
+	}
+
+	// check session cookie for web UI users
+	for _, cookieName := range sessionCookieNames {
+		cookie, err := r.Cookie(cookieName)
+		if err != nil {
+			continue
+		}
+		username, valid := s.auth.GetSessionUser(cookie.Value)
+		if valid && username != "" {
+			return git.Author{Name: username, Email: username + "@stash"}
+		}
+	}
+
+	// API tokens use default author
+	return git.DefaultAuthor()
 }
 
 // gitPullAndPush pulls from remote, then pushes local commits.

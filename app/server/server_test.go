@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
 )
@@ -383,7 +385,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
-			CommitFunc: func(key string, value []byte, operation string) error { return nil },
+			CommitFunc: func(key string, value []byte, operation string, author git.Author) error { return nil },
 		}
 		srv := newTestServer(t, st)
 		srv.SetGitStore(gs)
@@ -404,7 +406,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
-			CommitFunc: func(key string, value []byte, operation string) error { return nil },
+			CommitFunc: func(key string, value []byte, operation string, author git.Author) error { return nil },
 		}
 		srv := newTestServer(t, st)
 		srv.SetGitStore(gs)
@@ -425,7 +427,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
-			DeleteFunc: func(key string) error { return nil },
+			DeleteFunc: func(key string, author git.Author) error { return nil },
 		}
 		srv := newTestServer(t, st)
 		srv.SetGitStore(gs)
@@ -436,5 +438,69 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 
 		require.Len(t, gs.DeleteCalls(), 1, "gitDelete should be called")
 		assert.Equal(t, "app/config", gs.DeleteCalls()[0].Key)
+	})
+}
+
+func TestServer_GetAuthorFromRequest(t *testing.T) {
+	t.Run("returns default author when auth is nil", func(t *testing.T) {
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv := newTestServer(t, st) // no auth configured
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, git.DefaultAuthor(), author)
+	})
+
+	t.Run("returns default author when no session cookie", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
+
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, git.DefaultAuthor(), author)
+	})
+
+	t.Run("returns user author when valid session exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
+
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		require.NoError(t, err)
+
+		// create session
+		sessionToken, err := srv.auth.CreateSession("testuser")
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, "testuser", author.Name)
+		assert.Equal(t, "testuser@stash", author.Email)
+	})
+
+	t.Run("returns default author for invalid session", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
+
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "invalid-token"})
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, git.DefaultAuthor(), author)
 	})
 }

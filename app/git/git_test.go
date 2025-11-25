@@ -61,7 +61,7 @@ func TestStore_Commit(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
-		err = store.Commit("app/config/db", []byte("postgres://localhost/db"), "set")
+		err = store.Commit("app/config/db", []byte("postgres://localhost/db"), "set", DefaultAuthor())
 		require.NoError(t, err)
 
 		// verify file exists
@@ -76,7 +76,7 @@ func TestStore_Commit(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
-		err = store.Commit("deep/nested/path/key", []byte("value"), "set")
+		err = store.Commit("deep/nested/path/key", []byte("value"), "set", DefaultAuthor())
 		require.NoError(t, err)
 
 		valFile := filepath.Join(store.cfg.Path, "deep", "nested", "path", "key.val")
@@ -91,7 +91,7 @@ func TestStore_Commit(t *testing.T) {
 		require.NoError(t, err)
 
 		binary := []byte{0x00, 0x01, 0xFF, 0xFE}
-		err = store.Commit("binary/key", binary, "set")
+		err = store.Commit("binary/key", binary, "set", DefaultAuthor())
 		require.NoError(t, err)
 
 		valFile := filepath.Join(store.cfg.Path, "binary", "key.val")
@@ -108,11 +108,11 @@ func TestStore_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		// create key first
-		err = store.Commit("app/config/db", []byte("value"), "set")
+		err = store.Commit("app/config/db", []byte("value"), "set", DefaultAuthor())
 		require.NoError(t, err)
 
 		// delete key
-		err = store.Delete("app/config/db")
+		err = store.Delete("app/config/db", DefaultAuthor())
 		require.NoError(t, err)
 
 		// verify file is deleted
@@ -126,7 +126,7 @@ func TestStore_Delete(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
-		err = store.Delete("nonexistent/key")
+		err = store.Delete("nonexistent/key", DefaultAuthor())
 		require.NoError(t, err)
 	})
 }
@@ -138,9 +138,9 @@ func TestStore_ReadAll(t *testing.T) {
 		require.NoError(t, err)
 
 		// create multiple keys
-		require.NoError(t, store.Commit("key1", []byte("value1"), "set"))
-		require.NoError(t, store.Commit("app/config/db", []byte("postgres://"), "set"))
-		require.NoError(t, store.Commit("app/config/redis", []byte("redis://"), "set"))
+		require.NoError(t, store.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
+		require.NoError(t, store.Commit("app/config/db", []byte("postgres://"), "set", DefaultAuthor()))
+		require.NoError(t, store.Commit("app/config/redis", []byte("redis://"), "set", DefaultAuthor()))
 
 		// read all
 		result, err := store.ReadAll()
@@ -169,7 +169,7 @@ func TestStore_Checkout(t *testing.T) {
 		require.NoError(t, err)
 
 		// create first key
-		require.NoError(t, store.Commit("key1", []byte("value1"), "set"))
+		require.NoError(t, store.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
 
 		// get commit hash
 		head, err := store.repo.Head()
@@ -177,7 +177,7 @@ func TestStore_Checkout(t *testing.T) {
 		commitHash := head.Hash().String()
 
 		// create second key
-		require.NoError(t, store.Commit("key2", []byte("value2"), "set"))
+		require.NoError(t, store.Commit("key2", []byte("value2"), "set", DefaultAuthor()))
 
 		// checkout first commit
 		err = store.Checkout(commitHash)
@@ -239,7 +239,7 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 
 		for _, key := range invalidKeys {
-			err = store.Commit(key, []byte("malicious"), "set")
+			err = store.Commit(key, []byte("malicious"), "set", DefaultAuthor())
 			require.Error(t, err, "should reject key: %q", key)
 			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
 		}
@@ -262,7 +262,7 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 
 		for _, key := range invalidKeys {
-			err = store.Delete(key)
+			err = store.Delete(key, DefaultAuthor())
 			require.Error(t, err, "should reject key: %q", key)
 			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
 		}
@@ -281,7 +281,7 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 
 		for _, key := range validKeys {
-			err = store.Commit(key, []byte("value"), "set")
+			err = store.Commit(key, []byte("value"), "set", DefaultAuthor())
 			require.NoError(t, err, "should allow key: %s", key)
 		}
 	})
@@ -326,7 +326,7 @@ func TestStore_BranchUsage(t *testing.T) {
 		require.NoError(t, err)
 
 		// commit a key
-		require.NoError(t, store.Commit("key1", []byte("value1"), "set"))
+		require.NoError(t, store.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
 
 		// verify HEAD is on the configured branch
 		head, err := store.repo.Head()
@@ -346,12 +346,12 @@ func TestStore_BranchUsage(t *testing.T) {
 		// create repo on master first
 		store1, err := New(Config{Path: repoPath, Branch: "master"})
 		require.NoError(t, err)
-		require.NoError(t, store1.Commit("key1", []byte("value1"), "set"))
+		require.NoError(t, store1.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
 
 		// reopen with different branch
 		store2, err := New(Config{Path: repoPath, Branch: "develop"})
 		require.NoError(t, err)
-		require.NoError(t, store2.Commit("key2", []byte("value2"), "set"))
+		require.NoError(t, store2.Commit("key2", []byte("value2"), "set", DefaultAuthor()))
 
 		// verify HEAD is on develop
 		head, err := store2.repo.Head()

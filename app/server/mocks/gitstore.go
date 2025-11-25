@@ -5,6 +5,8 @@ package mocks
 
 import (
 	"sync"
+
+	"github.com/umputun/stash/app/git"
 )
 
 // GitStoreMock is a mock implementation of server.GitStore.
@@ -13,10 +15,10 @@ import (
 //
 //		// make and configure a mocked server.GitStore
 //		mockedGitStore := &GitStoreMock{
-//			CommitFunc: func(key string, value []byte, operation string) error {
+//			CommitFunc: func(key string, value []byte, operation string, author git.Author) error {
 //				panic("mock out the Commit method")
 //			},
-//			DeleteFunc: func(key string) error {
+//			DeleteFunc: func(key string, author git.Author) error {
 //				panic("mock out the Delete method")
 //			},
 //			PullFunc: func() error {
@@ -33,10 +35,10 @@ import (
 //	}
 type GitStoreMock struct {
 	// CommitFunc mocks the Commit method.
-	CommitFunc func(key string, value []byte, operation string) error
+	CommitFunc func(key string, value []byte, operation string, author git.Author) error
 
 	// DeleteFunc mocks the Delete method.
-	DeleteFunc func(key string) error
+	DeleteFunc func(key string, author git.Author) error
 
 	// PullFunc mocks the Pull method.
 	PullFunc func() error
@@ -54,11 +56,15 @@ type GitStoreMock struct {
 			Value []byte
 			// Operation is the operation argument value.
 			Operation string
+			// Author is the author argument value.
+			Author git.Author
 		}
 		// Delete holds details about calls to the Delete method.
 		Delete []struct {
 			// Key is the key argument value.
 			Key string
+			// Author is the author argument value.
+			Author git.Author
 		}
 		// Pull holds details about calls to the Pull method.
 		Pull []struct {
@@ -74,7 +80,7 @@ type GitStoreMock struct {
 }
 
 // Commit calls CommitFunc.
-func (mock *GitStoreMock) Commit(key string, value []byte, operation string) error {
+func (mock *GitStoreMock) Commit(key string, value []byte, operation string, author git.Author) error {
 	if mock.CommitFunc == nil {
 		panic("GitStoreMock.CommitFunc: method is nil but GitStore.Commit was just called")
 	}
@@ -82,15 +88,17 @@ func (mock *GitStoreMock) Commit(key string, value []byte, operation string) err
 		Key       string
 		Value     []byte
 		Operation string
+		Author    git.Author
 	}{
 		Key:       key,
 		Value:     value,
 		Operation: operation,
+		Author:    author,
 	}
 	mock.lockCommit.Lock()
 	mock.calls.Commit = append(mock.calls.Commit, callInfo)
 	mock.lockCommit.Unlock()
-	return mock.CommitFunc(key, value, operation)
+	return mock.CommitFunc(key, value, operation, author)
 }
 
 // CommitCalls gets all the calls that were made to Commit.
@@ -101,11 +109,13 @@ func (mock *GitStoreMock) CommitCalls() []struct {
 	Key       string
 	Value     []byte
 	Operation string
+	Author    git.Author
 } {
 	var calls []struct {
 		Key       string
 		Value     []byte
 		Operation string
+		Author    git.Author
 	}
 	mock.lockCommit.RLock()
 	calls = mock.calls.Commit
@@ -114,19 +124,21 @@ func (mock *GitStoreMock) CommitCalls() []struct {
 }
 
 // Delete calls DeleteFunc.
-func (mock *GitStoreMock) Delete(key string) error {
+func (mock *GitStoreMock) Delete(key string, author git.Author) error {
 	if mock.DeleteFunc == nil {
 		panic("GitStoreMock.DeleteFunc: method is nil but GitStore.Delete was just called")
 	}
 	callInfo := struct {
-		Key string
+		Key    string
+		Author git.Author
 	}{
-		Key: key,
+		Key:    key,
+		Author: author,
 	}
 	mock.lockDelete.Lock()
 	mock.calls.Delete = append(mock.calls.Delete, callInfo)
 	mock.lockDelete.Unlock()
-	return mock.DeleteFunc(key)
+	return mock.DeleteFunc(key, author)
 }
 
 // DeleteCalls gets all the calls that were made to Delete.
@@ -134,10 +146,12 @@ func (mock *GitStoreMock) Delete(key string) error {
 //
 //	len(mockedGitStore.DeleteCalls())
 func (mock *GitStoreMock) DeleteCalls() []struct {
-	Key string
+	Key    string
+	Author git.Author
 } {
 	var calls []struct {
-		Key string
+		Key    string
+		Author git.Author
 	}
 	mock.lockDelete.RLock()
 	calls = mock.calls.Delete

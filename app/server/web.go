@@ -601,7 +601,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// commit to git if enabled
-	s.gitCommit(key, value, "set")
+	s.gitCommit(r, key, value, "set")
 
 	// return updated keys table
 	s.handleKeyList(w, r)
@@ -659,7 +659,7 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// commit to git if enabled
-	s.gitCommit(key, value, "set")
+	s.gitCommit(r, key, value, "set")
 
 	// return updated keys table
 	s.handleKeyList(w, r)
@@ -687,7 +687,7 @@ func (s *Server) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// delete from git if enabled
-	s.gitDelete(key)
+	s.gitDelete(r, key)
 
 	// return updated keys table
 	s.handleKeyList(w, r)
