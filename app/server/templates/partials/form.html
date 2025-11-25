@@ -9,15 +9,14 @@
       data-close-modal>
     <div class="modal-body">
         {{if .Error}}
-        <div class="form-group">
-            <div style="color: var(--color-danger);">{{.Error}}</div>
-        </div>
+        <div class="error-message" id="form-error">{{.Error}}</div>
         {{end}}
         <div class="form-group">
             <label for="key">Key</label>
             <input type="text" id="key" name="key" value="{{.Key}}"
                    {{if not .IsNew}}readonly{{end}}
                    placeholder="e.g., app/config/database"
+                   oninput="var e=document.getElementById('form-error');if(e)e.remove()"
                    required>
             {{if .IsNew}}
             <div class="form-hint">Use slashes to organize keys hierarchically</div>
@@ -30,6 +29,7 @@
             <input type="hidden" name="is_binary" value="true">
             {{end}}
             <textarea id="value" name="value" placeholder="Enter value..."
+                      oninput="var e=document.getElementById('form-error');if(e)e.remove()"
                       required>{{.Value}}</textarea>
         </div>
     </div>

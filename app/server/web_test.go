@@ -867,7 +867,8 @@ func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.Equal(t, http.StatusOK, rec.Code) // returns form with error message
+		assert.Contains(t, rec.Body.String(), "Access denied")
 	})
 
 	t.Run("scoped user can create key in allowed prefix", func(t *testing.T) {
@@ -889,7 +890,8 @@ func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.Equal(t, http.StatusOK, rec.Code) // returns form with error message
+		assert.Contains(t, rec.Body.String(), "Access denied")
 	})
 }
 
@@ -921,7 +923,8 @@ func TestHandleKeyUpdate_PermissionEnforcement(t *testing.T) {
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.Equal(t, http.StatusOK, rec.Code) // returns form with error message
+		assert.Contains(t, rec.Body.String(), "Access denied")
 	})
 
 	t.Run("scoped user can update key in allowed prefix", func(t *testing.T) {
@@ -943,7 +946,8 @@ func TestHandleKeyUpdate_PermissionEnforcement(t *testing.T) {
 		req.AddCookie(cookie)
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
-		assert.Equal(t, http.StatusForbidden, rec.Code)
+		assert.Equal(t, http.StatusOK, rec.Code) // returns form with error message
+		assert.Contains(t, rec.Body.String(), "Access denied")
 	})
 }
 

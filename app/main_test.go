@@ -512,7 +512,9 @@ tokens:
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+		assert.Equal(t, http.StatusOK, resp.StatusCode) // returns form with error message
+		body, _ := io.ReadAll(resp.Body)
+		assert.Contains(t, string(body), "Access denied")
 	})
 
 	t.Run("readonly user cannot access new key form", func(t *testing.T) {

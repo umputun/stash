@@ -552,7 +552,19 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	// check write permission for this specific key
 	username := s.getCurrentUser(r)
 	if !s.auth.CheckUserPermission(username, key, true) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		// re-render form with error message, retarget to modal content
+		w.Header().Set("HX-Retarget", "#modal-content")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		data := templateData{
+			Key:     key,
+			Value:   valueStr,
+			IsNew:   true,
+			Error:   "Access denied: you don't have write permission for this key prefix",
+			BaseURL: s.baseURL,
+		}
+		if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
+			log.Printf("[ERROR] failed to execute template: %v", err)
+		}
 		return
 	}
 
@@ -579,13 +591,6 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 
-	// check write permission
-	username := s.getCurrentUser(r)
-	if !s.auth.CheckUserPermission(username, key, true) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
@@ -593,6 +598,29 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
+
+	// check write permission
+	username := s.getCurrentUser(r)
+	if !s.auth.CheckUserPermission(username, key, true) {
+		// re-render form with error message, retarget to modal content
+		w.Header().Set("HX-Retarget", "#modal-content")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		modalWidth, textareaHeight := s.calculateModalDimensions(valueStr)
+		data := templateData{
+			Key:            key,
+			Value:          valueStr,
+			IsBinary:       isBinary,
+			IsNew:          false,
+			Error:          "Access denied: you don't have write permission for this key",
+			BaseURL:        s.baseURL,
+			ModalWidth:     modalWidth,
+			TextareaHeight: textareaHeight,
+		}
+		if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
+			log.Printf("[ERROR] failed to execute template: %v", err)
+		}
+		return
+	}
 
 	value, err := valueFromForm(valueStr, isBinary)
 	if err != nil {
@@ -620,7 +648,7 @@ func (s *Server) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 	// check write permission
 	username := s.getCurrentUser(r)
 	if !s.auth.CheckUserPermission(username, key, true) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
 
