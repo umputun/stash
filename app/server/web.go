@@ -31,6 +31,9 @@ type templateData struct {
 	Keys           []store.KeyInfo
 	Key            string
 	Value          string
+	HighlightedVal template.HTML // syntax-highlighted value for view modal
+	Format         string        // format type (text, json, yaml, etc.)
+	Formats        []string      // available format options
 	IsBinary       bool
 	IsNew          bool
 	Theme          string
@@ -441,6 +444,8 @@ func (s *Server) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 
 	data := templateData{
 		IsNew:    true,
+		Format:   "text",
+		Formats:  s.highlighter.SupportedFormats(),
 		Theme:    getTheme(r),
 		BaseURL:  s.baseURL,
 		CanWrite: true,
@@ -462,7 +467,7 @@ func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.store.Get(key)
+	value, format, err := s.store.GetWithFormat(key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -475,9 +480,18 @@ func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 
 	displayValue, isBinary := valueForDisplay(value)
 	modalWidth, textareaHeight := s.calculateModalDimensions(displayValue)
+
+	// generate highlighted HTML if not binary
+	var highlightedVal template.HTML
+	if !isBinary {
+		highlightedVal = s.highlighter.Code(displayValue, format)
+	}
+
 	data := templateData{
 		Key:            key,
 		Value:          displayValue,
+		HighlightedVal: highlightedVal,
+		Format:         format,
 		IsBinary:       isBinary,
 		Theme:          getTheme(r),
 		BaseURL:        s.baseURL,
@@ -503,7 +517,7 @@ func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.store.Get(key)
+	value, format, err := s.store.GetWithFormat(key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -519,6 +533,8 @@ func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 	data := templateData{
 		Key:            key,
 		Value:          displayValue,
+		Format:         format,
+		Formats:        s.highlighter.SupportedFormats(),
 		IsBinary:       isBinary,
 		Theme:          getTheme(r),
 		BaseURL:        s.baseURL,
@@ -543,6 +559,10 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	key := r.FormValue("key")
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
+	format := r.FormValue("format")
+	if !s.highlighter.IsValidFormat(format) {
+		format = "text"
+	}
 
 	if key == "" {
 		http.Error(w, "key is required", http.StatusBadRequest)
@@ -574,7 +594,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Set(key, value); err != nil {
+	if err := s.store.Set(key, value, format); err != nil {
 		log.Printf("[ERROR] failed to set key: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -598,6 +618,10 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
+	format := r.FormValue("format")
+	if !s.highlighter.IsValidFormat(format) {
+		format = "text"
+	}
 
 	// check write permission
 	username := s.getCurrentUser(r)
@@ -628,7 +652,7 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Set(key, value); err != nil {
+	if err := s.store.Set(key, value, format); err != nil {
 		log.Printf("[ERROR] failed to set key: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return

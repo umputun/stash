@@ -282,11 +282,11 @@ func TestHandleKeyNew(t *testing.T) {
 
 func TestHandleKeyView(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc: func(key string) ([]byte, error) {
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
 			if key == "testkey" {
-				return []byte("testvalue"), nil
+				return []byte("testvalue"), "text", nil
 			}
-			return nil, store.ErrNotFound
+			return nil, "", store.ErrNotFound
 		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
@@ -312,11 +312,11 @@ func TestHandleKeyView(t *testing.T) {
 
 func TestHandleKeyEdit(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc: func(key string) ([]byte, error) {
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
 			if key == "editkey" {
-				return []byte("editvalue"), nil
+				return []byte("editvalue"), "text", nil
 			}
-			return nil, store.ErrNotFound
+			return nil, "", store.ErrNotFound
 		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
@@ -342,7 +342,7 @@ func TestHandleKeyEdit(t *testing.T) {
 
 func TestHandleKeyCreate(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte) error { return nil },
+		SetFunc:  func(key string, value []byte, format string) error { return nil },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
@@ -364,7 +364,7 @@ func TestHandleKeyCreate(t *testing.T) {
 
 func TestHandleKeyUpdate(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte) error { return nil },
+		SetFunc:  func(key string, value []byte, format string) error { return nil },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
@@ -432,7 +432,7 @@ func TestHandleKeyDelete(t *testing.T) {
 func TestHandleKeyCreate_Errors(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return nil },
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -449,7 +449,7 @@ func TestHandleKeyCreate_Errors(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return errors.New("db error") },
+			SetFunc:  func(key string, value []byte, format string) error { return errors.New("db error") },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -467,7 +467,7 @@ func TestHandleKeyCreate_Errors(t *testing.T) {
 func TestHandleKeyUpdate_Errors(t *testing.T) {
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte) error { return errors.New("db error") },
+			SetFunc:  func(key string, value []byte, format string) error { return errors.New("db error") },
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -736,12 +736,12 @@ func TestServer_CookiePath(t *testing.T) {
 
 func TestHandleKeyView_PermissionEnforcement(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc: func(key string) ([]byte, error) {
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
 			switch key {
 			case "app/config", "other/key":
-				return []byte("value"), nil
+				return []byte("value"), "text", nil
 			}
-			return nil, store.ErrNotFound
+			return nil, "", store.ErrNotFound
 		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
@@ -788,12 +788,12 @@ func TestHandleKeyView_PermissionEnforcement(t *testing.T) {
 
 func TestHandleKeyEdit_PermissionEnforcement(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc: func(key string) ([]byte, error) {
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
 			switch key {
 			case "app/config", "other/key":
-				return []byte("value"), nil
+				return []byte("value"), "text", nil
 			}
-			return nil, store.ErrNotFound
+			return nil, "", store.ErrNotFound
 		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
@@ -840,7 +840,7 @@ func TestHandleKeyEdit_PermissionEnforcement(t *testing.T) {
 
 func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte) error { return nil },
+		SetFunc:  func(key string, value []byte, format string) error { return nil },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
@@ -897,7 +897,7 @@ func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
 
 func TestHandleKeyUpdate_PermissionEnforcement(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte) error { return nil },
+		SetFunc:  func(key string, value []byte, format string) error { return nil },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)

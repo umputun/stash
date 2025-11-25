@@ -25,20 +25,22 @@ const loginConcurrencyLimit = 5
 
 // Server represents the HTTP server.
 type Server struct {
-	store    KVStore
-	gitStore GitStore // optional git store for versioning
-	cfg      Config
-	version  string
-	baseURL  string
-	tmpl     *template.Template
-	auth     *Auth
+	store       KVStore
+	gitStore    GitStore // optional git store for versioning
+	cfg         Config
+	version     string
+	baseURL     string
+	tmpl        *template.Template
+	auth        *Auth
+	highlighter *Highlighter
 }
 
 // KVStore defines the interface for key-value storage operations.
 // Defined here (consumer side) to allow different store implementations.
 type KVStore interface {
 	Get(key string) ([]byte, error)
-	Set(key string, value []byte) error
+	GetWithFormat(key string) ([]byte, string, error)
+	Set(key string, value []byte, format string) error
 	Delete(key string) error
 	List() ([]store.KeyInfo, error)
 }
@@ -76,12 +78,13 @@ func New(st KVStore, cfg Config) (*Server, error) {
 	}
 
 	return &Server{
-		store:   st,
-		cfg:     cfg,
-		version: cfg.Version,
-		baseURL: cfg.BaseURL,
-		tmpl:    tmpl,
-		auth:    auth,
+		store:       st,
+		cfg:         cfg,
+		version:     cfg.Version,
+		baseURL:     cfg.BaseURL,
+		tmpl:        tmpl,
+		auth:        auth,
+		highlighter: NewHighlighter(),
 	}, nil
 }
 

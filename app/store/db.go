@@ -52,6 +52,11 @@ func New(dbURL string) (*Store, error) {
 		return nil, fmt.Errorf("failed to create schema: %w", err)
 	}
 
+	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
 	log.Printf("[DEBUG] initialized %s store", s.dbTypeName())
 	return s, nil
 }
@@ -122,6 +127,7 @@ func (s *Store) createSchema() error {
 			CREATE TABLE IF NOT EXISTS kv (
 				key TEXT PRIMARY KEY,
 				value BYTEA NOT NULL,
+				format TEXT NOT NULL DEFAULT 'text',
 				created_at TIMESTAMP DEFAULT NOW(),
 				updated_at TIMESTAMP DEFAULT NOW()
 			)`
@@ -130,6 +136,7 @@ func (s *Store) createSchema() error {
 			CREATE TABLE IF NOT EXISTS kv (
 				key TEXT PRIMARY KEY,
 				value BLOB NOT NULL,
+				format TEXT NOT NULL DEFAULT 'text',
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`
@@ -138,6 +145,63 @@ func (s *Store) createSchema() error {
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
 	return nil
+}
+
+// migrate runs database migrations for existing installations.
+// adds missing columns that were introduced in later versions.
+func (s *Store) migrate() error {
+	// check if format column exists
+	hasFormat, err := s.hasColumn("kv", "format")
+	if err != nil {
+		return fmt.Errorf("failed to check format column: %w", err)
+	}
+
+	if !hasFormat {
+		log.Printf("[INFO] migrating database: adding format column to kv table")
+		alter := "ALTER TABLE kv ADD COLUMN format TEXT NOT NULL DEFAULT 'text'"
+		if _, err := s.db.Exec(alter); err != nil {
+			return fmt.Errorf("failed to add format column: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// hasColumn checks if a column exists in the given table.
+func (s *Store) hasColumn(table, column string) (bool, error) {
+	var query string
+	switch s.dbType {
+	case DBTypePostgres:
+		query = `SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = $1 AND column_name = $2
+		)`
+	default:
+		// sqlite: use pragma table_info which returns (cid, name, type, notnull, dflt_value, pk)
+		var columns []struct {
+			CID        int            `db:"cid"`
+			Name       string         `db:"name"`
+			Type       string         `db:"type"`
+			NotNull    int            `db:"notnull"`
+			DfltValue  sql.NullString `db:"dflt_value"`
+			PrimaryKey int            `db:"pk"`
+		}
+		if err := s.db.Select(&columns, "PRAGMA table_info("+table+")"); err != nil {
+			return false, fmt.Errorf("failed to get table info: %w", err)
+		}
+		for _, col := range columns {
+			if col.Name == column {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	var exists bool
+	if err := s.db.Get(&exists, query, table, column); err != nil {
+		return false, fmt.Errorf("failed to check column existence: %w", err)
+	}
+	return exists, nil
 }
 
 // dbTypeName returns human-readable database type name.
@@ -168,25 +232,51 @@ func (s *Store) Get(key string) ([]byte, error) {
 	return value, nil
 }
 
-// Set stores the value for the given key.
+// GetWithFormat retrieves the value and format for the given key.
+// Returns ErrNotFound if the key does not exist.
+func (s *Store) GetWithFormat(key string) ([]byte, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result struct {
+		Value  []byte `db:"value"`
+		Format string `db:"format"`
+	}
+	query := s.adoptQuery("SELECT value, format FROM kv WHERE key = ?")
+	err := s.db.Get(&result, query, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get key %q: %w", key, err)
+	}
+	return result.Value, result.Format, nil
+}
+
+// Set stores the value for the given key with the specified format.
 // Creates a new key or updates an existing one.
-func (s *Store) Set(key string, value []byte) error {
+// If format is empty, defaults to "text".
+func (s *Store) Set(key string, value []byte, format string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if format == "" {
+		format = "text"
+	}
 
 	now := time.Now().UTC()
 	var query string
 	switch s.dbType {
 	case DBTypePostgres:
 		query = `
-			INSERT INTO kv (key, value, created_at, updated_at) VALUES ($1, $2, $3, $4)
-			ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`
+			INSERT INTO kv (key, value, format, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, format = EXCLUDED.format, updated_at = EXCLUDED.updated_at`
 	default:
 		query = `
-			INSERT INTO kv (key, value, created_at, updated_at) VALUES (?, ?, ?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+			INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`
 	}
-	if _, err := s.db.Exec(query, key, value, now, now); err != nil {
+	if _, err := s.db.Exec(query, key, value, format, now, now); err != nil {
 		return fmt.Errorf("failed to set key %q: %w", key, err)
 	}
 	return nil
@@ -223,9 +313,9 @@ func (s *Store) List() ([]KeyInfo, error) {
 	var query string
 	switch s.dbType {
 	case DBTypePostgres:
-		query = `SELECT key, octet_length(value) as size, created_at, updated_at FROM kv ORDER BY updated_at DESC`
+		query = `SELECT key, octet_length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`
 	default:
-		query = `SELECT key, length(value) as size, created_at, updated_at FROM kv ORDER BY updated_at DESC`
+		query = `SELECT key, length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`
 	}
 	if err := s.db.Select(&keys, query); err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)

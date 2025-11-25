@@ -41,6 +41,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 
 // handleSet stores a value for a key.
 // PUT /kv/{key...}
+// Accepts format via X-Stash-Format header or ?format= query param (defaults to "text").
 func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	if key == "" {
@@ -54,12 +55,21 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.Set(key, value); err != nil {
+	// get format from header or query param, default to "text"
+	format := r.Header.Get("X-Stash-Format")
+	if format == "" {
+		format = r.URL.Query().Get("format")
+	}
+	if !s.highlighter.IsValidFormat(format) {
+		format = "text"
+	}
+
+	if err := s.store.Set(key, value, format); err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to set key")
 		return
 	}
 
-	log.Printf("[DEBUG] set %s (%d bytes)", key, len(value))
+	log.Printf("[DEBUG] set %s (%d bytes, format=%s)", key, len(value), format)
 
 	// commit to git if enabled
 	s.gitCommit(key, value, "set")
