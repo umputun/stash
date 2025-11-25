@@ -352,6 +352,31 @@ Access the web interface at `http://localhost:8080/`. Features:
 - Binary value display (base64 encoded)
 - Light/dark theme toggle
 
+<details markdown>
+  <summary>Screenshots</summary>
+
+### Dashboard - Dark Theme
+
+![Dashboard Dark](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/dashboard-dark-desktop.png)
+
+### Dashboard - Light Theme
+
+![Dashboard Light](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/dashboard-light-desktop.png)
+
+### View with Syntax Highlighting
+
+![View Modal](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/view-modal-json.png)
+
+### Edit Form with Format Selector
+
+![Edit Form](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/edit-form.png)
+
+### Login Form
+
+![Login Form](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/login-form.png)
+
+</details>
+
 ## Examples
 
 ```bash
