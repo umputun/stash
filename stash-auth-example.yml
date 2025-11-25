@@ -1,0 +1,79 @@
+# Stash Authentication Configuration Example
+#
+# This file defines users for web UI access and API tokens.
+# Copy this file to stash-auth.yml and customize for your needs.
+#
+# Start stash with: stash server --auth.file=stash-auth.yml
+
+# Users for web UI login (username + password)
+# Password must be a bcrypt hash. Generate with:
+#   htpasswd -nbBC 10 "" "your-password" | tr -d ':\n' | sed 's/$2y/$2a/'
+users:
+  # Admin user with full read-write access to all keys
+  - name: admin
+    password: "$2a$10$..."  # replace with actual bcrypt hash
+    permissions:
+      - prefix: "*"
+        access: rw
+
+  # Read-only user - can view all keys but cannot modify
+  - name: viewer
+    password: "$2a$10$..."
+    permissions:
+      - prefix: "*"
+        access: r
+
+  # Scoped user - only has access to specific prefix
+  - name: app-admin
+    password: "$2a$10$..."
+    permissions:
+      - prefix: "app/*"
+        access: rw
+
+  # Multiple prefixes with different access levels
+  - name: operator
+    password: "$2a$10$..."
+    permissions:
+      - prefix: "config/*"
+        access: rw
+      - prefix: "secrets/*"
+        access: r
+
+# API tokens for programmatic access
+# Generate secure tokens with: uuidgen or openssl rand -hex 16
+# WARNING: Do not use simple names as tokens - they are easy to guess
+tokens:
+  # Full access token for CI/CD pipelines
+  - token: "a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d"  # replace with secure random token
+    permissions:
+      - prefix: "*"
+        access: rw
+
+  # Read-only token for monitoring systems
+  - token: "b7e4c2a1-9d8f-4e3b-8a2c-1f7e6d5c4b3a"
+    permissions:
+      - prefix: "*"
+        access: r
+
+  # Scoped token for specific application
+  - token: "c3a9f8e7-2b1d-4c5a-9f8e-7d6c5b4a3f2e"
+    permissions:
+      - prefix: "myapp/*"
+        access: rw
+
+# Permission Reference:
+#
+# Access levels:
+#   r, read       - read-only access
+#   w, write      - write-only access (rare use case)
+#   rw, readwrite - full read-write access
+#
+# Prefix patterns:
+#   *             - matches all keys
+#   app/*         - matches keys starting with "app/"
+#   app/config    - matches exact key only
+#
+# When multiple prefixes match, the longest (most specific) wins.
+#
+# Example: if user has "app/*" with rw and "app/secrets/*" with r,
+# then "app/config" gets rw access, but "app/secrets/api-key" gets r access.

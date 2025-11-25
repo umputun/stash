@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,8 +23,7 @@ func TestIntegration(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18484" // use non-standard port to avoid conflicts
 	opts.Server.ReadTimeout = 5 * time.Second
-	opts.Auth.PasswordHash = ""
-	opts.Auth.Tokens = nil
+	opts.Auth.File = ""
 
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -120,9 +120,31 @@ func TestIntegration_WithAuth(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18485"
 	opts.Server.ReadTimeout = 5 * time.Second
-	// bcrypt hash for "testpass"
-	opts.Auth.PasswordHash = "$2a$10$kE1cSYqrktsr5iVW2pbB3OOmZAgGRggfXbvs/q0XUpyqvzLywEQ5y"
-	opts.Auth.Tokens = []string{"apikey:*:rw", "readonly:*:r", "scoped:app/*:rw"}
+
+	// create auth config file
+	authContent := `users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: apikey
+    permissions:
+      - prefix: "*"
+        access: rw
+  - token: readonly
+    permissions:
+      - prefix: "*"
+        access: r
+  - token: scoped
+    permissions:
+      - prefix: "app/*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
 	opts.Auth.LoginTTL = time.Hour
 
 	// start server in background
@@ -235,7 +257,7 @@ func TestIntegration_WithAuth(t *testing.T) {
 	})
 
 	t.Run("login with wrong password fails", func(t *testing.T) {
-		resp, err := client.PostForm("http://127.0.0.1:18485/login", map[string][]string{"password": {"wrongpass"}})
+		resp, err := client.PostForm("http://127.0.0.1:18485/login", map[string][]string{"username": {"admin"}, "password": {"wrongpass"}})
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
@@ -248,7 +270,7 @@ func TestIntegration_WithAuth(t *testing.T) {
 				return http.ErrUseLastResponse
 			},
 		}
-		resp, err := noRedirectClient.PostForm("http://127.0.0.1:18485/login", map[string][]string{"password": {"testpass"}})
+		resp, err := noRedirectClient.PostForm("http://127.0.0.1:18485/login", map[string][]string{"username": {"admin"}, "password": {"testpass"}})
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
@@ -274,7 +296,7 @@ func TestIntegration_WithAuth(t *testing.T) {
 				return http.ErrUseLastResponse
 			},
 		}
-		resp, err := noRedirectClient.PostForm("http://127.0.0.1:18485/login", map[string][]string{"password": {"testpass"}})
+		resp, err := noRedirectClient.PostForm("http://127.0.0.1:18485/login", map[string][]string{"username": {"admin"}, "password": {"testpass"}})
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -298,6 +320,50 @@ func TestIntegration_WithAuth(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
+	t.Run("logout clears session", func(t *testing.T) {
+		noRedirectClient := &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+
+		// login first
+		resp, err := noRedirectClient.PostForm("http://127.0.0.1:18485/login", map[string][]string{"username": {"admin"}, "password": {"testpass"}})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+
+		var authCookie *http.Cookie
+		for _, c := range resp.Cookies() {
+			if c.Name == "stash-auth" || c.Name == "__Host-stash-auth" {
+				authCookie = c
+				break
+			}
+		}
+		require.NotNil(t, authCookie)
+
+		// logout
+		req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:18485/logout", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(authCookie)
+		resp, err = noRedirectClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Equal(t, "/login", resp.Header.Get("Location"))
+
+		// verify session is invalid - using old cookie should redirect to login
+		req, err = http.NewRequest(http.MethodGet, "http://127.0.0.1:18485/", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(authCookie)
+		resp, err = noRedirectClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		assert.Equal(t, "/login", resp.Header.Get("Location"))
+	})
+
 	// shutdown
 	cancel()
 	select {
@@ -308,8 +374,235 @@ func TestIntegration_WithAuth(t *testing.T) {
 	}
 
 	// reset auth opts for other tests
-	opts.Auth.PasswordHash = ""
-	opts.Auth.Tokens = nil
+	opts.Auth.File = ""
+}
+
+func TestIntegration_WithUserPermissions(t *testing.T) {
+	// setup options with auth enabled - multiple users with different permissions
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18489"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	// create auth config with scoped and readonly users
+	authContent := `users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: readonly
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: r
+  - name: scoped
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+tokens:
+  - token: setup-token
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+	opts.Auth.LoginTTL = time.Hour
+
+	// start server
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18489/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	noRedirectClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	// setup test data using API token
+	setupKeys := []struct {
+		key   string
+		value string
+	}{
+		{"app/config", "app-config-value"},
+		{"app/db", "app-db-value"},
+		{"other/secret", "secret-value"},
+	}
+	for _, k := range setupKeys {
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18489/kv/"+k.key, bytes.NewBufferString(k.value))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer setup-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+
+	// helper to login and get cookie
+	loginUser := func(username string) *http.Cookie {
+		resp, err := noRedirectClient.PostForm("http://127.0.0.1:18489/login",
+			map[string][]string{"username": {username}, "password": {"testpass"}})
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusSeeOther, resp.StatusCode)
+		for _, c := range resp.Cookies() {
+			if c.Name == "stash-auth" || c.Name == "__Host-stash-auth" {
+				return c
+			}
+		}
+		t.Fatalf("no auth cookie for user %s", username)
+		return nil
+	}
+
+	t.Run("scoped user sees only allowed keys in web UI", func(t *testing.T) {
+		cookie := loginUser("scoped")
+
+		// get key list page
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		bodyStr := string(body)
+
+		// should see app/* keys
+		assert.Contains(t, bodyStr, "app/config")
+		assert.Contains(t, bodyStr, "app/db")
+		// should NOT see other/* keys
+		assert.NotContains(t, bodyStr, "other/secret")
+	})
+
+	t.Run("scoped user cannot view key outside prefix", func(t *testing.T) {
+		cookie := loginUser("scoped")
+
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys/view/other/secret", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("scoped user cannot create key outside prefix", func(t *testing.T) {
+		cookie := loginUser("scoped")
+
+		formData := "key=other/newkey&value=val"
+		req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:18489/web/keys", bytes.NewBufferString(formData))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("readonly user cannot access new key form", func(t *testing.T) {
+		cookie := loginUser("readonly")
+
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys/new", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("readonly user cannot edit key", func(t *testing.T) {
+		cookie := loginUser("readonly")
+
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys/edit/app/config", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("readonly user cannot delete key", func(t *testing.T) {
+		cookie := loginUser("readonly")
+
+		req, err := http.NewRequest(http.MethodDelete, "http://127.0.0.1:18489/web/keys/app/config", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("readonly user can view keys", func(t *testing.T) {
+		cookie := loginUser("readonly")
+
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys/view/app/config", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "app-config-value")
+	})
+
+	t.Run("admin user has full access", func(t *testing.T) {
+		cookie := loginUser("admin")
+
+		// can see all keys
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), "app/config")
+		assert.Contains(t, string(body), "other/secret")
+
+		// can access new key form
+		req, err = http.NewRequest(http.MethodGet, "http://127.0.0.1:18489/web/keys/new", http.NoBody)
+		require.NoError(t, err)
+		req.AddCookie(cookie)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	// shutdown
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset auth opts
+	opts.Auth.File = ""
 }
 
 func waitForServer(t *testing.T, url string) {
@@ -341,8 +634,7 @@ func TestRun_InvalidDB(t *testing.T) {
 	opts.DB = "/nonexistent/path/to/db.db"
 	opts.Server.Address = "127.0.0.1:18486"
 	opts.Server.ReadTimeout = 5 * time.Second
-	opts.Auth.PasswordHash = ""
-	opts.Auth.Tokens = nil
+	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -352,13 +644,16 @@ func TestRun_InvalidDB(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to initialize store")
 }
 
-func TestRun_InvalidAuthToken(t *testing.T) {
+func TestRun_InvalidAuthFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18487"
 	opts.Server.ReadTimeout = 5 * time.Second
-	opts.Auth.PasswordHash = "$2a$10$hash"
-	opts.Auth.Tokens = []string{"invalid"} // invalid token format
+
+	// create invalid auth config file (no users or tokens)
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte("users: []\ntokens: []\n"), 0o600))
+	opts.Auth.File = authFile
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -368,8 +663,7 @@ func TestRun_InvalidAuthToken(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to initialize server")
 
 	// reset
-	opts.Auth.PasswordHash = ""
-	opts.Auth.Tokens = nil
+	opts.Auth.File = ""
 }
 
 func TestSignals(t *testing.T) {
@@ -416,8 +710,7 @@ func TestIntegration_WithBaseURL(t *testing.T) {
 	opts.Server.Address = "127.0.0.1:18488"
 	opts.Server.ReadTimeout = 5 * time.Second
 	opts.Server.BaseURL = "/stash"
-	opts.Auth.PasswordHash = ""
-	opts.Auth.Tokens = nil
+	opts.Auth.File = ""
 
 	// start server in background
 	ctx, cancel := context.WithCancel(context.Background())

@@ -41,9 +41,8 @@ var opts struct {
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
 	Auth struct {
-		PasswordHash string        `long:"password-hash" env:"PASSWORD_HASH" description:"bcrypt hash for admin password (enables auth)"`
-		Tokens       []string      `long:"token" env:"AUTH_TOKEN" env-delim:"," description:"API token with prefix permissions (token:prefix:rw)"`
-		LoginTTL     time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
+		File     string        `long:"file" env:"FILE" description:"path to auth config file (stash-auth.yml)"`
+		LoginTTL time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
 	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
 
 	ServerCmd struct {
@@ -112,8 +111,8 @@ func runServer(ctx context.Context) error {
 	if baseURL != "" {
 		log.Printf("[INFO] base URL: %s", baseURL)
 	}
-	if opts.Auth.PasswordHash != "" {
-		log.Printf("[INFO] authentication enabled with %d API token(s)", len(opts.Auth.Tokens))
+	if opts.Auth.File != "" {
+		log.Printf("[INFO] authentication enabled from %s", opts.Auth.File)
 	}
 	if opts.Git.Enabled {
 		log.Printf("[INFO] git tracking enabled, path: %s, branch: %s", opts.Git.Path, opts.Git.Branch)
@@ -128,14 +127,13 @@ func runServer(ctx context.Context) error {
 
 	// initialize and start HTTP server
 	srv, err := server.New(kvStore, server.Config{
-		Address:      opts.Server.Address,
-		ReadTimeout:  opts.Server.ReadTimeout,
-		Version:      revision,
-		PasswordHash: opts.Auth.PasswordHash,
-		AuthTokens:   opts.Auth.Tokens,
-		LoginTTL:     opts.Auth.LoginTTL,
-		BaseURL:      baseURL,
-		GitPush:      opts.Git.Push,
+		Address:     opts.Server.Address,
+		ReadTimeout: opts.Server.ReadTimeout,
+		Version:     revision,
+		AuthFile:    opts.Auth.File,
+		LoginTTL:    opts.Auth.LoginTTL,
+		BaseURL:     baseURL,
+		GitPush:     opts.Git.Push,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)

@@ -25,5 +25,8 @@ coverage.html
 
 .playwright-mcp/
 .history/
+
+# private auth config
+auth-private.yml
 # vendor (if not committed)
 # vendor/

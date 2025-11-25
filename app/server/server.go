@@ -19,6 +19,10 @@ import (
 //go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
 //go:generate moq -out mocks/gitstore.go -pkg mocks -skip-ensure -fmt goimports . GitStore
 
+// loginConcurrencyLimit is the maximum number of concurrent login attempts.
+// Low limit helps mitigate brute-force attacks (combined with bcrypt's ~50ms delay).
+const loginConcurrencyLimit = 5
+
 // Server represents the HTTP server.
 type Server struct {
 	store    KVStore
@@ -50,14 +54,13 @@ type GitStore interface {
 
 // Config holds server configuration.
 type Config struct {
-	Address      string
-	ReadTimeout  time.Duration
-	Version      string
-	PasswordHash string        // bcrypt hash for admin password (empty = auth disabled)
-	AuthTokens   []string      // API tokens in format "token:prefix:permissions"
-	LoginTTL     time.Duration // session duration
-	BaseURL      string        // base URL path for reverse proxy (e.g., /stash)
-	GitPush      bool          // auto-push git commits
+	Address     string
+	ReadTimeout time.Duration
+	Version     string
+	AuthFile    string        // path to auth config file (empty = auth disabled)
+	LoginTTL    time.Duration // session duration
+	BaseURL     string        // base URL path for reverse proxy (e.g., /stash)
+	GitPush     bool          // auto-push git commits
 }
 
 // New creates a new Server instance.
@@ -67,14 +70,9 @@ func New(st KVStore, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 
-	auth, err := NewAuth(cfg.PasswordHash, cfg.AuthTokens, cfg.LoginTTL)
+	auth, err := NewAuth(cfg.AuthFile, cfg.LoginTTL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth: %w", err)
-	}
-
-	// warn if tokens provided but auth is disabled (no password hash)
-	if auth == nil && len(cfg.AuthTokens) > 0 {
-		log.Printf("[WARN] auth tokens provided but --auth.password-hash is not set; API is unauthenticated")
 	}
 
 	return &Server{
@@ -162,7 +160,8 @@ func (s *Server) routes() http.Handler {
 	router.Handle("GET /static/", staticHandler())
 	if s.auth.Enabled() {
 		router.HandleFunc("GET /login", s.handleLoginForm)
-		router.HandleFunc("POST /login", s.handleLogin)
+		// stricter throttle on login to prevent brute-force (5 concurrent attempts max)
+		router.Handle("POST /login", rest.Throttle(loginConcurrencyLimit)(http.HandlerFunc(s.handleLogin)))
 		router.HandleFunc("POST /logout", s.handleLogout)
 	}
 

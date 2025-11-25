@@ -10,8 +10,8 @@ Lightweight key-value configuration service for centralized config management. S
 - Hierarchical keys with slashes (e.g., `app/config/database`)
 - Binary-safe values
 - Light/dark theme with system preference detection
-- Optional authentication with password login and API tokens
-- Prefix-based access control for API tokens (read/write permissions)
+- Optional authentication with username/password login and API tokens
+- Prefix-based access control for both users and API tokens (read/write permissions)
 - Optional git versioning with full audit trail and point-in-time recovery
 
 ## Security Note
@@ -86,8 +86,7 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--server.address` | `STASH_SERVER_ADDRESS` | `:8080` | Server listen address |
 | `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5s` | Read timeout (duration format) |
 | `--server.base-url` | `STASH_SERVER_BASE_URL` | - | Base URL path for reverse proxy (e.g., `/stash`) |
-| `--auth.password-hash` | `STASH_AUTH_PASSWORD_HASH` | - | bcrypt hash for admin password (enables auth) |
-| `--auth.token` | `STASH_AUTH_AUTH_TOKEN` | - | API token with prefix permissions (repeatable) |
+| `--auth.file` | `STASH_AUTH_FILE` | - | Path to auth config file (enables auth) |
 | `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL (duration format) |
 | `--git.enabled` | `STASH_GIT_ENABLED` | `false` | Enable git versioning |
 | `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
@@ -136,62 +135,82 @@ labels:
 
 ## Authentication
 
-Authentication is optional. When `--auth.password-hash` is set, all routes (except `/ping` and `/static/`) require authentication.
+Authentication is optional. When `--auth.file` is set, all routes (except `/ping` and `/static/`) require authentication.
 
-### Enabling Authentication
+### Auth Config File
 
-Generate a bcrypt hash for your password:
+Create a YAML config file (e.g., `stash-auth.yml`) with users and/or API tokens. See [`stash-auth-example.yml`](stash-auth-example.yml) for a complete example with comments.
 
-```bash
-htpasswd -nbBC 10 "" "your-password" | tr -d ':\n' | sed 's/$2y/$2a/'
+```yaml
+users:
+  - name: admin
+    password: "$2a$10$..."  # bcrypt hash
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: readonly
+    password: "$2a$10$..."
+    permissions:
+      - prefix: "*"
+        access: r
+
+tokens:
+  - token: "a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d"
+    permissions:
+      - prefix: "app1/*"
+        access: rw
+  - token: "b7e4c2a1-9d8f-4e3b-8a2c-1f7e6d5c4b3a"
+    permissions:
+      - prefix: "*"
+        access: r
 ```
 
 Start with authentication enabled:
 
 ```bash
-stash --auth.password-hash '$2a$10$...'
+stash server --auth.file=/path/to/stash-auth.yml
+```
+
+**Security**: The auth config file contains password hashes and API tokens. Set restrictive file permissions:
+
+```bash
+chmod 600 stash-auth.yml
+```
+
+### Generating Password Hashes
+
+```bash
+htpasswd -nbBC 10 "" "your-password" | tr -d ':\n' | sed 's/$2y/$2a/'
 ```
 
 ### Access Methods
 
 | Method | Usage | Scope |
 |--------|-------|-------|
-| Web UI | Password login form | Full access |
-| API | Bearer token | Prefix-scoped |
+| Web UI | Username + password login | Prefix-scoped per user |
+| API | Bearer token | Prefix-scoped per token |
+
+### Users (Web UI)
+
+Users authenticate via the web login form with username and password. Each user has prefix-based permissions that control which keys they can read/write.
 
 ### API Tokens
 
 Generate secure random tokens (use UUID or similar):
 
 ```bash
-# generate secure tokens
 uuidgen  # macOS/Linux
 openssl rand -hex 16  # alternative
 ```
 
-Define API tokens with prefix-based permissions using `--auth.token`:
-
-```bash
-# format: <token>:<prefix>:<permissions>
-# token: secure random string (NOT a simple name)
-# prefix: key pattern (* for all, app/* for prefix, exact for single key)
-# permissions: r (read), w (write), rw (read-write)
-
-stash server --auth.password-hash '$2a$10$...' \
-      --auth.token "a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d:*:rw" \
-      --auth.token "b7e4c2a1-9d8f-4e3b-8a2c-1f7e6d5c4b3a:app1/*:rw" \
-      --auth.token "c3a9f8e7-2b1d-4c5a-9f8e-7d6c5b4a3f2e:*:r"
-```
-
-**Warning**: Do not use simple names like "admin" or "monitoring" as tokens - they are easy to guess.
-
 Use tokens via Bearer authentication:
 
 ```bash
-# using the token
 curl -H "Authorization: Bearer a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d" \
-     http://localhost:8080/kv/any/key
+     http://localhost:8080/kv/app1/config
 ```
+
+**Warning**: Do not use simple names like "admin" or "monitoring" as tokens - they are easy to guess.
 
 ### Prefix Matching
 
@@ -200,6 +219,12 @@ curl -H "Authorization: Bearer a4f8d9e2-7c3b-4a1f-9e2d-8c7b6a5f4e3d" \
 - `app/config` matches exact key only
 
 When multiple prefixes match, the longest (most specific) wins.
+
+### Permission Levels
+
+- `r` or `read` - read-only access
+- `w` or `write` - write-only access
+- `rw` or `readwrite` - full read-write access
 
 ## Git Versioning
 
@@ -384,12 +409,18 @@ See [`docker-compose-example.yml`](docker-compose-example.yml) for a complete pr
 cp docker-compose-example.yml docker-compose.yml
 
 # set your domain in SSL_ACME_FQDN and reproxy.server label
-# generate password hash
-htpasswd -bnBC 10 "" "yourpassword" | tr -d ':'
+# create auth config file with users and tokens
+cat > stash-auth.yml << 'EOF'
+users:
+  - name: admin
+    password: "$2a$10$..."  # generate with htpasswd
+    permissions:
+      - prefix: "*"
+        access: rw
+EOF
 
-# create .env file with auth settings
-echo 'STASH_AUTH_PASSWORD_HASH=$2a$10$...' > .env
-echo 'STASH_AUTH_TOKEN=mytoken:*:rw' >> .env
+# set auth file path in .env
+echo 'STASH_AUTH_FILE=/srv/data/stash-auth.yml' > .env
 
 # start services
 docker-compose up -d

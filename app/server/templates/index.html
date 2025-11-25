@@ -21,19 +21,21 @@
                hx-target="#keys-table"
                hx-swap="innerHTML"
                class="search-input">
+        {{if .CanWrite}}
         <button class="btn btn-primary"
                 hx-get="{{.BaseURL}}/web/keys/new"
                 hx-target="#modal-content"
                 hx-swap="innerHTML">
             + New Key
         </button>
+        {{end}}
         <button class="btn-icon"
                 hx-post="{{.BaseURL}}/web/view-mode"
                 hx-target="#keys-table"
                 hx-swap="innerHTML"
                 hx-include="[name='search']"
                 title="Toggle view mode">
-            {{if eq .ViewMode "cards"}}☰{{else}}☷{{end}}
+            <span class="icon-view">{{if eq .ViewMode "cards"}}☰{{else}}☷{{end}}</span>
         </button>
         <form hx-post="{{.BaseURL}}/web/theme" hx-swap="none">
             <button type="submit" class="btn-icon" title="Toggle theme">
@@ -42,7 +44,7 @@
         </form>
         {{if .AuthEnabled}}
         <form method="POST" action="{{.BaseURL}}/logout">
-            <button type="submit" class="btn-icon btn-logout" title="Logout">
+            <button type="submit" class="btn-icon" title="Logout">
                 ⏻
             </button>
         </form>

@@ -4,6 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -603,9 +607,8 @@ func TestHandleLoginForm(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
-	// bcrypt hash for "testpass"
-	hash := "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, PasswordHash: hash})
+	authFile := createTestAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/login", http.NoBody)
@@ -614,6 +617,7 @@ func TestHandleLoginForm(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "Login")
+	assert.Contains(t, rec.Body.String(), "Username")
 	assert.Contains(t, rec.Body.String(), "Password")
 }
 
@@ -621,15 +625,14 @@ func TestHandleLogin(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
-	// bcrypt hash for "testpass"
-	hash := "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, PasswordHash: hash})
+	authFile := createTestAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
-	t.Run("valid password redirects", func(t *testing.T) {
+	t.Run("valid credentials redirects", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.PostForm = map[string][]string{"password": {"testpass"}}
+		req.PostForm = map[string][]string{"username": {"admin"}, "password": {"testpass"}}
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
@@ -646,15 +649,15 @@ func TestHandleLogin(t *testing.T) {
 		require.NotNil(t, authCookie)
 	})
 
-	t.Run("invalid password shows error", func(t *testing.T) {
+	t.Run("invalid credentials shows error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.PostForm = map[string][]string{"password": {"wrongpass"}}
+		req.PostForm = map[string][]string{"username": {"admin"}, "password": {"wrongpass"}}
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
-		assert.Contains(t, rec.Body.String(), "Invalid password")
+		assert.Contains(t, rec.Body.String(), "Invalid username or password")
 	})
 }
 
@@ -662,9 +665,8 @@ func TestHandleLogout(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
-	// bcrypt hash for "testpass"
-	hash := "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, PasswordHash: hash})
+	authFile := createTestAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", http.NoBody)
@@ -732,6 +734,404 @@ func TestServer_CookiePath(t *testing.T) {
 	}
 }
 
+func TestHandleKeyView_PermissionEnforcement(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		GetFunc: func(key string) ([]byte, error) {
+			switch key {
+			case "app/config", "other/key":
+				return []byte("value"), nil
+			}
+			return nil, store.ErrNotFound
+		},
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("admin can view any key", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/view/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("readonly user can view any key", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/view/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("scoped user can view key in allowed prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/view/app/config", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("scoped user cannot view key outside allowed prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/view/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestHandleKeyEdit_PermissionEnforcement(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		GetFunc: func(key string) ([]byte, error) {
+			switch key {
+			case "app/config", "other/key":
+				return []byte("value"), nil
+			}
+			return nil, store.ErrNotFound
+		},
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("admin can edit any key", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("readonly user cannot edit", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("scoped user can edit key in allowed prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/app/config", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("scoped user cannot edit key outside prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		SetFunc:  func(key string, value []byte) error { return nil },
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("admin can create any key", func(t *testing.T) {
+		st.SetCalls() // reset
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"other/newkey"}, "value": {"val"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("readonly user cannot create", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"other/newkey"}, "value": {"val"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("scoped user can create key in allowed prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"app/newkey"}, "value": {"val"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("scoped user cannot create key outside prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"other/newkey"}, "value": {"val"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestHandleKeyUpdate_PermissionEnforcement(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		SetFunc:  func(key string, value []byte) error { return nil },
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("admin can update any key", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/other/key", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"updated"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("readonly user cannot update", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/other/key", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"updated"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("scoped user can update key in allowed prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/app/config", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"updated"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("scoped user cannot update key outside prefix", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/other/key", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"updated"}}
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestHandleKeyDelete_PermissionEnforcement(t *testing.T) {
+	authFile := createMultiUserAuthFile(t)
+
+	t.Run("admin can delete any key", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(key string) error { return nil },
+			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		require.NoError(t, err)
+
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodDelete, "/web/keys/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("readonly user cannot delete", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(key string) error { return nil },
+			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		require.NoError(t, err)
+
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodDelete, "/web/keys/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("scoped user can delete key in allowed prefix", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(key string) error { return nil },
+			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		require.NoError(t, err)
+
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodDelete, "/web/keys/app/config", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("scoped user cannot delete key outside prefix", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(key string) error { return nil },
+			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		require.NoError(t, err)
+
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodDelete, "/web/keys/other/key", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+}
+
+func TestHandleKeyList_PermissionFiltering(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc: func() ([]store.KeyInfo, error) {
+			return []store.KeyInfo{
+				{Key: "app/config", Size: 50},
+				{Key: "app/db", Size: 100},
+				{Key: "other/secret", Size: 200},
+			}, nil
+		},
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("admin sees all keys", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "app/config")
+		assert.Contains(t, rec.Body.String(), "app/db")
+		assert.Contains(t, rec.Body.String(), "other/secret")
+	})
+
+	t.Run("readonly user sees all keys", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "app/config")
+		assert.Contains(t, rec.Body.String(), "other/secret")
+	})
+
+	t.Run("scoped user sees only allowed keys", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "app/config")
+		assert.Contains(t, rec.Body.String(), "app/db")
+		assert.NotContains(t, rec.Body.String(), "other/secret")
+	})
+}
+
+func TestHandleKeyNew_PermissionEnforcement(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("admin can access new key form", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/new", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Create Key")
+	})
+
+	t.Run("readonly user cannot access new key form", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "readonly")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/new", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("scoped user can access new key form", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "scoped")
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/new", http.NoBody)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+func TestGetCurrentUser(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createMultiUserAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	t.Run("returns username from stash-auth cookie", func(t *testing.T) {
+		cookie := loginAndGetCookie(t, srv, "admin")
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.AddCookie(cookie)
+		username := srv.getCurrentUser(req)
+		assert.Equal(t, "admin", username)
+	})
+
+	t.Run("returns empty for no cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		username := srv.getCurrentUser(req)
+		assert.Empty(t, username)
+	})
+
+	t.Run("returns empty for invalid session", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "invalid-session"})
+		username := srv.getCurrentUser(req)
+		assert.Empty(t, username)
+	})
+}
+
 func TestCalculateModalDimensions(t *testing.T) {
 	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
 	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second})
@@ -781,4 +1181,135 @@ func TestCalculateModalDimensions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// createTestAuthFile creates a temporary auth.yml file with admin user for testing.
+// admin user has password "testpass" with full access.
+func createTestAuthFile(t *testing.T) string {
+	t.Helper()
+	// bcrypt hash for "testpass"
+	content := `users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	dir := t.TempDir()
+	f := filepath.Join(dir, "auth.yml")
+	err := os.WriteFile(f, []byte(content), 0o600)
+	require.NoError(t, err)
+	return f
+}
+
+func TestLoginThrottle(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	authFile := createTestAuthFile(t)
+	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	// use httptest.Server for true concurrent requests
+	ts := httptest.NewServer(srv.routes())
+	defer ts.Close()
+
+	// login throttle is set to 5 concurrent requests
+	// send 15 concurrent requests to ensure some get throttled
+	// use valid credentials so bcrypt runs and keeps requests in flight longer
+	const numRequests = 15
+	var wg sync.WaitGroup
+	var throttledCount atomic.Int32
+	var successCount atomic.Int32
+	var otherCount atomic.Int32
+
+	// use a channel to synchronize start
+	start := make(chan struct{})
+
+	for i := 0; i < numRequests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // wait for signal to start
+
+			// send valid credentials so bcrypt runs (~50ms) keeping requests in flight
+			resp, err := http.PostForm(ts.URL+"/login", map[string][]string{
+				"username": {"admin"},
+				"password": {"testpass"},
+			})
+			if err != nil {
+				return
+			}
+			defer resp.Body.Close()
+
+			switch resp.StatusCode {
+			case http.StatusOK, http.StatusBadRequest, http.StatusSeeOther, http.StatusUnauthorized:
+				// these are valid responses (login succeeded/failed/redirected)
+				successCount.Add(1)
+			case http.StatusServiceUnavailable: // throttled
+				throttledCount.Add(1)
+			default:
+				otherCount.Add(1)
+				t.Logf("unexpected status: %d", resp.StatusCode)
+			}
+		}()
+	}
+
+	// start all goroutines simultaneously
+	close(start)
+	wg.Wait()
+
+	// with 15 concurrent requests and limit of 5, some should be throttled
+	t.Logf("success: %d, throttled: %d, other: %d", successCount.Load(), throttledCount.Load(), otherCount.Load())
+	assert.Positive(t, throttledCount.Load(), "some requests should be throttled")
+	assert.Equal(t, int32(numRequests), successCount.Load()+throttledCount.Load()+otherCount.Load(), "all requests should complete")
+}
+
+// createMultiUserAuthFile creates auth file with multiple users for permission testing.
+// - admin: full rw access to all keys
+// - readonly: read-only access to all keys
+// - scoped: rw access to app/* prefix only
+func createMultiUserAuthFile(t *testing.T) string {
+	t.Helper()
+	// bcrypt hash for "testpass"
+	content := `users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: readonly
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: r
+  - name: scoped
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+`
+	dir := t.TempDir()
+	f := filepath.Join(dir, "auth.yml")
+	err := os.WriteFile(f, []byte(content), 0o600)
+	require.NoError(t, err)
+	return f
+}
+
+// loginAndGetCookie logs in a user and returns the session cookie for subsequent requests.
+func loginAndGetCookie(t *testing.T, srv *Server, username string) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.PostForm = map[string][]string{"username": {username}, "password": {"testpass"}}
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code, "login should succeed for user %s", username)
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "stash-auth" || c.Name == "__Host-stash-auth" {
+			return c
+		}
+	}
+	t.Fatalf("no auth cookie found after login for user %s", username)
+	return nil
 }

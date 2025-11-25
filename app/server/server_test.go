@@ -216,10 +216,9 @@ func TestServer_New_InvalidTokens(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	_, err := New(st, Config{
-		Address:      ":8080",
-		ReadTimeout:  5 * time.Second,
-		PasswordHash: "$2a$10$hash",
-		AuthTokens:   []string{"invalid"}, // bad format
+		Address:     ":8080",
+		ReadTimeout: 5 * time.Second,
+		AuthFile:    "/nonexistent/auth.yml", // file doesn't exist
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to initialize auth")

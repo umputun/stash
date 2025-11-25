@@ -42,6 +42,8 @@ type templateData struct {
 	BaseURL        string
 	ModalWidth     int
 	TextareaHeight int
+	CanWrite       bool   // user has write permission (for showing edit controls)
+	Username       string // current logged-in username
 }
 
 // templateFuncs returns custom template functions.
@@ -192,6 +194,19 @@ func (s *Server) cookiePath() string {
 	return s.baseURL + "/"
 }
 
+// getCurrentUser returns the username from the session cookie, or empty if not logged in.
+func (s *Server) getCurrentUser(r *http.Request) string {
+	for _, cookieName := range sessionCookieNames {
+		cookie, err := r.Cookie(cookieName)
+		if err == nil && cookie.Value != "" {
+			if username, ok := s.auth.GetSessionUser(cookie.Value); ok {
+				return username
+			}
+		}
+	}
+	return ""
+}
+
 // sortKeys sorts keys by the given mode.
 func sortKeys(keys []store.KeyInfo, mode string) {
 	switch mode {
@@ -302,16 +317,36 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// filter keys based on user permissions
+	username := s.getCurrentUser(r)
+	keyNames := make([]string, len(keys))
+	for i, k := range keys {
+		keyNames[i] = k.Key
+	}
+	allowedKeys := s.auth.FilterUserKeys(username, keyNames)
+	allowedSet := make(map[string]bool, len(allowedKeys))
+	for _, k := range allowedKeys {
+		allowedSet[k] = true
+	}
+	var filteredKeys []store.KeyInfo
+	for _, k := range keys {
+		if allowedSet[k.Key] {
+			filteredKeys = append(filteredKeys, k)
+		}
+	}
+
 	sortMode := getSortMode(r)
-	sortKeys(keys, sortMode)
+	sortKeys(filteredKeys, sortMode)
 
 	data := templateData{
-		Keys:        keys,
+		Keys:        filteredKeys,
 		Theme:       getTheme(r),
 		ViewMode:    getViewMode(r),
 		SortMode:    sortMode,
 		AuthEnabled: s.auth.Enabled(),
 		BaseURL:     s.baseURL,
+		CanWrite:    s.auth.UserCanWrite(username),
+		Username:    username,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {
@@ -328,12 +363,30 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// filter keys based on user permissions
+	username := s.getCurrentUser(r)
+	keyNames := make([]string, len(keys))
+	for i, k := range keys {
+		keyNames[i] = k.Key
+	}
+	allowedKeys := s.auth.FilterUserKeys(username, keyNames)
+	allowedSet := make(map[string]bool, len(allowedKeys))
+	for _, k := range allowedKeys {
+		allowedSet[k] = true
+	}
+	var filteredKeys []store.KeyInfo
+	for _, k := range keys {
+		if allowedSet[k.Key] {
+			filteredKeys = append(filteredKeys, k)
+		}
+	}
+
 	// check URL query first, then form values (for POST requests with hx-include)
 	search := r.URL.Query().Get("search")
 	if search == "" {
 		search = r.FormValue("search")
 	}
-	keys = filterKeys(keys, search)
+	filteredKeys = filterKeys(filteredKeys, search)
 
 	// check if view_mode was just set via Set-Cookie header (from toggle handler)
 	viewMode := getViewMode(r)
@@ -359,15 +412,17 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 			sortMode = "updated"
 		}
 	}
-	sortKeys(keys, sortMode)
+	sortKeys(filteredKeys, sortMode)
 
 	data := templateData{
-		Keys:     keys,
+		Keys:     filteredKeys,
 		Search:   search,
 		Theme:    getTheme(r),
 		ViewMode: viewMode,
 		SortMode: sortMode,
 		BaseURL:  s.baseURL,
+		CanWrite: s.auth.UserCanWrite(username),
+		Username: username,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "keys-table", data); err != nil {
@@ -377,10 +432,19 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyNew renders the new key form.
 func (s *Server) handleKeyNew(w http.ResponseWriter, r *http.Request) {
+	// check if user can write at all
+	username := s.getCurrentUser(r)
+	if !s.auth.UserCanWrite(username) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	data := templateData{
-		IsNew:   true,
-		Theme:   getTheme(r),
-		BaseURL: s.baseURL,
+		IsNew:    true,
+		Theme:    getTheme(r),
+		BaseURL:  s.baseURL,
+		CanWrite: true,
+		Username: username,
 	}
 	if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
 		log.Printf("[ERROR] failed to execute template: %v", err)
@@ -390,6 +454,14 @@ func (s *Server) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 // handleKeyView renders the key view modal.
 func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
+
+	// check read permission
+	username := s.getCurrentUser(r)
+	if !s.auth.CheckUserPermission(username, key, false) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	value, err := s.store.Get(key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -411,6 +483,8 @@ func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		BaseURL:        s.baseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
+		CanWrite:       s.auth.CheckUserPermission(username, key, true),
+		Username:       username,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "view", data); err != nil {
@@ -421,6 +495,14 @@ func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 // handleKeyEdit renders the key edit form.
 func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
+
+	// check write permission
+	username := s.getCurrentUser(r)
+	if !s.auth.CheckUserPermission(username, key, true) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	value, err := s.store.Get(key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -442,6 +524,8 @@ func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		BaseURL:        s.baseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
+		CanWrite:       true,
+		Username:       username,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
@@ -462,6 +546,13 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 
 	if key == "" {
 		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	// check write permission for this specific key
+	username := s.getCurrentUser(r)
+	if !s.auth.CheckUserPermission(username, key, true) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -487,6 +578,14 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 // handleKeyUpdate updates an existing key.
 func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
+
+	// check write permission
+	username := s.getCurrentUser(r)
+	if !s.auth.CheckUserPermission(username, key, true) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
@@ -517,6 +616,14 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 // handleKeyDelete deletes a key.
 func (s *Server) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
+
+	// check write permission
+	username := s.getCurrentUser(r)
+	if !s.auth.CheckUserPermission(username, key, true) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	if err := s.store.Delete(key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -624,19 +731,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username := r.FormValue("username")
 	password := r.FormValue("password")
-	if password == "" {
-		s.renderLoginError(w, r, "Password is required")
+	if username == "" || password == "" {
+		s.renderLoginError(w, r, "Username and password are required")
 		return
 	}
 
-	if !s.auth.ValidatePassword(password) {
-		s.renderLoginError(w, r, "Invalid password")
+	user := s.auth.ValidateUser(username, password)
+	if user == nil {
+		s.renderLoginError(w, r, "Invalid username or password")
 		return
 	}
 
 	// create session
-	token, err := s.auth.CreateSession()
+	token, err := s.auth.CreateSession(username)
 	if err != nil {
 		log.Printf("[ERROR] failed to create session: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -667,7 +776,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // handleLogout logs the user out by clearing the session.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// invalidate session
-	for _, cookieName := range []string{"__Host-stash-auth", "stash-auth"} {
+	for _, cookieName := range sessionCookieNames {
 		if cookie, err := r.Cookie(cookieName); err == nil {
 			s.auth.InvalidateSession(cookie.Value)
 		}

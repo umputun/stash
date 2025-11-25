@@ -14,6 +14,7 @@
             <span>{{.Size | formatSize}}</span>
             <span>Updated: {{.UpdatedAt | formatTime}}</span>
         </div>
+        {{if $.CanWrite}}
         <div class="key-card-actions">
             <button class="btn btn-secondary btn-small"
                     hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
@@ -22,6 +23,7 @@
             <button class="btn btn-danger btn-small"
                     onclick="showConfirmDelete('{{.Key | js}}', '{{$.BaseURL}}/web/keys/{{.Key | urlEncode}}')">Delete</button>
         </div>
+        {{end}}
     </div>
     {{end}}
 </div>
@@ -33,7 +35,7 @@
             <th>Size</th>
             <th>Updated</th>
             <th>Created</th>
-            <th class="actions-cell">Action</th>
+            {{if $.CanWrite}}<th class="actions-cell">Action</th>{{end}}
         </tr>
     </thead>
     <tbody>
@@ -47,6 +49,7 @@
             <td class="size-cell">{{.Size | formatSize}}</td>
             <td class="date-cell">{{.UpdatedAt | formatTime}}</td>
             <td class="date-cell">{{.CreatedAt | formatTime}}</td>
+            {{if $.CanWrite}}
             <td class="actions-cell">
                 <button class="btn btn-secondary btn-small"
                         hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
@@ -55,6 +58,7 @@
                 <button class="btn btn-danger btn-small"
                         onclick="showConfirmDelete('{{.Key | js}}', '{{$.BaseURL}}/web/keys/{{.Key | urlEncode}}')">Delete</button>
             </td>
+            {{end}}
         </tr>
         {{end}}
     </tbody>
@@ -71,12 +75,14 @@
 {{else}}
 <div class="empty-state">
     <p>No keys stored yet</p>
+    {{if .CanWrite}}
     <button class="btn btn-primary"
             hx-get="{{.BaseURL}}/web/keys/new"
             hx-target="#modal-content"
             hx-swap="innerHTML">
         Create your first key
     </button>
+    {{end}}
 </div>
 <span id="key-count" hx-swap-oob="innerHTML" style="display:none">no keys</span>
 <span id="sort-label" hx-swap-oob="innerHTML" style="display:none">{{.SortMode | sortModeLabel}}</span>

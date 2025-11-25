@@ -9,8 +9,8 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **app/server/** - HTTP server with routegroup
   - `server.go` - Server struct, config, routes, graceful shutdown, GitStore interface
   - `handlers.go` - HTTP handlers for KV API operations (with git integration)
-  - `web.go` - Web UI handlers, templates, static file serving
-  - `auth.go` - Authentication: sessions, tokens, middleware, prefix-based ACL
+  - `web.go` - Web UI handlers, templates, static file serving, per-user permission checks
+  - `auth.go` - Authentication: YAML config (users + tokens), sessions, middleware, prefix-based ACL
   - `static/` - Embedded CSS, JS, HTMX library
   - `templates/` - Embedded HTML templates (base, index, login, partials)
   - `mocks/` - Generated mocks (moq)
@@ -89,4 +89,8 @@ POST   /logout                   # clear session, redirect to login
 - Query placeholders: SQLite uses `?`, PostgreSQL uses `$1, $2, ...` (adoptQuery converts)
 - Git versioning: optional, logs WARN on failures (DB is source of truth)
 - Git storage: path-based with `.val` suffix (app/config → .history/app/config.val)
+- Auth: YAML config file with users (web UI) and tokens (API), both use prefix-based ACL
+- Auth flow: username+password login creates session, session tracks username for permission checks
+- Permissions: prefix patterns (*, foo/*, exact) with access levels (r, w, rw), longest match wins
+- Web handlers check permissions server-side (not just UI conditions)
 - Keep it simple - no over-engineering

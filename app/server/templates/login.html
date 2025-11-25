@@ -21,9 +21,14 @@
 
                 <form method="POST" action="{{.BaseURL}}/login" class="login-form">
                     <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username"
+                               placeholder="Enter username" required autofocus>
+                    </div>
+                    <div class="form-group">
                         <label for="password">Password</label>
                         <input type="password" id="password" name="password"
-                               placeholder="Enter password" required autofocus>
+                               placeholder="Enter password" required>
                     </div>
                     <button type="submit" class="btn btn-primary btn-full">Login</button>
                 </form>

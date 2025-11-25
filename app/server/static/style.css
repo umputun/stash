@@ -174,19 +174,29 @@ body {
 }
 
 .btn-icon {
-    padding: 8px 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 6px;
     background: none;
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     color: var(--color-text-muted);
     cursor: pointer;
-    font-size: 18px;
+    font-size: 20px;
     line-height: 1;
 }
 
 .btn-icon:hover {
     background-color: var(--color-surface);
     color: var(--color-text);
+}
+
+.icon-view {
+    position: relative;
+    top: -2px;
 }
 
 .btn-small {
@@ -608,17 +618,6 @@ tr.clickable-row {
     padding: 12px;
     margin-bottom: 20px;
     font-size: 14px;
-}
-
-/* Logout button */
-.btn-logout {
-    color: var(--color-danger);
-    border-color: var(--color-danger);
-}
-
-.btn-logout:hover {
-    background-color: var(--color-danger);
-    color: white;
 }
 
 /* Responsive Design */

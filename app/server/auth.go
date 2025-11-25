@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	log "github.com/go-pkgz/lgr"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 )
 
 // Permission represents read/write access level.
@@ -23,6 +25,10 @@ const (
 	PermissionWrite                       // write-only access
 	PermissionReadWrite                   // full read-write access
 )
+
+// sessionCookieNames defines the cookie names to check for session auth.
+// __Host- prefix is used for enhanced security over HTTPS.
+var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 // String returns a string representation of the permission.
 func (p Permission) String() string {
@@ -48,6 +54,53 @@ func (p Permission) CanWrite() bool {
 	return p == PermissionWrite || p == PermissionReadWrite
 }
 
+// AuthConfig represents the auth configuration file (stash-auth.yml).
+type AuthConfig struct {
+	Users  []UserConfig  `yaml:"users"`
+	Tokens []TokenConfig `yaml:"tokens"`
+}
+
+// UserConfig represents a user in the auth config file.
+type UserConfig struct {
+	Name        string             `yaml:"name"`
+	Password    string             `yaml:"password"` // bcrypt hash
+	Permissions []PermissionConfig `yaml:"permissions"`
+}
+
+// TokenConfig represents an API token in the auth config file.
+type TokenConfig struct {
+	Token       string             `yaml:"token"`
+	Permissions []PermissionConfig `yaml:"permissions"`
+}
+
+// PermissionConfig represents a prefix-permission pair in the config file.
+type PermissionConfig struct {
+	Prefix string `yaml:"prefix"`
+	Access string `yaml:"access"` // r, w, rw
+}
+
+// User represents an authenticated user with ACL.
+type User struct {
+	Name         string
+	PasswordHash string
+	ACL          TokenACL // reuse ACL structure for permissions
+}
+
+// LoadAuthConfig reads and parses the auth YAML file.
+func LoadAuthConfig(path string) (*AuthConfig, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // path is from CLI flag, controlled by admin
+	if err != nil {
+		return nil, fmt.Errorf("failed to read auth config file: %w", err)
+	}
+
+	var cfg AuthConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse auth config file: %w", err)
+	}
+
+	return &cfg, nil
+}
+
 // prefixPerm represents a single prefix-permission pair, used for ordered matching.
 type prefixPerm struct {
 	prefix     string
@@ -63,28 +116,43 @@ type TokenACL struct {
 // session represents an active login session.
 type session struct {
 	token     string
+	username  string // logged-in username (empty for legacy single-password mode)
 	createdAt time.Time
 }
 
 // Auth handles authentication and authorization.
 type Auth struct {
-	passwordHash string
-	tokens       map[string]TokenACL // token string -> ACL
-	sessions     map[string]session  // session token -> session
-	sessionsMu   sync.Mutex
-	loginTTL     time.Duration
+	users      map[string]User     // username -> User (for web UI auth)
+	tokens     map[string]TokenACL // token string -> ACL (for API auth)
+	sessions   map[string]session  // session token -> session
+	sessionsMu sync.Mutex
+	loginTTL   time.Duration
 }
 
-// NewAuth creates a new Auth instance from configuration.
-// Returns nil if authentication is disabled (no password hash).
-func NewAuth(passwordHash string, tokenStrings []string, loginTTL time.Duration) (*Auth, error) {
-	if passwordHash == "" {
+// NewAuth creates a new Auth instance from configuration file.
+// Returns nil if authFile is empty (authentication disabled).
+func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
+	if authFile == "" {
 		return nil, nil // auth disabled
 	}
 
-	tokens, err := parseTokens(tokenStrings)
+	cfg, err := LoadAuthConfig(authFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse auth tokens: %w", err)
+		return nil, fmt.Errorf("failed to load auth config: %w", err)
+	}
+
+	users, err := parseUsers(cfg.Users)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse users: %w", err)
+	}
+
+	tokens, err := parseTokenConfigs(cfg.Tokens)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse tokens: %w", err)
+	}
+
+	if len(users) == 0 && len(tokens) == 0 {
+		return nil, fmt.Errorf("auth config must have at least one user or token")
 	}
 
 	if loginTTL == 0 {
@@ -92,81 +160,117 @@ func NewAuth(passwordHash string, tokenStrings []string, loginTTL time.Duration)
 	}
 
 	return &Auth{
-		passwordHash: passwordHash,
-		tokens:       tokens,
-		sessions:     make(map[string]session),
-		loginTTL:     loginTTL,
+		users:    users,
+		tokens:   tokens,
+		sessions: make(map[string]session),
+		loginTTL: loginTTL,
 	}, nil
 }
 
-// parseTokens parses token strings in format "token:prefix:permissions".
-func parseTokens(tokenStrings []string) (map[string]TokenACL, error) {
-	tokens := make(map[string]TokenACL)
-	seen := make(map[string]map[string]bool) // token -> prefix -> exists
+// parseUsers converts UserConfig slice to users map.
+func parseUsers(configs []UserConfig) (map[string]User, error) {
+	users := make(map[string]User)
 
-	for _, ts := range tokenStrings {
-		parts := strings.SplitN(ts, ":", 3)
-		if len(parts) != 3 {
-			return nil, fmt.Errorf("invalid token format %q, expected token:prefix:permissions", ts)
+	for _, uc := range configs {
+		if uc.Name == "" {
+			return nil, fmt.Errorf("user name cannot be empty")
+		}
+		if uc.Password == "" {
+			return nil, fmt.Errorf("password hash cannot be empty for user %q", uc.Name)
+		}
+		if _, exists := users[uc.Name]; exists {
+			return nil, fmt.Errorf("duplicate user name %q", uc.Name)
 		}
 
-		tokenName := strings.TrimSpace(parts[0])
-		prefix := strings.TrimSpace(parts[1])
-		permStr := strings.ToLower(strings.TrimSpace(parts[2]))
-
-		if tokenName == "" {
-			return nil, fmt.Errorf("empty token name in %q", ts)
-		}
-		if prefix == "" {
-			return nil, fmt.Errorf("empty prefix in %q", ts)
+		acl, err := parsePermissionConfigs(uc.Name, uc.Permissions)
+		if err != nil {
+			return nil, fmt.Errorf("invalid permissions for user %q: %w", uc.Name, err)
 		}
 
-		// parse permission
-		var perm Permission
-		switch permStr {
-		case "r", "read":
-			perm = PermissionRead
-		case "w", "write":
-			perm = PermissionWrite
-		case "rw", "readwrite", "read-write":
-			perm = PermissionReadWrite
-		default:
-			return nil, fmt.Errorf("invalid permission %q in %q, expected r/w/rw", permStr, ts)
+		users[uc.Name] = User{
+			Name:         uc.Name,
+			PasswordHash: uc.Password,
+			ACL:          acl,
 		}
-
-		// check for duplicate token+prefix
-		if seen[tokenName] == nil {
-			seen[tokenName] = make(map[string]bool)
-		}
-		if seen[tokenName][prefix] {
-			return nil, fmt.Errorf("duplicate prefix %q for token %q", prefix, tokenName)
-		}
-		seen[tokenName][prefix] = true
-
-		// add to token ACL
-		acl := tokens[tokenName]
-		acl.Token = tokenName
-		acl.prefixes = append(acl.prefixes, prefixPerm{
-			prefix:     prefix,
-			permission: perm,
-		})
-		tokens[tokenName] = acl
 	}
 
-	// sort prefixes by length descending for longest-match-first
-	for name, acl := range tokens {
-		sort.Slice(acl.prefixes, func(i, j int) bool {
-			return len(acl.prefixes[i].prefix) > len(acl.prefixes[j].prefix)
-		})
-		tokens[name] = acl
+	return users, nil
+}
+
+// parseTokenConfigs converts TokenConfig slice to tokens map.
+func parseTokenConfigs(configs []TokenConfig) (map[string]TokenACL, error) {
+	tokens := make(map[string]TokenACL)
+
+	for _, tc := range configs {
+		if tc.Token == "" {
+			return nil, fmt.Errorf("token cannot be empty")
+		}
+		if _, exists := tokens[tc.Token]; exists {
+			return nil, fmt.Errorf("duplicate token %q", maskToken(tc.Token))
+		}
+
+		acl, err := parsePermissionConfigs(tc.Token, tc.Permissions)
+		if err != nil {
+			return nil, fmt.Errorf("invalid permissions for token %q: %w", maskToken(tc.Token), err)
+		}
+
+		tokens[tc.Token] = acl
 	}
 
 	return tokens, nil
 }
 
+// parsePermissionConfigs converts PermissionConfig slice to TokenACL.
+func parsePermissionConfigs(name string, configs []PermissionConfig) (TokenACL, error) {
+	var acl TokenACL
+	acl.Token = name
+	seen := make(map[string]bool)
+
+	for _, pc := range configs {
+		if pc.Prefix == "" {
+			return TokenACL{}, fmt.Errorf("prefix cannot be empty")
+		}
+		if seen[pc.Prefix] {
+			return TokenACL{}, fmt.Errorf("duplicate prefix %q", pc.Prefix)
+		}
+		seen[pc.Prefix] = true
+
+		perm, err := parsePermissionString(pc.Access)
+		if err != nil {
+			return TokenACL{}, fmt.Errorf("invalid access %q for prefix %q: %w", pc.Access, pc.Prefix, err)
+		}
+
+		acl.prefixes = append(acl.prefixes, prefixPerm{
+			prefix:     pc.Prefix,
+			permission: perm,
+		})
+	}
+
+	// sort prefixes by length descending for longest-match-first
+	sort.Slice(acl.prefixes, func(i, j int) bool {
+		return len(acl.prefixes[i].prefix) > len(acl.prefixes[j].prefix)
+	})
+
+	return acl, nil
+}
+
+// parsePermissionString converts a permission string to Permission type.
+func parsePermissionString(s string) (Permission, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "r", "read":
+		return PermissionRead, nil
+	case "w", "write":
+		return PermissionWrite, nil
+	case "rw", "readwrite", "read-write":
+		return PermissionReadWrite, nil
+	default:
+		return PermissionNone, fmt.Errorf("expected r/w/rw")
+	}
+}
+
 // Enabled returns true if authentication is enabled.
 func (a *Auth) Enabled() bool {
-	return a != nil && a.passwordHash != ""
+	return a != nil && (len(a.users) > 0 || len(a.tokens) > 0)
 }
 
 // LoginTTL returns the configured login session TTL.
@@ -177,13 +281,29 @@ func (a *Auth) LoginTTL() time.Duration {
 	return a.loginTTL
 }
 
-// ValidatePassword checks if the password matches the stored hash.
-func (a *Auth) ValidatePassword(password string) bool {
+// ValidateUser checks if username/password are valid and returns the user.
+// Returns nil if credentials are invalid.
+// Uses constant-time comparison to prevent username enumeration via timing attacks.
+func (a *Auth) ValidateUser(username, password string) *User {
 	if a == nil {
-		return false
+		return nil
 	}
-	err := bcrypt.CompareHashAndPassword([]byte(a.passwordHash), []byte(password))
-	return err == nil
+
+	// dummy hash for constant-time comparison when user doesn't exist.
+	// this is a valid bcrypt hash (cost=10) to ensure comparison takes similar time.
+	const dummyHash = "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
+
+	user, exists := a.users[username]
+	hashToCheck := dummyHash
+	if exists {
+		hashToCheck = user.PasswordHash
+	}
+
+	// always run bcrypt comparison to prevent timing-based username enumeration
+	if err := bcrypt.CompareHashAndPassword([]byte(hashToCheck), []byte(password)); err != nil || !exists {
+		return nil
+	}
+	return &user
 }
 
 // GetTokenACL returns the ACL for a token and whether it exists.
@@ -202,18 +322,7 @@ func (a *Auth) CheckPermission(token, key string, needWrite bool) bool {
 	if !ok {
 		return false
 	}
-
-	// find the longest matching prefix
-	for _, pp := range acl.prefixes {
-		if matchPrefix(pp.prefix, key) {
-			if needWrite {
-				return pp.permission.CanWrite()
-			}
-			return pp.permission.CanRead()
-		}
-	}
-
-	return false
+	return acl.CheckKeyPermission(key, needWrite)
 }
 
 // matchPrefix checks if a key matches a prefix pattern.
@@ -231,8 +340,8 @@ func matchPrefix(pattern, key string) bool {
 	return pattern == key
 }
 
-// CreateSession generates a new session token and stores it.
-func (a *Auth) CreateSession() (string, error) {
+// CreateSession generates a new session token for the given username.
+func (a *Auth) CreateSession(username string) (string, error) {
 	if a == nil {
 		return "", fmt.Errorf("auth not enabled")
 	}
@@ -244,6 +353,7 @@ func (a *Auth) CreateSession() (string, error) {
 
 	a.sessions[token] = session{
 		token:     token,
+		username:  username,
 		createdAt: time.Now(),
 	}
 
@@ -251,6 +361,93 @@ func (a *Auth) CreateSession() (string, error) {
 	a.cleanupExpiredSessions()
 
 	return token, nil
+}
+
+// GetSessionUser returns the username for a valid session.
+// Returns empty string and false if session is invalid or expired.
+func (a *Auth) GetSessionUser(token string) (string, bool) {
+	if a == nil {
+		return "", false
+	}
+
+	a.sessionsMu.Lock()
+	defer a.sessionsMu.Unlock()
+
+	sess, exists := a.sessions[token]
+	if !exists {
+		return "", false
+	}
+
+	if time.Since(sess.createdAt) > a.loginTTL {
+		delete(a.sessions, token)
+		return "", false
+	}
+
+	return sess.username, true
+}
+
+// CheckUserPermission checks if a user has the required permission for a key.
+// Returns true when auth is disabled (permissive by default).
+func (a *Auth) CheckUserPermission(username, key string, needWrite bool) bool {
+	if a == nil || !a.Enabled() {
+		return true // no auth = everything allowed
+	}
+	user, exists := a.users[username]
+	if !exists {
+		return false
+	}
+	return user.ACL.CheckKeyPermission(key, needWrite)
+}
+
+// FilterUserKeys filters keys based on user's read permissions.
+// Returns all keys when auth is disabled (permissive by default).
+func (a *Auth) FilterUserKeys(username string, keys []string) []string {
+	if a == nil || !a.Enabled() {
+		return keys // no auth = show all keys
+	}
+	user, exists := a.users[username]
+	if !exists {
+		return nil
+	}
+
+	var filtered []string
+	for _, key := range keys {
+		if user.ACL.CheckKeyPermission(key, false) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
+}
+
+// CheckKeyPermission checks if this ACL grants permission for a key.
+func (acl TokenACL) CheckKeyPermission(key string, needWrite bool) bool {
+	for _, pp := range acl.prefixes {
+		if matchPrefix(pp.prefix, key) {
+			if needWrite {
+				return pp.permission.CanWrite()
+			}
+			return pp.permission.CanRead()
+		}
+	}
+	return false
+}
+
+// UserCanWrite returns true if user has any write permission.
+// Returns true when auth is disabled (permissive by default).
+func (a *Auth) UserCanWrite(username string) bool {
+	if a == nil || !a.Enabled() {
+		return true // no auth = write allowed
+	}
+	user, exists := a.users[username]
+	if !exists {
+		return false
+	}
+	for _, pp := range user.ACL.prefixes {
+		if pp.permission.CanWrite() {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateSession checks if a session token is valid and not expired.
@@ -302,7 +499,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
-			for _, cookieName := range []string{"__Host-stash-auth", "stash-auth"} {
+			for _, cookieName := range sessionCookieNames {
 				if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(cookie.Value) {
 					next.ServeHTTP(w, r)
 					return
@@ -319,11 +516,25 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// also accept session cookie for API (allows UI to call API)
-		for _, cookieName := range []string{"__Host-stash-auth", "stash-auth"} {
-			if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(cookie.Value) {
-				next.ServeHTTP(w, r)
+		for _, cookieName := range sessionCookieNames {
+			cookie, err := r.Cookie(cookieName)
+			if err != nil {
+				continue
+			}
+			username, valid := a.GetSessionUser(cookie.Value)
+			if !valid {
+				continue
+			}
+			// check user permissions for the key
+			key := strings.TrimPrefix(r.URL.Path, "/kv/")
+			needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
+			if !a.CheckUserPermission(username, key, needWrite) {
+				log.Printf("[DEBUG] user %q denied %s access to key %q", username, r.Method, key)
+				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
+			next.ServeHTTP(w, r)
+			return
 		}
 
 		// check Bearer token

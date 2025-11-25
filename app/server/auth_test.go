@@ -3,6 +3,8 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -40,120 +42,218 @@ func TestPermission_CanWrite(t *testing.T) {
 	}
 }
 
+func TestPermission_String(t *testing.T) {
+	tests := []struct {
+		perm Permission
+		want string
+	}{
+		{PermissionNone, "none"},
+		{PermissionRead, "r"},
+		{PermissionWrite, "w"},
+		{PermissionReadWrite, "rw"},
+		{Permission(99), "none"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.perm.String())
+		})
+	}
+}
+
+func TestLoadAuthConfig(t *testing.T) {
+	t.Run("valid config", func(t *testing.T) {
+		content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "mytoken"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+		f := createTempFile(t, content)
+		cfg, err := LoadAuthConfig(f)
+		require.NoError(t, err)
+		require.Len(t, cfg.Users, 1)
+		require.Len(t, cfg.Tokens, 1)
+		assert.Equal(t, "admin", cfg.Users[0].Name)
+		assert.Equal(t, "mytoken", cfg.Tokens[0].Token)
+	})
+
+	t.Run("file not found", func(t *testing.T) {
+		_, err := LoadAuthConfig("/nonexistent/file.yml")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read auth config file")
+	})
+
+	t.Run("invalid yaml", func(t *testing.T) {
+		f := createTempFile(t, "invalid: yaml: content:")
+		_, err := LoadAuthConfig(f)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to parse auth config file")
+	})
+}
+
 func TestNewAuth_Disabled(t *testing.T) {
-	auth, err := NewAuth("", nil, time.Hour)
+	auth, err := NewAuth("", time.Hour)
 	require.NoError(t, err)
 	assert.Nil(t, auth)
 }
 
 func TestNewAuth_Enabled(t *testing.T) {
-	// bcrypt hash for "secret"
-	hash := "$2a$10$N9qo8uLOickgx2ZMRZoMye/IQPBKM.IJklnlj.RLXNE7QGIBbRPiO"
-	auth, err := NewAuth(hash, []string{"tok:*:rw"}, time.Hour)
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "apitoken"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 	require.NotNil(t, auth)
 	assert.True(t, auth.Enabled())
 }
 
-func TestParseTokens(t *testing.T) {
-	tests := []struct {
-		name    string
-		tokens  []string
-		wantErr bool
-		check   func(t *testing.T, tokens map[string]TokenACL)
-	}{
-		{
-			name:   "empty",
-			tokens: nil,
-			check: func(t *testing.T, tokens map[string]TokenACL) {
-				assert.Empty(t, tokens)
-			},
-		},
-		{
-			name:   "single token with wildcard",
-			tokens: []string{"mytoken:*:rw"},
-			check: func(t *testing.T, tokens map[string]TokenACL) {
-				acl, ok := tokens["mytoken"]
-				require.True(t, ok)
-				assert.Equal(t, "mytoken", acl.Token)
-				require.Len(t, acl.prefixes, 1)
-				assert.Equal(t, "*", acl.prefixes[0].prefix)
-				assert.Equal(t, PermissionReadWrite, acl.prefixes[0].permission)
-			},
-		},
-		{
-			name:   "multiple prefixes for same token",
-			tokens: []string{"tok:app/*:rw", "tok:*:r"},
-			check: func(t *testing.T, tokens map[string]TokenACL) {
-				acl, ok := tokens["tok"]
-				require.True(t, ok)
-				require.Len(t, acl.prefixes, 2)
-				// should be sorted by length descending
-				assert.Equal(t, "app/*", acl.prefixes[0].prefix)
-				assert.Equal(t, "*", acl.prefixes[1].prefix)
-			},
-		},
-		{
-			name:   "read only permission",
-			tokens: []string{"readonly:*:r"},
-			check: func(t *testing.T, tokens map[string]TokenACL) {
-				acl := tokens["readonly"]
-				assert.Equal(t, PermissionRead, acl.prefixes[0].permission)
-			},
-		},
-		{
-			name:   "write only permission",
-			tokens: []string{"writeonly:*:w"},
-			check: func(t *testing.T, tokens map[string]TokenACL) {
-				acl := tokens["writeonly"]
-				assert.Equal(t, PermissionWrite, acl.prefixes[0].permission)
-			},
-		},
-		{
-			name:    "invalid format - missing parts",
-			tokens:  []string{"invalid"},
-			wantErr: true,
-		},
-		{
-			name:    "invalid format - only two parts",
-			tokens:  []string{"tok:prefix"},
-			wantErr: true,
-		},
-		{
-			name:    "empty token name",
-			tokens:  []string{":prefix:rw"},
-			wantErr: true,
-		},
-		{
-			name:    "empty prefix",
-			tokens:  []string{"tok::rw"},
-			wantErr: true,
-		},
-		{
-			name:    "invalid permission",
-			tokens:  []string{"tok:*:invalid"},
-			wantErr: true,
-		},
-		{
-			name:    "duplicate prefix for same token",
-			tokens:  []string{"tok:*:r", "tok:*:rw"},
-			wantErr: true,
-		},
-	}
+func TestNewAuth_Errors(t *testing.T) {
+	t.Run("empty users and tokens", func(t *testing.T) {
+		f := createTempFile(t, "users: []\ntokens: []")
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "at least one user or token")
+	})
 
+	t.Run("empty user name", func(t *testing.T) {
+		f := createTempFile(t, `users:
+  - name: ""
+    password: "hash"
+    permissions:
+      - prefix: "*"
+        access: rw`)
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "user name cannot be empty")
+	})
+
+	t.Run("empty password", func(t *testing.T) {
+		f := createTempFile(t, `users:
+  - name: "admin"
+    password: ""
+    permissions:
+      - prefix: "*"
+        access: rw`)
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "password hash cannot be empty")
+	})
+
+	t.Run("duplicate user", func(t *testing.T) {
+		f := createTempFile(t, `users:
+  - name: "admin"
+    password: "hash1"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: "admin"
+    password: "hash2"
+    permissions:
+      - prefix: "*"
+        access: r`)
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate user name")
+	})
+
+	t.Run("empty token", func(t *testing.T) {
+		f := createTempFile(t, `tokens:
+  - token: ""
+    permissions:
+      - prefix: "*"
+        access: rw`)
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "token cannot be empty")
+	})
+
+	t.Run("invalid permission", func(t *testing.T) {
+		f := createTempFile(t, `users:
+  - name: "admin"
+    password: "hash"
+    permissions:
+      - prefix: "*"
+        access: invalid`)
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid access")
+	})
+
+	t.Run("duplicate prefix", func(t *testing.T) {
+		f := createTempFile(t, `users:
+  - name: "admin"
+    password: "hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+      - prefix: "*"
+        access: r`)
+		_, err := NewAuth(f, time.Hour)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate prefix")
+	})
+}
+
+func TestAuth_ValidateUser(t *testing.T) {
+	// bcrypt hash for "testpass"
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		username string
+		password string
+		wantUser bool
+	}{
+		{"correct credentials", "admin", "testpass", true},
+		{"wrong password", "admin", "wrong", false},
+		{"unknown user", "unknown", "testpass", false},
+		{"empty username", "", "testpass", false},
+		{"empty password", "admin", "", false},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tokens, err := parseTokens(tt.tokens)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			if tt.check != nil {
-				tt.check(t, tokens)
+			user := auth.ValidateUser(tt.username, tt.password)
+			if tt.wantUser {
+				require.NotNil(t, user)
+				assert.Equal(t, tt.username, user.Name)
+			} else {
+				assert.Nil(t, user)
 			}
 		})
 	}
+}
+
+func TestAuth_ValidateUser_NilAuth(t *testing.T) {
+	var auth *Auth
+	assert.Nil(t, auth.ValidateUser("admin", "pass"))
 }
 
 func TestMatchPrefix(t *testing.T) {
@@ -182,35 +282,53 @@ func TestMatchPrefix(t *testing.T) {
 	}
 }
 
-func TestAuth_ValidatePassword(t *testing.T) {
-	// bcrypt hash for "testpass"
-	hash := "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-	auth, err := NewAuth(hash, nil, time.Hour)
-	require.NoError(t, err)
+func TestTokenACL_CheckKeyPermission(t *testing.T) {
+	acl := TokenACL{
+		Token: "test",
+		prefixes: []prefixPerm{
+			{prefix: "app/*", permission: PermissionReadWrite},
+			{prefix: "*", permission: PermissionRead},
+		},
+	}
 
 	tests := []struct {
-		name     string
-		password string
-		want     bool
+		key       string
+		needWrite bool
+		want      bool
 	}{
-		{"correct password", "testpass", true},
-		{"wrong password", "wrong", false},
-		{"empty password", "", false},
+		{"app/config", false, true},
+		{"app/config", true, true},
+		{"other/key", false, true},
+		{"other/key", true, false},
 	}
+
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, auth.ValidatePassword(tt.password))
+		t.Run(tt.key, func(t *testing.T) {
+			assert.Equal(t, tt.want, acl.CheckKeyPermission(tt.key, tt.needWrite))
 		})
 	}
 }
 
 func TestAuth_CheckPermission(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", []string{
-		"full:*:rw",
-		"readonly:*:r",
-		"scoped:app/*:rw",
-		"scoped:*:r",
-	}, time.Hour)
+	content := `
+tokens:
+  - token: "full"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - token: "readonly"
+    permissions:
+      - prefix: "*"
+        access: r
+  - token: "scoped"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -219,20 +337,15 @@ func TestAuth_CheckPermission(t *testing.T) {
 		needWrite bool
 		want      bool
 	}{
-		// full access token
 		{"full", "any/key", false, true},
 		{"full", "any/key", true, true},
-		// readonly token
 		{"readonly", "any/key", false, true},
 		{"readonly", "any/key", true, false},
-		// scoped token - app/* has rw, * has r
 		{"scoped", "app/config", false, true},
 		{"scoped", "app/config", true, true},
 		{"scoped", "other/key", false, true},
 		{"scoped", "other/key", true, false},
-		// unknown token
 		{"unknown", "any", false, false},
-		{"unknown", "any", true, false},
 	}
 
 	for _, tt := range tests {
@@ -243,12 +356,127 @@ func TestAuth_CheckPermission(t *testing.T) {
 	}
 }
 
+func TestAuth_CheckUserPermission(t *testing.T) {
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: viewer
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: r
+  - name: scoped
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	tests := []struct {
+		username  string
+		key       string
+		needWrite bool
+		want      bool
+	}{
+		{"admin", "any/key", false, true},
+		{"admin", "any/key", true, true},
+		{"viewer", "any/key", false, true},
+		{"viewer", "any/key", true, false},
+		{"scoped", "app/config", true, true},
+		{"scoped", "other/key", true, false},
+		{"unknown", "any", false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.username+"_"+tt.key, func(t *testing.T) {
+			got := auth.CheckUserPermission(tt.username, tt.key, tt.needWrite)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestAuth_FilterUserKeys(t *testing.T) {
+	content := `
+users:
+  - name: scoped
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "app/*"
+        access: r
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	keys := []string{"app/config", "app/db", "other/key", "secret/data"}
+	filtered := auth.FilterUserKeys("scoped", keys)
+	assert.Equal(t, []string{"app/config", "app/db"}, filtered)
+
+	// unknown user returns nil
+	assert.Nil(t, auth.FilterUserKeys("unknown", keys))
+}
+
+func TestAuth_FilterUserKeys_NilAuth(t *testing.T) {
+	var auth *Auth
+	keys := []string{"a", "b"}
+	assert.Equal(t, keys, auth.FilterUserKeys("any", keys))
+}
+
+func TestAuth_UserCanWrite(t *testing.T) {
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: viewer
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: r
+  - name: partial
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	assert.True(t, auth.UserCanWrite("admin"))
+	assert.False(t, auth.UserCanWrite("viewer"))
+	assert.True(t, auth.UserCanWrite("partial"))
+	assert.False(t, auth.UserCanWrite("unknown"))
+}
+
 func TestAuth_Session(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", nil, time.Hour)
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 
 	// create session
-	token, err := auth.CreateSession()
+	token, err := auth.CreateSession("admin")
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 	assert.Len(t, token, 36) // uuid format
@@ -257,36 +485,92 @@ func TestAuth_Session(t *testing.T) {
 	assert.True(t, auth.ValidateSession(token))
 	assert.False(t, auth.ValidateSession("invalid"))
 
+	// get session user
+	username, valid := auth.GetSessionUser(token)
+	assert.True(t, valid)
+	assert.Equal(t, "admin", username)
+
+	// invalid session
+	_, valid = auth.GetSessionUser("invalid")
+	assert.False(t, valid)
+
 	// invalidate session
 	auth.InvalidateSession(token)
 	assert.False(t, auth.ValidateSession(token))
 }
 
 func TestAuth_SessionExpiry(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", nil, 1*time.Millisecond)
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, 1*time.Millisecond)
 	require.NoError(t, err)
 
-	token, err := auth.CreateSession()
+	token, err := auth.CreateSession("admin")
 	require.NoError(t, err)
 
-	// session should be valid immediately
 	assert.True(t, auth.ValidateSession(token))
-
-	// wait for expiry
 	time.Sleep(10 * time.Millisecond)
-
-	// session should be expired
 	assert.False(t, auth.ValidateSession(token))
+
+	// GetSessionUser also respects expiry
+	_, valid := auth.GetSessionUser(token)
+	assert.False(t, valid)
 }
 
-func TestAuth_Middleware_NoAuth(t *testing.T) {
-	// nil auth (disabled) should not be used as middleware
+func TestAuth_CreateSession_NilAuth(t *testing.T) {
 	var auth *Auth
-	assert.False(t, auth.Enabled())
+	_, err := auth.CreateSession("admin")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auth not enabled")
+}
+
+func TestAuth_Enabled(t *testing.T) {
+	var nilAuth *Auth
+	assert.False(t, nilAuth.Enabled())
+
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+	assert.True(t, auth.Enabled())
+}
+
+func TestAuth_LoginTTL(t *testing.T) {
+	t.Run("nil auth returns default 24h", func(t *testing.T) {
+		var auth *Auth
+		assert.Equal(t, 24*time.Hour, auth.LoginTTL())
+	})
+
+	t.Run("returns configured value", func(t *testing.T) {
+		content := `users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw`
+		f := createTempFile(t, content)
+		auth, err := NewAuth(f, 2*time.Hour)
+		require.NoError(t, err)
+		assert.Equal(t, 2*time.Hour, auth.LoginTTL())
+	})
 }
 
 func TestNoopAuth(t *testing.T) {
-	handler := NoopAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := NoopAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -297,11 +581,20 @@ func TestNoopAuth(t *testing.T) {
 }
 
 func TestAuth_SessionAuth(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", nil, time.Hour)
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 
 	middleware := auth.SessionAuth("/login")
-	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -313,7 +606,7 @@ func TestAuth_SessionAuth(t *testing.T) {
 	assert.Equal(t, "/login", rec.Header().Get("Location"))
 
 	// with valid session should pass
-	token, err := auth.CreateSession()
+	token, err := auth.CreateSession("admin")
 	require.NoError(t, err)
 
 	req = httptest.NewRequest("GET", "/", http.NoBody)
@@ -323,28 +616,25 @@ func TestAuth_SessionAuth(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestAuth_SessionAuth_WithBaseURL(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", nil, time.Hour)
-	require.NoError(t, err)
-
-	middleware := auth.SessionAuth("/stash/login")
-	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	// without session should redirect to /stash/login
-	req := httptest.NewRequest("GET", "/", http.NoBody)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusSeeOther, rec.Code)
-	assert.Equal(t, "/stash/login", rec.Header().Get("Location"))
-}
-
 func TestAuth_TokenAuth(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", []string{"api:*:rw"}, time.Hour)
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "apitoken"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 
-	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -356,7 +646,7 @@ func TestAuth_TokenAuth(t *testing.T) {
 
 	// with valid bearer token should pass
 	req = httptest.NewRequest("GET", "/kv/test", http.NoBody)
-	req.Header.Set("Authorization", "Bearer api")
+	req.Header.Set("Authorization", "Bearer apitoken")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -369,7 +659,7 @@ func TestAuth_TokenAuth(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	// session cookie should also work for API
-	token, err := auth.CreateSession()
+	token, err := auth.CreateSession("admin")
 	require.NoError(t, err)
 
 	req = httptest.NewRequest("GET", "/kv/test", http.NoBody)
@@ -380,10 +670,18 @@ func TestAuth_TokenAuth(t *testing.T) {
 }
 
 func TestAuth_TokenAuth_Permissions(t *testing.T) {
-	auth, err := NewAuth("$2a$10$hash", []string{"readonly:*:r"}, time.Hour)
+	content := `
+tokens:
+  - token: "readonly"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 
-	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -428,43 +726,6 @@ func TestMaskToken(t *testing.T) {
 	}
 }
 
-func TestAuth_LoginTTL(t *testing.T) {
-	t.Run("nil auth returns default 24h", func(t *testing.T) {
-		var auth *Auth
-		assert.Equal(t, 24*time.Hour, auth.LoginTTL())
-	})
-
-	t.Run("returns configured value", func(t *testing.T) {
-		auth, err := NewAuth("$2a$10$hash", nil, 2*time.Hour)
-		require.NoError(t, err)
-		assert.Equal(t, 2*time.Hour, auth.LoginTTL())
-	})
-
-	t.Run("default when zero", func(t *testing.T) {
-		auth, err := NewAuth("$2a$10$hash", nil, 0)
-		require.NoError(t, err)
-		assert.Equal(t, 24*time.Hour, auth.LoginTTL())
-	})
-}
-
-func TestPermission_String(t *testing.T) {
-	tests := []struct {
-		perm Permission
-		want string
-	}{
-		{PermissionNone, "none"},
-		{PermissionRead, "r"},
-		{PermissionWrite, "w"},
-		{PermissionReadWrite, "rw"},
-		{Permission(99), "none"}, // unknown
-	}
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.perm.String())
-		})
-	}
-}
-
 func TestAuth_GetTokenACL_NilAuth(t *testing.T) {
 	var auth *Auth
 	acl, ok := auth.GetTokenACL("anytoken")
@@ -472,9 +733,125 @@ func TestAuth_GetTokenACL_NilAuth(t *testing.T) {
 	assert.Empty(t, acl.Token)
 }
 
-func TestAuth_CreateSession_NilAuth(t *testing.T) {
-	var auth *Auth
-	_, err := auth.CreateSession()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "auth not enabled")
+func TestParsePermissionString(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    Permission
+		wantErr bool
+	}{
+		{"r", PermissionRead, false},
+		{"R", PermissionRead, false},
+		{"read", PermissionRead, false},
+		{"w", PermissionWrite, false},
+		{"write", PermissionWrite, false},
+		{"rw", PermissionReadWrite, false},
+		{"RW", PermissionReadWrite, false},
+		{"readwrite", PermissionReadWrite, false},
+		{"read-write", PermissionReadWrite, false},
+		{"invalid", PermissionNone, true},
+		{"", PermissionNone, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := parsePermissionString(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+// TestTokenAuth_SessionCookieEnforcesACL verifies that session cookie auth
+// on /kv API routes still enforces user permissions (not bypass ACL).
+func TestTokenAuth_SessionCookieEnforcesACL(t *testing.T) {
+	// bcrypt hash for "readonly123" with cost 4
+	content := `
+users:
+  - name: readonly
+    password: "$2a$04$N3p9HN1XKt7M8E0TBj9Jyex3aP8LXn4qGvYN8UxZJxU8aVH1Zf4kS"
+    permissions:
+      - prefix: "public/*"
+        access: r
+  - name: scoped
+    password: "$2a$04$N3p9HN1XKt7M8E0TBj9Jyex3aP8LXn4qGvYN8UxZJxU8aVH1Zf4kS"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// create session for read-only user
+	sessionToken, err := auth.CreateSession("readonly")
+	require.NoError(t, err)
+
+	t.Run("readonly user cannot PUT via session cookie", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/kv/public/test", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "read-only user should not be able to PUT")
+	})
+
+	t.Run("readonly user cannot DELETE via session cookie", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/kv/public/test", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "read-only user should not be able to DELETE")
+	})
+
+	t.Run("readonly user can read allowed prefix via session cookie", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/public/test", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "read-only user should be able to read public/*")
+	})
+
+	t.Run("readonly user cannot read outside allowed prefix via session cookie", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/secret/key", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "read-only user should not access secret/*")
+	})
+
+	// create session for scoped user (app/* only)
+	scopedSession, err := auth.CreateSession("scoped")
+	require.NoError(t, err)
+
+	t.Run("scoped user can write to allowed prefix via session cookie", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/kv/app/config", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: scopedSession})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "scoped user should write to app/*")
+	})
+
+	t.Run("scoped user cannot write outside allowed prefix via session cookie", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/kv/secret/key", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: scopedSession})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "scoped user should not write to secret/*")
+	})
+}
+
+// createTempFile creates a temporary file with the given content and returns its path.
+func createTempFile(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "auth.yml")
+	err := os.WriteFile(f, []byte(content), 0o600)
+	require.NoError(t, err)
+	return f
 }
