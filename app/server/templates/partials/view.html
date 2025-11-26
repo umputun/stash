@@ -15,8 +15,10 @@
         <label>Value</label>
         {{if .IsBinary}}
         <span class="binary-indicator">Base64 encoded</span>
-        {{end}}
+        <div class="value-display value-content">{{.Value}}</div>
+        {{else}}
         <div class="value-display value-content highlighted-code">{{.HighlightedVal}}</div>
+        {{end}}
     </div>
 </div>
 <div class="modal-footer">
