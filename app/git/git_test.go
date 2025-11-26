@@ -209,6 +209,33 @@ func TestStore_Push(t *testing.T) {
 		err = store.Push()
 		require.NoError(t, err)
 	})
+
+	t.Run("fails with invalid ssh key path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{
+			Path:   filepath.Join(tmpDir, ".history"),
+			Remote: "origin",
+			SSHKey: "/nonexistent/path/to/key",
+		})
+		require.NoError(t, err)
+
+		err = store.Push()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to load SSH key")
+	})
+
+	t.Run("no-op without remote even with ssh key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{
+			Path:   filepath.Join(tmpDir, ".history"),
+			SSHKey: "/some/key/path",
+		})
+		require.NoError(t, err)
+
+		// should return nil without attempting to load key since no remote configured
+		err = store.Push()
+		require.NoError(t, err)
+	})
 }
 
 func TestStore_Pull(t *testing.T) {
@@ -217,6 +244,33 @@ func TestStore_Pull(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
+		err = store.Pull()
+		require.NoError(t, err)
+	})
+
+	t.Run("fails with invalid ssh key path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{
+			Path:   filepath.Join(tmpDir, ".history"),
+			Remote: "origin",
+			SSHKey: "/nonexistent/path/to/key",
+		})
+		require.NoError(t, err)
+
+		err = store.Pull()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to load SSH key")
+	})
+
+	t.Run("no-op without remote even with ssh key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{
+			Path:   filepath.Join(tmpDir, ".history"),
+			SSHKey: "/some/key/path",
+		})
+		require.NoError(t, err)
+
+		// should return nil without attempting to load key since no remote configured
 		err = store.Pull()
 		require.NoError(t, err)
 	})
