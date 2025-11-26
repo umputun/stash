@@ -846,6 +846,187 @@ users:
 	})
 }
 
+// TestTokenAuth_PublicAccess verifies that token="*" grants public access without authentication.
+func TestTokenAuth_PublicAccess(t *testing.T) {
+	content := `
+tokens:
+  - token: "*"
+    permissions:
+      - prefix: "public/*"
+        access: r
+      - prefix: "status"
+        access: r
+  - token: "admin-token"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+	require.NotNil(t, auth.publicACL, "public ACL should be set")
+
+	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("anonymous can read public prefix", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/public/config", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("anonymous can read exact public key", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/status", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("anonymous cannot write to public prefix", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/kv/public/config", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("anonymous cannot delete from public prefix", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/kv/public/config", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("anonymous cannot read private prefix", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/private/secret", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("authenticated user can read private prefix", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/private/secret", http.NoBody)
+		req.Header.Set("Authorization", "Bearer admin-token")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("authenticated user can write to public prefix", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/kv/public/config", http.NoBody)
+		req.Header.Set("Authorization", "Bearer admin-token")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+// TestTokenAuth_PublicAccessWithWritePermission verifies public write access.
+func TestTokenAuth_PublicAccessWithWritePermission(t *testing.T) {
+	content := `
+tokens:
+  - token: "*"
+    permissions:
+      - prefix: "writable/*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("anonymous can write to writable prefix", func(t *testing.T) {
+		req := httptest.NewRequest("PUT", "/kv/writable/data", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("anonymous can delete from writable prefix", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/kv/writable/data", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+
+	t.Run("anonymous can read writable prefix", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/writable/data", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+// TestParseTokenConfigs_PublicToken verifies that "*" token is extracted correctly.
+func TestParseTokenConfigs_PublicToken(t *testing.T) {
+	t.Run("public token extracted separately", func(t *testing.T) {
+		configs := []TokenConfig{
+			{Token: "*", Permissions: []PermissionConfig{{Prefix: "public/*", Access: "r"}}},
+			{Token: "normal", Permissions: []PermissionConfig{{Prefix: "*", Access: "rw"}}},
+		}
+		tokens, publicACL, err := parseTokenConfigs(configs)
+		require.NoError(t, err)
+		require.NotNil(t, publicACL, "public ACL should be extracted")
+		assert.Len(t, tokens, 1, "only normal token should be in map")
+		_, hasPublic := tokens["*"]
+		assert.False(t, hasPublic, "* should not be in tokens map")
+		_, hasNormal := tokens["normal"]
+		assert.True(t, hasNormal, "normal token should be in map")
+	})
+
+	t.Run("only public token", func(t *testing.T) {
+		configs := []TokenConfig{
+			{Token: "*", Permissions: []PermissionConfig{{Prefix: "*", Access: "r"}}},
+		}
+		tokens, publicACL, err := parseTokenConfigs(configs)
+		require.NoError(t, err)
+		require.NotNil(t, publicACL)
+		assert.Empty(t, tokens, "tokens map should be empty")
+	})
+
+	t.Run("no public token", func(t *testing.T) {
+		configs := []TokenConfig{
+			{Token: "normal", Permissions: []PermissionConfig{{Prefix: "*", Access: "rw"}}},
+		}
+		tokens, publicACL, err := parseTokenConfigs(configs)
+		require.NoError(t, err)
+		assert.Nil(t, publicACL, "public ACL should be nil")
+		assert.Len(t, tokens, 1)
+	})
+
+	t.Run("duplicate public token rejected", func(t *testing.T) {
+		configs := []TokenConfig{
+			{Token: "*", Permissions: []PermissionConfig{{Prefix: "public/*", Access: "r"}}},
+			{Token: "*", Permissions: []PermissionConfig{{Prefix: "status", Access: "r"}}},
+		}
+		_, _, err := parseTokenConfigs(configs)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate public token")
+	})
+}
+
+// TestNewAuth_PublicTokenOnly verifies auth can be created with only public token.
+func TestNewAuth_PublicTokenOnly(t *testing.T) {
+	content := `
+tokens:
+  - token: "*"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+	require.NotNil(t, auth)
+	require.NotNil(t, auth.publicACL)
+	assert.Empty(t, auth.tokens)
+	assert.Empty(t, auth.users)
+}
+
 // createTempFile creates a temporary file with the given content and returns its path.
 func createTempFile(t *testing.T, content string) string {
 	t.Helper()

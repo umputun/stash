@@ -124,6 +124,7 @@ type session struct {
 type Auth struct {
 	users      map[string]User     // username -> User (for web UI auth)
 	tokens     map[string]TokenACL // token string -> ACL (for API auth)
+	publicACL  *TokenACL           // public access ACL (token="*"), nil if not configured
 	sessions   map[string]session  // session token -> session
 	sessionsMu sync.Mutex
 	loginTTL   time.Duration
@@ -146,12 +147,12 @@ func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 		return nil, fmt.Errorf("failed to parse users: %w", err)
 	}
 
-	tokens, err := parseTokenConfigs(cfg.Tokens)
+	tokens, publicACL, err := parseTokenConfigs(cfg.Tokens)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tokens: %w", err)
 	}
 
-	if len(users) == 0 && len(tokens) == 0 {
+	if len(users) == 0 && len(tokens) == 0 && publicACL == nil {
 		return nil, fmt.Errorf("auth config must have at least one user or token")
 	}
 
@@ -160,10 +161,11 @@ func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 	}
 
 	return &Auth{
-		users:    users,
-		tokens:   tokens,
-		sessions: make(map[string]session),
-		loginTTL: loginTTL,
+		users:     users,
+		tokens:    tokens,
+		publicACL: publicACL,
+		sessions:  make(map[string]session),
+		loginTTL:  loginTTL,
 	}, nil
 }
 
@@ -197,27 +199,38 @@ func parseUsers(configs []UserConfig) (map[string]User, error) {
 	return users, nil
 }
 
-// parseTokenConfigs converts TokenConfig slice to tokens map.
-func parseTokenConfigs(configs []TokenConfig) (map[string]TokenACL, error) {
+// parseTokenConfigs converts TokenConfig slice to tokens map and extracts public ACL.
+// Returns (tokens map, public ACL or nil, error).
+func parseTokenConfigs(configs []TokenConfig) (map[string]TokenACL, *TokenACL, error) {
 	tokens := make(map[string]TokenACL)
+	var publicACL *TokenACL
 
 	for _, tc := range configs {
 		if tc.Token == "" {
-			return nil, fmt.Errorf("token cannot be empty")
+			return nil, nil, fmt.Errorf("token cannot be empty")
 		}
 		if _, exists := tokens[tc.Token]; exists {
-			return nil, fmt.Errorf("duplicate token %q", maskToken(tc.Token))
+			return nil, nil, fmt.Errorf("duplicate token %q", maskToken(tc.Token))
 		}
 
 		acl, err := parsePermissionConfigs(tc.Token, tc.Permissions)
 		if err != nil {
-			return nil, fmt.Errorf("invalid permissions for token %q: %w", maskToken(tc.Token), err)
+			return nil, nil, fmt.Errorf("invalid permissions for token %q: %w", maskToken(tc.Token), err)
+		}
+
+		// token "*" is treated as public access (no auth required)
+		if tc.Token == "*" {
+			if publicACL != nil {
+				return nil, nil, fmt.Errorf("duplicate public token \"*\"")
+			}
+			publicACL = &acl
+			continue // don't add to regular tokens map
 		}
 
 		tokens[tc.Token] = acl
 	}
 
-	return tokens, nil
+	return tokens, publicACL, nil
 }
 
 // parsePermissionConfigs converts PermissionConfig slice to TokenACL.
@@ -513,8 +526,18 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 
 // TokenAuth returns middleware that requires a valid Bearer token with appropriate permissions.
 // Used for API routes. Returns 401/403 if not authorized.
+// Public access (token="*") is checked first and allows unauthenticated requests.
 func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.URL.Path, "/kv/")
+		needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
+
+		// check public access first (token="*" in config)
+		if a.publicACL != nil && a.publicACL.CheckKeyPermission(key, needWrite) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// also accept session cookie for API (allows UI to call API)
 		for _, cookieName := range sessionCookieNames {
 			cookie, err := r.Cookie(cookieName)
@@ -526,8 +549,6 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 				continue
 			}
 			// check user permissions for the key
-			key := strings.TrimPrefix(r.URL.Path, "/kv/")
-			needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
 			if !a.CheckUserPermission(username, key, needWrite) {
 				log.Printf("[DEBUG] user %q denied %s access to key %q", username, r.Method, key)
 				http.Error(w, "Forbidden", http.StatusForbidden)
@@ -551,10 +572,6 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-
-		// extract key from path and check permission
-		key := strings.TrimPrefix(r.URL.Path, "/kv/")
-		needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
 
 		if !a.CheckPermission(token, key, needWrite) {
 			log.Printf("[DEBUG] token %q denied %s access to key %q", maskToken(token), r.Method, key)

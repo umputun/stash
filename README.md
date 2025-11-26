@@ -227,6 +227,22 @@ When multiple prefixes match, the longest (most specific) wins.
 - `w` or `write` - write-only access
 - `rw` or `readwrite` - full read-write access
 
+### Public Access
+
+Use `token: "*"` to allow unauthenticated access to specific prefixes:
+
+```yaml
+tokens:
+  - token: "*"
+    permissions:
+      - prefix: "public/*"
+        access: r
+      - prefix: "status"
+        access: r
+```
+
+This allows anonymous GET requests to `public/*` keys and the `status` key while still requiring authentication for all other keys.
+
 ## Git Versioning
 
 Optional git versioning tracks all key changes in a local git repository. Every set or delete operation creates a git commit, providing a full audit trail and point-in-time recovery.
