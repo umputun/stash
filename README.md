@@ -103,10 +103,16 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 |--------|-------------|---------|-------------|
 | `-d, --db` | `STASH_DB` | `stash.db` | Database URL (SQLite file or postgres://...) |
 | `--server.address` | `STASH_SERVER_ADDRESS` | `:8080` | Server listen address |
-| `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5s` | Read timeout (duration format) |
+| `--server.read-timeout` | `STASH_SERVER_READ_TIMEOUT` | `5s` | Read timeout |
+| `--server.write-timeout` | `STASH_SERVER_WRITE_TIMEOUT` | `30s` | Write timeout |
+| `--server.idle-timeout` | `STASH_SERVER_IDLE_TIMEOUT` | `30s` | Idle timeout |
+| `--server.shutdown-timeout` | `STASH_SERVER_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout |
 | `--server.base-url` | `STASH_SERVER_BASE_URL` | - | Base URL path for reverse proxy (e.g., `/stash`) |
+| `--limits.body-size` | `STASH_LIMITS_BODY_SIZE` | `1048576` | Max request body size in bytes (1MB) |
+| `--limits.requests-per-sec` | `STASH_LIMITS_REQUESTS_PER_SEC` | `1000` | Max requests per second |
+| `--limits.login-concurrency` | `STASH_LIMITS_LOGIN_CONCURRENCY` | `5` | Max concurrent login attempts |
 | `--auth.file` | `STASH_AUTH_FILE` | - | Path to auth config file (enables auth) |
-| `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL (duration format) |
+| `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL |
 | `--git.enabled` | `STASH_GIT_ENABLED` | `false` | Enable git versioning |
 | `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
 | `--git.branch` | `STASH_GIT_BRANCH` | `master` | Git branch name |

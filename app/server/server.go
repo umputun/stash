@@ -21,10 +21,6 @@ import (
 //go:generate moq -out mocks/gitstore.go -pkg mocks -skip-ensure -fmt goimports . GitStore
 //go:generate moq -out mocks/validator.go -pkg mocks -skip-ensure -fmt goimports . Validator
 
-// loginConcurrencyLimit is the maximum number of concurrent login attempts.
-// Low limit helps mitigate brute-force attacks (combined with bcrypt's ~50ms delay).
-const loginConcurrencyLimit = 5
-
 // Server represents the HTTP server.
 type Server struct {
 	store       KVStore
@@ -65,13 +61,21 @@ type Validator interface {
 
 // Config holds server configuration.
 type Config struct {
-	Address     string
-	ReadTimeout time.Duration
-	Version     string
-	AuthFile    string        // path to auth config file (empty = auth disabled)
-	LoginTTL    time.Duration // session duration
-	BaseURL     string        // base URL path for reverse proxy (e.g., /stash)
-	GitPush     bool          // auto-push git commits
+	Address         string
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	ShutdownTimeout time.Duration
+	Version         string
+	AuthFile        string        // path to auth config file (empty = auth disabled)
+	LoginTTL        time.Duration // session duration
+	BaseURL         string        // base URL path for reverse proxy (e.g., /stash)
+	GitPush         bool          // auto-push git commits
+
+	// limits
+	BodySizeLimit    int64 // max request body size in bytes
+	RequestsPerSec   int64 // max requests per second
+	LoginConcurrency int64 // max concurrent login attempts
 }
 
 // New creates a new Server instance.
@@ -109,15 +113,15 @@ func (s *Server) Run(ctx context.Context) error {
 		Addr:              s.cfg.Address,
 		Handler:           s.handler(),
 		ReadHeaderTimeout: s.cfg.ReadTimeout,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       30 * time.Second,
+		WriteTimeout:      s.cfg.WriteTimeout,
+		IdleTimeout:       s.cfg.IdleTimeout,
 	}
 
 	// graceful shutdown
 	go func() {
 		<-ctx.Done()
 		log.Printf("[INFO] shutting down server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			log.Printf("[WARN] shutdown error: %v", err)
@@ -155,9 +159,9 @@ func (s *Server) routes() http.Handler {
 	router.Use(
 		rest.Recoverer(log.Default()),
 		rest.RealIP, // must be before Throttle to rate-limit by real client IP
-		rest.Throttle(1000),
+		rest.Throttle(s.requestsPerSec()),
 		rest.Trace,
-		rest.SizeLimit(1024*1024), // 1MB
+		rest.SizeLimit(s.bodySizeLimit()),
 		rest.AppInfo("stash", "umputun", s.version),
 		rest.Ping,
 	)
@@ -173,8 +177,8 @@ func (s *Server) routes() http.Handler {
 	router.Handle("GET /static/", staticHandler())
 	if s.auth.Enabled() {
 		router.HandleFunc("GET /login", s.handleLoginForm)
-		// stricter throttle on login to prevent brute-force (5 concurrent attempts max)
-		router.Handle("POST /login", rest.Throttle(loginConcurrencyLimit)(http.HandlerFunc(s.handleLogin)))
+		// stricter throttle on login to prevent brute-force
+		router.Handle("POST /login", rest.Throttle(s.loginConcurrency())(http.HandlerFunc(s.handleLogin)))
 		router.HandleFunc("POST /logout", s.handleLogout)
 	}
 
@@ -203,4 +207,28 @@ func (s *Server) routes() http.Handler {
 	})
 
 	return router
+}
+
+// bodySizeLimit returns the configured body size limit, or default 1MB if not set.
+func (s *Server) bodySizeLimit() int64 {
+	if s.cfg.BodySizeLimit > 0 {
+		return s.cfg.BodySizeLimit
+	}
+	return 1024 * 1024 // 1MB default
+}
+
+// requestsPerSec returns the configured requests per second limit, or default 1000 if not set.
+func (s *Server) requestsPerSec() int64 {
+	if s.cfg.RequestsPerSec > 0 {
+		return s.cfg.RequestsPerSec
+	}
+	return 1000 // default
+}
+
+// loginConcurrency returns the configured login concurrency limit, or default 5 if not set.
+func (s *Server) loginConcurrency() int64 {
+	if s.cfg.LoginConcurrency > 0 {
+		return s.cfg.LoginConcurrency
+	}
+	return 5 // default
 }

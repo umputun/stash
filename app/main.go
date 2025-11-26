@@ -33,14 +33,20 @@ var opts struct {
 		SSHKey  string `long:"ssh-key" env:"SSH_KEY" description:"SSH private key path for git push"`
 	} `group:"git" namespace:"git" env-namespace:"STASH_GIT"`
 
-	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
-	Version bool `long:"version" description:"show version and exit"`
-
 	Server struct {
-		Address     string        `long:"address" env:"ADDRESS" default:":8080" description:"server listen address"`
-		ReadTimeout time.Duration `long:"read-timeout" env:"READ_TIMEOUT" default:"5s" description:"read timeout"`
-		BaseURL     string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /stash)"`
+		Address         string        `long:"address" env:"ADDRESS" default:":8080" description:"server listen address"`
+		ReadTimeout     time.Duration `long:"read-timeout" env:"READ_TIMEOUT" default:"5s" description:"read timeout"`
+		WriteTimeout    time.Duration `long:"write-timeout" env:"WRITE_TIMEOUT" default:"30s" description:"write timeout"`
+		IdleTimeout     time.Duration `long:"idle-timeout" env:"IDLE_TIMEOUT" default:"30s" description:"idle timeout"`
+		ShutdownTimeout time.Duration `long:"shutdown-timeout" env:"SHUTDOWN_TIMEOUT" default:"5s" description:"graceful shutdown timeout"`
+		BaseURL         string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /stash)"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
+
+	Limits struct {
+		BodySize         int64 `long:"body-size" env:"BODY_SIZE" default:"1048576" description:"max body size in bytes"`
+		RequestsPerSec   int64 `long:"requests-per-sec" env:"REQUESTS_PER_SEC" default:"1000" description:"max requests per second"`
+		LoginConcurrency int64 `long:"login-concurrency" env:"LOGIN_CONCURRENCY" default:"5" description:"max concurrent login attempts"`
+	} `group:"limits" namespace:"limits" env-namespace:"STASH_LIMITS"`
 
 	Auth struct {
 		File     string        `long:"file" env:"FILE" description:"path to auth config file (stash-auth.yml)"`
@@ -53,6 +59,9 @@ var opts struct {
 	RestoreCmd struct {
 		Rev string `long:"rev" required:"true" description:"git revision to restore (commit/tag/branch)"`
 	} `command:"restore" description:"restore database from a git revision"`
+
+	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
+	Version bool `long:"version" description:"show version and exit"`
 }
 
 var revision = "unknown"
@@ -129,13 +138,19 @@ func runServer(ctx context.Context) error {
 
 	// initialize and start HTTP server
 	srv, err := server.New(kvStore, validator.NewService(), server.Config{
-		Address:     opts.Server.Address,
-		ReadTimeout: opts.Server.ReadTimeout,
-		Version:     revision,
-		AuthFile:    opts.Auth.File,
-		LoginTTL:    opts.Auth.LoginTTL,
-		BaseURL:     baseURL,
-		GitPush:     opts.Git.Push,
+		Address:          opts.Server.Address,
+		ReadTimeout:      opts.Server.ReadTimeout,
+		WriteTimeout:     opts.Server.WriteTimeout,
+		IdleTimeout:      opts.Server.IdleTimeout,
+		ShutdownTimeout:  opts.Server.ShutdownTimeout,
+		Version:          revision,
+		AuthFile:         opts.Auth.File,
+		LoginTTL:         opts.Auth.LoginTTL,
+		BaseURL:          baseURL,
+		GitPush:          opts.Git.Push,
+		BodySizeLimit:    opts.Limits.BodySize,
+		RequestsPerSec:   opts.Limits.RequestsPerSec,
+		LoginConcurrency: opts.Limits.LoginConcurrency,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
