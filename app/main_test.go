@@ -842,6 +842,127 @@ func TestRunRestore_InvalidRevision(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to checkout revision")
 }
 
+func TestIntegration_WithCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18493"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	opts.Cache.Enabled = true
+	opts.Cache.MaxKeys = 100
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18493/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("cache serves repeated reads", func(t *testing.T) {
+		// put value
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18493/kv/cached/key1", bytes.NewBufferString("cached-value"))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// first read - populates cache
+		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key1")
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, "cached-value", string(body))
+
+		// second read - should hit cache
+		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key1")
+		require.NoError(t, err)
+		body, err = io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, "cached-value", string(body))
+	})
+
+	t.Run("cache invalidates on update", func(t *testing.T) {
+		// put initial value
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18493/kv/cached/key2", bytes.NewBufferString("initial"))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		// read to populate cache
+		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key2")
+		require.NoError(t, err)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, "initial", string(body))
+
+		// update value
+		req, err = http.NewRequest(http.MethodPut, "http://127.0.0.1:18493/kv/cached/key2", bytes.NewBufferString("updated"))
+		require.NoError(t, err)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		// read should return updated value (cache invalidated)
+		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key2")
+		require.NoError(t, err)
+		body, err = io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, "updated", string(body))
+	})
+
+	t.Run("cache invalidates on delete", func(t *testing.T) {
+		// put value
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18493/kv/cached/key3", bytes.NewBufferString("to-delete"))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+
+		// read to populate cache
+		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key3")
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// delete
+		req, err = http.NewRequest(http.MethodDelete, "http://127.0.0.1:18493/kv/cached/key3", http.NoBody)
+		require.NoError(t, err)
+		resp, err = client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+
+		// read should return 404 (cache invalidated)
+		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key3")
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	// shutdown
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset cache opts
+	opts.Cache.Enabled = false
+}
+
 func TestRunServer_WithGit(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
