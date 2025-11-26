@@ -15,8 +15,9 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `templates/` - Embedded HTML templates (base, index, login, partials)
   - `mocks/` - Generated mocks (moq)
 - **app/store/** - Database storage layer (SQLite/PostgreSQL)
-  - `store.go` - Types (KeyInfo), errors
+  - `store.go` - Interface, types (KeyInfo), errors
   - `sqlite.go` - Unified Store with SQLite and PostgreSQL support
+  - `cached.go` - Loading cache wrapper using lcw
 - **app/git/** - Git versioning for key-value storage
   - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
   - `git_test.go` - Unit tests
@@ -28,6 +29,7 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **HTTP**: `github.com/go-pkgz/routegroup`, `github.com/go-pkgz/rest`
 - **Database**: `github.com/jmoiron/sqlx`, `modernc.org/sqlite`, `github.com/jackc/pgx/v5`
 - **Git**: `github.com/go-git/go-git/v5`
+- **Cache**: `github.com/go-pkgz/lcw/v2`
 - **Testing**: `github.com/stretchr/testify`
 
 ## Build & Test
@@ -93,4 +95,5 @@ POST   /logout                   # clear session, redirect to login
 - Auth flow: username+password login creates session, session tracks username for permission checks
 - Permissions: prefix patterns (*, foo/*, exact) with access levels (r, w, rw), longest match wins
 - Web handlers check permissions server-side (not just UI conditions)
+- Cache: optional loading cache wrapper, populated on reads, invalidated on writes
 - Keep it simple - no over-engineering

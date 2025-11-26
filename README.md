@@ -32,6 +32,7 @@ Web UI available at http://localhost:8080
 - Optional authentication with username/password login and API tokens
 - Prefix-based access control for both users and API tokens (read/write permissions)
 - Optional git versioning with full audit trail and point-in-time recovery
+- Optional in-memory cache for read operations
 
 ## Security Note
 
@@ -113,6 +114,8 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--limits.login-concurrency` | `STASH_LIMITS_LOGIN_CONCURRENCY` | `5` | Max concurrent login attempts |
 | `--auth.file` | `STASH_AUTH_FILE` | - | Path to auth config file (enables auth) |
 | `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL |
+| `--cache.enabled` | `STASH_CACHE_ENABLED` | `false` | Enable in-memory cache for reads |
+| `--cache.max-keys` | `STASH_CACHE_MAX_KEYS` | `1000` | Maximum number of cached keys |
 | `--git.enabled` | `STASH_GIT_ENABLED` | `false` | Enable git versioning |
 | `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
 | `--git.branch` | `STASH_GIT_BRANCH` | `master` | Git branch name |
@@ -267,6 +270,34 @@ tokens:
 ```
 
 This allows anonymous GET requests to `public/*` keys and the `status` key while still requiring authentication for all other keys.
+
+## Caching
+
+Optional in-memory cache for read operations. The cache is populated on reads (loading cache pattern) and automatically invalidated when keys are modified or deleted.
+
+### When to Use Caching
+
+- **PostgreSQL deployments** - Network latency to the database makes caching beneficial
+- **High read volume** - Many clients frequently reading the same keys
+- **Read-heavy workloads** - Configuration is read much more often than written
+
+Caching is less useful for:
+- SQLite with local storage (already fast, file-based)
+- Write-heavy workloads (frequent invalidation negates cache benefits)
+- Keys that change frequently
+
+### Enabling Cache
+
+```bash
+stash server --cache.enabled --cache.max-keys=1000
+```
+
+### How It Works
+
+- First read of a key loads from database and stores in cache
+- Subsequent reads return cached value (cache hit)
+- Set or delete operations invalidate the affected key
+- LRU eviction when cache reaches max-keys limit
 
 ## Git Versioning
 

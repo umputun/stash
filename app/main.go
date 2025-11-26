@@ -47,6 +47,11 @@ var opts struct {
 		LoginConcurrency int64 `long:"login-concurrency" env:"LOGIN_CONCURRENCY" default:"5" description:"max concurrent login attempts"`
 	} `group:"limits" namespace:"limits" env-namespace:"STASH_LIMITS"`
 
+	Cache struct {
+		Enabled bool `long:"enabled" env:"ENABLED" description:"enable in-memory cache for reads"`
+		MaxKeys int  `long:"max-keys" env:"MAX_KEYS" default:"1000" description:"maximum number of cached keys"`
+	} `group:"cache" namespace:"cache" env-namespace:"STASH_CACHE"`
+
 	Auth struct {
 		File     string        `long:"file" env:"FILE" description:"path to auth config file (stash-auth.yml)"`
 		LoginTTL time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
@@ -127,11 +132,23 @@ func runServer(ctx context.Context) error {
 	if opts.Git.Enabled {
 		log.Printf("[INFO] git tracking enabled, path: %s, branch: %s", opts.Git.Path, opts.Git.Branch)
 	}
+	if opts.Cache.Enabled {
+		log.Printf("[INFO] cache enabled, max keys: %d", opts.Cache.MaxKeys)
+	}
 
 	// initialize storage
-	kvStore, err := store.New(opts.DB)
+	var kvStore store.Interface
+	kvStore, err = store.New(opts.DB)
 	if err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
+	}
+
+	// wrap with cache if enabled
+	if opts.Cache.Enabled {
+		kvStore, err = store.NewCached(kvStore, opts.Cache.MaxKeys)
+		if err != nil {
+			return fmt.Errorf("failed to initialize cache: %w", err)
+		}
 	}
 	defer kvStore.Close()
 

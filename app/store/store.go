@@ -9,6 +9,17 @@ import (
 // ErrNotFound is returned when a key is not found in the store.
 var ErrNotFound = errors.New("key not found")
 
+// Interface defines the contract for key-value storage operations.
+// Both Store (concrete DB) and Cached (wrapper) implement this interface.
+type Interface interface {
+	Get(key string) ([]byte, error)
+	GetWithFormat(key string) ([]byte, string, error)
+	Set(key string, value []byte, format string) error
+	Delete(key string) error
+	List() ([]KeyInfo, error)
+	Close() error
+}
+
 // KeyInfo holds metadata about a stored key.
 type KeyInfo struct {
 	Key       string    `db:"key"`
