@@ -16,6 +16,7 @@ import (
 
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/app/validator"
 )
 
 func TestGetSortMode(t *testing.T) {
@@ -482,6 +483,113 @@ func TestHandleKeyUpdate_Errors(t *testing.T) {
 	})
 }
 
+func TestHandleKeyCreate_Validation(t *testing.T) {
+	tests := []struct {
+		name       string
+		format     string
+		value      string
+		force      string
+		wantSet    bool // whether Set should be called
+		wantStatus int
+	}{
+		{name: "valid json saves", format: "json", value: `{"key":"value"}`, force: "", wantSet: true, wantStatus: http.StatusOK},
+		{name: "invalid json returns error", format: "json", value: `{bad json}`, force: "", wantSet: false, wantStatus: http.StatusOK},
+		{name: "invalid json with force saves", format: "json", value: `{bad json}`, force: "true", wantSet: true, wantStatus: http.StatusOK},
+		{name: "valid yaml saves", format: "yaml", value: "key: value", force: "", wantSet: true, wantStatus: http.StatusOK},
+		{name: "invalid yaml returns error", format: "yaml", value: "key:\n\tbad", force: "", wantSet: false, wantStatus: http.StatusOK},
+		{name: "invalid yaml with force saves", format: "yaml", value: "key:\n\tbad", force: "true", wantSet: true, wantStatus: http.StatusOK},
+		{name: "text bypasses validation", format: "text", value: `{not valid json but who cares}`, force: "", wantSet: true, wantStatus: http.StatusOK},
+		{name: "shell bypasses validation", format: "shell", value: `echo $VAR`, force: "", wantSet: true, wantStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &mocks.KVStoreMock{
+				SetFunc:  func(key string, value []byte, format string) error { return nil },
+				ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			}
+			srv := newTestServer(t, st)
+
+			form := map[string][]string{
+				"key":    {"testkey"},
+				"value":  {tt.value},
+				"format": {tt.format},
+			}
+			if tt.force != "" {
+				form["force"] = []string{tt.force}
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.PostForm = form
+			rec := httptest.NewRecorder()
+			srv.routes().ServeHTTP(rec, req)
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			if tt.wantSet {
+				require.Len(t, st.SetCalls(), 1, "expected Set to be called")
+				assert.Equal(t, "testkey", st.SetCalls()[0].Key)
+			} else {
+				assert.Empty(t, st.SetCalls(), "expected Set NOT to be called")
+				// verify error message is in response (form re-rendered with error)
+				assert.Contains(t, rec.Body.String(), "invalid")
+			}
+		})
+	}
+}
+
+func TestHandleKeyUpdate_Validation(t *testing.T) {
+	tests := []struct {
+		name       string
+		format     string
+		value      string
+		force      string
+		wantSet    bool
+		wantStatus int
+	}{
+		{name: "valid json saves", format: "json", value: `["item1","item2"]`, force: "", wantSet: true, wantStatus: http.StatusOK},
+		{name: "invalid json returns error", format: "json", value: `[missing bracket`, force: "", wantSet: false, wantStatus: http.StatusOK},
+		{name: "invalid json with force saves", format: "json", value: `[missing bracket`, force: "true", wantSet: true, wantStatus: http.StatusOK},
+		{name: "valid toml saves", format: "toml", value: `key = "value"`, force: "", wantSet: true, wantStatus: http.StatusOK},
+		{name: "invalid toml returns error", format: "toml", value: `key "no equals"`, force: "", wantSet: false, wantStatus: http.StatusOK},
+		{name: "invalid toml with force saves", format: "toml", value: `key "no equals"`, force: "true", wantSet: true, wantStatus: http.StatusOK},
+		{name: "text bypasses validation", format: "text", value: `anything goes here`, force: "", wantSet: true, wantStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &mocks.KVStoreMock{
+				SetFunc:  func(key string, value []byte, format string) error { return nil },
+				ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			}
+			srv := newTestServer(t, st)
+
+			form := map[string][]string{
+				"value":  {tt.value},
+				"format": {tt.format},
+			}
+			if tt.force != "" {
+				form["force"] = []string{tt.force}
+			}
+
+			req := httptest.NewRequest(http.MethodPut, "/web/keys/updatekey", http.NoBody)
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.PostForm = form
+			rec := httptest.NewRecorder()
+			srv.routes().ServeHTTP(rec, req)
+
+			assert.Equal(t, tt.wantStatus, rec.Code)
+			if tt.wantSet {
+				require.Len(t, st.SetCalls(), 1, "expected Set to be called")
+				assert.Equal(t, "updatekey", st.SetCalls()[0].Key)
+			} else {
+				assert.Empty(t, st.SetCalls(), "expected Set NOT to be called")
+				assert.Contains(t, rec.Body.String(), "invalid")
+			}
+		})
+	}
+}
+
 func TestHandleThemeToggle(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
@@ -608,7 +716,7 @@ func TestHandleLoginForm(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createTestAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/login", http.NoBody)
@@ -626,7 +734,7 @@ func TestHandleLogin(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createTestAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("valid credentials redirects", func(t *testing.T) {
@@ -666,7 +774,7 @@ func TestHandleLogout(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createTestAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/logout", http.NoBody)
@@ -703,7 +811,7 @@ func TestServer_URL(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, BaseURL: tc.baseURL})
+			srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, BaseURL: tc.baseURL})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, srv.url(tc.path))
 		})
@@ -727,7 +835,7 @@ func TestServer_CookiePath(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, BaseURL: tc.baseURL})
+			srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, BaseURL: tc.baseURL})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, srv.cookiePath())
 		})
@@ -746,7 +854,7 @@ func TestHandleKeyView_PermissionEnforcement(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("admin can view any key", func(t *testing.T) {
@@ -798,7 +906,7 @@ func TestHandleKeyEdit_PermissionEnforcement(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("admin can edit any key", func(t *testing.T) {
@@ -844,7 +952,7 @@ func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("admin can create any key", func(t *testing.T) {
@@ -901,7 +1009,7 @@ func TestHandleKeyUpdate_PermissionEnforcement(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("admin can update any key", func(t *testing.T) {
@@ -959,7 +1067,7 @@ func TestHandleKeyDelete_PermissionEnforcement(t *testing.T) {
 			DeleteFunc: func(key string) error { return nil },
 			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
 		}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 		require.NoError(t, err)
 
 		cookie := loginAndGetCookie(t, srv, "admin")
@@ -975,7 +1083,7 @@ func TestHandleKeyDelete_PermissionEnforcement(t *testing.T) {
 			DeleteFunc: func(key string) error { return nil },
 			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
 		}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 		require.NoError(t, err)
 
 		cookie := loginAndGetCookie(t, srv, "readonly")
@@ -991,7 +1099,7 @@ func TestHandleKeyDelete_PermissionEnforcement(t *testing.T) {
 			DeleteFunc: func(key string) error { return nil },
 			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
 		}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 		require.NoError(t, err)
 
 		cookie := loginAndGetCookie(t, srv, "scoped")
@@ -1007,7 +1115,7 @@ func TestHandleKeyDelete_PermissionEnforcement(t *testing.T) {
 			DeleteFunc: func(key string) error { return nil },
 			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
 		}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 		require.NoError(t, err)
 
 		cookie := loginAndGetCookie(t, srv, "scoped")
@@ -1030,7 +1138,7 @@ func TestHandleKeyList_PermissionFiltering(t *testing.T) {
 		},
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("admin sees all keys", func(t *testing.T) {
@@ -1074,7 +1182,7 @@ func TestHandleKeyNew_PermissionEnforcement(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("admin can access new key form", func(t *testing.T) {
@@ -1111,7 +1219,7 @@ func TestGetCurrentUser(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	t.Run("returns username from stash-auth cookie", func(t *testing.T) {
@@ -1138,7 +1246,7 @@ func TestGetCurrentUser(t *testing.T) {
 
 func TestCalculateModalDimensions(t *testing.T) {
 	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second})
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -1211,7 +1319,7 @@ func TestLoginThrottle(t *testing.T) {
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createTestAuthFile(t)
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
 	require.NoError(t, err)
 
 	// use httptest.Server for true concurrent requests

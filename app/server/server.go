@@ -19,6 +19,7 @@ import (
 
 //go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
 //go:generate moq -out mocks/gitstore.go -pkg mocks -skip-ensure -fmt goimports . GitStore
+//go:generate moq -out mocks/validator.go -pkg mocks -skip-ensure -fmt goimports . Validator
 
 // loginConcurrencyLimit is the maximum number of concurrent login attempts.
 // Low limit helps mitigate brute-force attacks (combined with bcrypt's ~50ms delay).
@@ -27,7 +28,8 @@ const loginConcurrencyLimit = 5
 // Server represents the HTTP server.
 type Server struct {
 	store       KVStore
-	gitStore    GitStore // optional git store for versioning
+	gitStore    GitStore  // optional git store for versioning
+	validator   Validator // format validator
 	cfg         Config
 	version     string
 	baseURL     string
@@ -55,6 +57,12 @@ type GitStore interface {
 	Push() error
 }
 
+// Validator defines the interface for format validation.
+// Defined here (consumer side) to allow different validator implementations.
+type Validator interface {
+	Validate(format string, value []byte) error
+}
+
 // Config holds server configuration.
 type Config struct {
 	Address     string
@@ -67,7 +75,7 @@ type Config struct {
 }
 
 // New creates a new Server instance.
-func New(st KVStore, cfg Config) (*Server, error) {
+func New(st KVStore, val Validator, cfg Config) (*Server, error) {
 	tmpl, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
@@ -80,6 +88,7 @@ func New(st KVStore, cfg Config) (*Server, error) {
 
 	return &Server{
 		store:       st,
+		validator:   val,
 		cfg:         cfg,
 		version:     cfg.Version,
 		baseURL:     cfg.BaseURL,

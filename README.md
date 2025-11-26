@@ -340,7 +340,7 @@ curl -X PUT -H "X-Stash-Format: json" -d '{"key": "value"}' http://localhost:808
 curl -X PUT -d '{"key": "value"}' "http://localhost:8080/kv/config?format=json"
 ```
 
-Supported formats: `text` (default), `json`, `yaml`, `xml`, `toml`, `ini`, `shell`.
+Supported formats: `text` (default), `json`, `yaml`, `xml`, `toml`, `ini`, `hcl`, `shell`.
 
 ### Delete key
 
@@ -365,7 +365,8 @@ Access the web interface at `http://localhost:8080/`. Features:
 - Table view of all keys with size and timestamps
 - Search keys by name
 - View, create, edit, and delete keys
-- Syntax highlighting for json, yaml, xml, toml, ini, shell formats (selectable via dropdown)
+- Syntax highlighting for json, yaml, xml, toml, ini, hcl, shell formats (selectable via dropdown)
+- Format validation for json, yaml, xml, toml, ini, hcl (with option to submit anyway if invalid)
 - Binary value display (base64 encoded)
 - Light/dark theme toggle
 

@@ -42,7 +42,12 @@
     </div>
     <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="hideModal('main-modal')">Cancel</button>
+        {{if .Error}}
         <button type="submit" class="btn btn-primary">{{if .IsNew}}Create{{else}}Save{{end}}</button>
+        <button type="submit" name="force" value="true" class="btn btn-danger-filled">Submit Anyway</button>
+        {{else}}
+        <button type="submit" class="btn btn-primary">{{if .IsNew}}Create{{else}}Save{{end}}</button>
+        {{end}}
     </div>
 </form>
 {{if not .IsNew}}

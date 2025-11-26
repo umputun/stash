@@ -18,6 +18,7 @@ import (
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server"
 	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/app/validator"
 )
 
 var opts struct {
@@ -127,7 +128,7 @@ func runServer(ctx context.Context) error {
 	defer kvStore.Close()
 
 	// initialize and start HTTP server
-	srv, err := server.New(kvStore, server.Config{
+	srv, err := server.New(kvStore, validator.NewService(), server.Config{
 		Address:     opts.Server.Address,
 		ReadTimeout: opts.Server.ReadTimeout,
 		Version:     revision,

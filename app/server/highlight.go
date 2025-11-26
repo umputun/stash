@@ -13,7 +13,7 @@ import (
 )
 
 // supportedFormats lists all formats that can be syntax highlighted.
-var supportedFormats = []string{"text", "json", "yaml", "xml", "toml", "ini", "shell"}
+var supportedFormats = []string{"text", "json", "yaml", "xml", "toml", "ini", "hcl", "shell"}
 
 // formatToLexer maps format names to Chroma lexer names.
 var formatToLexer = map[string]string{
@@ -22,6 +22,7 @@ var formatToLexer = map[string]string{
 	"xml":   "XML",
 	"toml":  "TOML",
 	"ini":   "INI",
+	"hcl":   "HCL",
 	"shell": "Bash",
 }
 

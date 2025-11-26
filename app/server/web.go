@@ -594,6 +594,31 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// validate value unless force flag is set or value is binary
+	force := r.FormValue("force") == "true"
+	if !force && !isBinary {
+		if err := s.validator.Validate(format, value); err != nil {
+			// re-render form with validation error
+			w.Header().Set("HX-Retarget", "#modal-content")
+			w.Header().Set("HX-Reswap", "innerHTML")
+			data := templateData{
+				Key:      key,
+				Value:    valueStr,
+				Format:   format,
+				Formats:  s.highlighter.SupportedFormats(),
+				IsNew:    true,
+				Error:    err.Error(),
+				BaseURL:  s.baseURL,
+				CanWrite: true,
+				Username: username,
+			}
+			if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
+				log.Printf("[ERROR] failed to execute template: %v", err)
+			}
+			return
+		}
+	}
+
 	if err := s.store.Set(key, value, format); err != nil {
 		log.Printf("[ERROR] failed to set key: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -650,6 +675,35 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "invalid value encoding", http.StatusBadRequest)
 		return
+	}
+
+	// validate value unless force flag is set or value is binary
+	force := r.FormValue("force") == "true"
+	if !force && !isBinary {
+		if err := s.validator.Validate(format, value); err != nil {
+			// re-render form with validation error
+			w.Header().Set("HX-Retarget", "#modal-content")
+			w.Header().Set("HX-Reswap", "innerHTML")
+			modalWidth, textareaHeight := s.calculateModalDimensions(valueStr)
+			data := templateData{
+				Key:            key,
+				Value:          valueStr,
+				Format:         format,
+				Formats:        s.highlighter.SupportedFormats(),
+				IsBinary:       isBinary,
+				IsNew:          false,
+				Error:          err.Error(),
+				BaseURL:        s.baseURL,
+				ModalWidth:     modalWidth,
+				TextareaHeight: textareaHeight,
+				CanWrite:       true,
+				Username:       username,
+			}
+			if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
+				log.Printf("[ERROR] failed to execute template: %v", err)
+			}
+			return
+		}
 	}
 
 	if err := s.store.Set(key, value, format); err != nil {
