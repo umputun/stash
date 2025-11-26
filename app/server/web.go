@@ -507,7 +507,7 @@ func (s *Server) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyView renders the key view modal.
 func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 
 	// check read permission
 	username := s.getCurrentUser(r)
@@ -557,7 +557,7 @@ func (s *Server) handleKeyView(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyEdit renders the key edit form.
 func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 
 	// check write permission
 	username := s.getCurrentUser(r)
@@ -605,7 +605,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := r.FormValue("key")
+	key := normalizeKey(r.FormValue("key"))
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
@@ -685,7 +685,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyUpdate updates an existing key.
 func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
@@ -774,7 +774,7 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyDelete deletes a key.
 func (s *Server) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 
 	// check write permission
 	username := s.getCurrentUser(r)

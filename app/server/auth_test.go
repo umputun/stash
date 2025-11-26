@@ -707,6 +707,47 @@ tokens:
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+func TestAuth_TokenAuth_KeyNormalization(t *testing.T) {
+	// ACL for "foo_bar" should match requests for "/kv/foo bar", "/kv/foo_bar/", etc.
+	content := `
+tokens:
+  - token: "testtoken"
+    permissions:
+      - prefix: "foo_bar"
+        access: rw
+`
+	f := createTempFile(t, content)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	tests := []struct {
+		name   string
+		path   string
+		expect int
+	}{
+		{"exact match", "/kv/foo_bar", http.StatusOK},
+		{"space becomes underscore", "/kv/foo%20bar", http.StatusOK},
+		{"trailing slash stripped", "/kv/foo_bar/", http.StatusOK},
+		{"leading slash stripped", "/kv//foo_bar", http.StatusOK},
+		{"combined normalization", "/kv//foo%20bar/", http.StatusOK},
+		{"no match", "/kv/other", http.StatusForbidden},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tc.path, http.NoBody)
+			req.Header.Set("Authorization", "Bearer testtoken")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			assert.Equal(t, tc.expect, rec.Code)
+		})
+	}
+}
+
 func TestMaskToken(t *testing.T) {
 	tests := []struct {
 		token string

@@ -607,3 +607,26 @@ func TestServer_GetAuthorFromRequest(t *testing.T) {
 		assert.Equal(t, git.DefaultAuthor(), author)
 	})
 }
+
+func TestNormalizeKey(t *testing.T) {
+	tests := []struct {
+		input, expected string
+	}{
+		{"foo", "foo"},
+		{"  foo  ", "foo"},
+		{"/foo", "foo"},
+		{"foo/", "foo"},
+		{"/foo/", "foo"},
+		{"foo/bar", "foo/bar"},
+		{"foo bar", "foo_bar"},
+		{"  /foo bar/  ", "foo_bar"},
+		{"foo/bar baz/qux", "foo/bar_baz/qux"},
+		{"//foo//bar//", "foo//bar"},
+		{"", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			assert.Equal(t, tc.expected, normalizeKey(tc.input))
+		})
+	}
+}

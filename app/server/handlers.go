@@ -16,7 +16,7 @@ import (
 // handleGet retrieves the value for a key.
 // GET /kv/{key...}
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
@@ -65,7 +65,7 @@ func (s *Server) formatToContentType(format string) string {
 // PUT /kv/{key...}
 // Accepts format via X-Stash-Format header or ?format= query param (defaults to "text").
 func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
@@ -102,7 +102,7 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 // handleDelete removes a key from the store.
 // DELETE /kv/{key...}
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	key := r.PathValue("key")
+	key := normalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return

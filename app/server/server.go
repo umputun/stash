@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -231,4 +232,14 @@ func (s *Server) loginConcurrency() int64 {
 		return s.cfg.LoginConcurrency
 	}
 	return 5 // default
+}
+
+// normalizeKey cleans up key input: trims whitespace, strips leading/trailing slashes,
+// replaces internal spaces with underscores.
+// package-level function because both Server handlers and Auth middleware need it.
+func normalizeKey(key string) string {
+	key = strings.TrimSpace(key)
+	key = strings.Trim(key, "/")
+	key = strings.ReplaceAll(key, " ", "_")
+	return key
 }

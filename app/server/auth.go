@@ -529,7 +529,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 // Public access (token="*") is checked first and allows unauthenticated requests.
 func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := strings.TrimPrefix(r.URL.Path, "/kv/")
+		key := normalizeKey(strings.TrimPrefix(r.URL.Path, "/kv/"))
 		needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
 
 		// check public access first (token="*" in config)
