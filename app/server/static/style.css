@@ -169,6 +169,17 @@ body {
     border-color: var(--color-text-muted);
 }
 
+.btn-edit {
+    background-color: transparent;
+    color: #60a5fa;
+    border: 1px solid #60a5fa;
+}
+
+.btn-edit:hover {
+    background-color: #60a5fa;
+    color: white;
+}
+
 .btn-danger {
     background-color: transparent;
     color: var(--color-danger);
