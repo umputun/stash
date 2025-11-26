@@ -61,6 +61,15 @@ tokens:
       - prefix: "myapp/*"
         access: rw
 
+  # Public access - no authentication required for matching prefixes
+  # Use token: "*" to allow anonymous access to specific keys
+  - token: "*"
+    permissions:
+      - prefix: "public/*"
+        access: r
+      - prefix: "status"
+        access: r
+
 # Permission Reference:
 #
 # Access levels:
@@ -72,6 +81,9 @@ tokens:
 #   *             - matches all keys
 #   app/*         - matches keys starting with "app/"
 #   app/config    - matches exact key only
+#
+# Special tokens:
+#   token: "*"    - public access, no authentication required
 #
 # When multiple prefixes match, the longest (most specific) wins.
 #
