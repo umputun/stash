@@ -29,6 +29,7 @@ var opts struct {
 		Branch  string `long:"branch" env:"BRANCH" default:"master" description:"git branch"`
 		Remote  string `long:"remote" env:"REMOTE" description:"git remote name (optional)"`
 		Push    bool   `long:"push" env:"PUSH" description:"auto-push after commits"`
+		SSHKey  string `long:"ssh-key" env:"SSH_KEY" description:"SSH private key path for git push"`
 	} `group:"git" namespace:"git" env-namespace:"STASH_GIT"`
 
 	Debug   bool `long:"dbg" env:"DEBUG" description:"debug mode"`
@@ -145,6 +146,7 @@ func runServer(ctx context.Context) error {
 			Path:   opts.Git.Path,
 			Branch: opts.Git.Branch,
 			Remote: opts.Git.Remote,
+			SSHKey: opts.Git.SSHKey,
 		})
 		if gitErr != nil {
 			return fmt.Errorf("failed to initialize git store: %w", gitErr)
@@ -167,6 +169,7 @@ func runRestore() error {
 		Path:   opts.Git.Path,
 		Branch: opts.Git.Branch,
 		Remote: opts.Git.Remote,
+		SSHKey: opts.Git.SSHKey,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize git store: %w", err)

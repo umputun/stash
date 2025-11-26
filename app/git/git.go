@@ -15,6 +15,8 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
 // Author represents the author of a git commit.
@@ -33,6 +35,7 @@ type Config struct {
 	Path   string // local repository path
 	Branch string // branch name (default: master)
 	Remote string // remote name (optional, for push/pull)
+	SSHKey string // path to SSH private key (optional, for push)
 }
 
 // Store provides git-backed versioning for key-value storage
@@ -256,8 +259,18 @@ func (s *Store) Push() error {
 		return nil // no remote configured
 	}
 
+	var auth transport.AuthMethod
+	if s.cfg.SSHKey != "" {
+		var err error
+		auth, err = ssh.NewPublicKeysFromFile("git", s.cfg.SSHKey, "")
+		if err != nil {
+			return fmt.Errorf("failed to load SSH key: %w", err)
+		}
+	}
+
 	err := s.repo.Push(&git.PushOptions{
 		RemoteName: s.cfg.Remote,
+		Auth:       auth,
 		RefSpecs: []config.RefSpec{
 			config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", s.cfg.Branch, s.cfg.Branch)),
 		},
@@ -283,6 +296,15 @@ func (s *Store) Pull() error {
 		return nil // no remote configured
 	}
 
+	var auth transport.AuthMethod
+	if s.cfg.SSHKey != "" {
+		var err error
+		auth, err = ssh.NewPublicKeysFromFile("git", s.cfg.SSHKey, "")
+		if err != nil {
+			return fmt.Errorf("failed to load SSH key: %w", err)
+		}
+	}
+
 	wt, err := s.repo.Worktree()
 	if err != nil {
 		return fmt.Errorf("failed to get worktree: %w", err)
@@ -290,6 +312,7 @@ func (s *Store) Pull() error {
 
 	pullErr := wt.Pull(&git.PullOptions{
 		RemoteName:    s.cfg.Remote,
+		Auth:          auth,
 		ReferenceName: plumbing.NewBranchReferenceName(s.cfg.Branch),
 	})
 	if pullErr != nil && !errors.Is(pullErr, git.NoErrAlreadyUpToDate) {
