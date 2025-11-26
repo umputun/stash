@@ -8,8 +8,8 @@
     --color-text-muted: #6c757d;
     --color-primary: #2563eb;
     --color-primary-hover: #1d4ed8;
-    --color-danger: #dc2626;
-    --color-danger-hover: #b91c1c;
+    --color-danger: #f87171;
+    --color-danger-hover: #ef4444;
     --color-success: #16a34a;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     --radius: 6px;
@@ -26,6 +26,8 @@
     --color-border: #404040;
     --color-text: #f5f5f5;
     --color-text-muted: #a0a0a0;
+    --color-danger: #f87171;
+    --color-danger-hover: #ef4444;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
@@ -37,6 +39,8 @@
         --color-border: #404040;
         --color-text: #f5f5f5;
         --color-text-muted: #a0a0a0;
+        --color-danger: #f87171;
+        --color-danger-hover: #ef4444;
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     }
 }
@@ -109,12 +113,14 @@ body {
 /* Search input */
 .search-input {
     padding: 8px 12px;
+    min-height: 38px;
     font-size: 14px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     background-color: var(--color-bg);
     color: var(--color-text);
     width: 200px;
+    box-sizing: border-box;
 }
 
 .search-input:focus {
@@ -133,6 +139,7 @@ body {
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
+    min-height: 38px;
     font-size: 14px;
     font-weight: 500;
     border: none;
@@ -162,6 +169,17 @@ body {
     border-color: var(--color-text-muted);
 }
 
+.btn-edit {
+    background-color: transparent;
+    color: #60a5fa;
+    border: 1px solid #60a5fa;
+}
+
+.btn-edit:hover {
+    background-color: #60a5fa;
+    color: white;
+}
+
 .btn-danger {
     background-color: transparent;
     color: var(--color-danger);
@@ -171,6 +189,17 @@ body {
 .btn-danger:hover {
     background-color: var(--color-danger);
     color: white;
+}
+
+.btn-danger-filled {
+    background-color: var(--color-danger);
+    color: white;
+    border: 1px solid var(--color-danger);
+}
+
+.btn-danger-filled:hover {
+    background-color: var(--color-danger-hover);
+    border-color: var(--color-danger-hover);
 }
 
 .btn-icon {
@@ -262,6 +291,7 @@ tr.clickable-row {
 
 .actions-cell .btn {
     margin-left: 4px;
+    min-height: auto;
 }
 
 /* Empty state */
@@ -553,6 +583,7 @@ tr.clickable-row {
     align-items: center;
     gap: 6px;
     padding: 6px 14px;
+    min-height: 38px;
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: 20px;
@@ -561,6 +592,7 @@ tr.clickable-row {
     font-size: 13px;
     font-weight: 500;
     color: var(--color-text);
+    box-sizing: border-box;
 }
 
 .sort-button:hover {

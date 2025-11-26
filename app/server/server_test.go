@@ -15,6 +15,7 @@ import (
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/app/validator"
 )
 
 func TestServer_HandleGet(t *testing.T) {
@@ -287,7 +288,7 @@ func TestServer_New_InvalidTokens(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
-	_, err := New(st, Config{
+	_, err := New(st, validator.NewService(), Config{
 		Address:     ":8080",
 		ReadTimeout: 5 * time.Second,
 		AuthFile:    "/nonexistent/auth.yml", // file doesn't exist
@@ -309,7 +310,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	}
 
 	t.Run("without base URL routes work at root", func(t *testing.T) {
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: ""})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: ""})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/testkey", http.NoBody)
@@ -321,7 +322,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("with base URL routes work under prefix", func(t *testing.T) {
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash/kv/testkey", http.NoBody)
@@ -333,7 +334,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("base URL redirects to trailing slash", func(t *testing.T) {
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash", http.NoBody)
@@ -345,7 +346,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("with base URL root path still accessible via prefix", func(t *testing.T) {
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash/ping", http.NoBody)
@@ -357,7 +358,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("with base URL set correctly passes to KV API", func(t *testing.T) {
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/app/stash"})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/app/stash"})
 		require.NoError(t, err)
 
 		body := bytes.NewBufferString("newvalue")
@@ -373,7 +374,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 func newTestServer(t *testing.T, st KVStore) *Server {
 	t.Helper()
-	srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
 	require.NoError(t, err)
 	return srv
 }
@@ -458,7 +459,7 @@ func TestServer_GetAuthorFromRequest(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
 
 		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -473,7 +474,7 @@ func TestServer_GetAuthorFromRequest(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
 
 		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
 		require.NoError(t, err)
 
 		// create session
@@ -494,7 +495,7 @@ func TestServer_GetAuthorFromRequest(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
 
 		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)

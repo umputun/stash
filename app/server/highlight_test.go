@@ -126,13 +126,14 @@ func TestHighlighter_SupportedFormats(t *testing.T) {
 	h := NewHighlighter()
 	formats := h.SupportedFormats()
 
-	assert.Len(t, formats, 7)
+	assert.Len(t, formats, 8)
 	assert.Contains(t, formats, "text")
 	assert.Contains(t, formats, "json")
 	assert.Contains(t, formats, "yaml")
 	assert.Contains(t, formats, "xml")
 	assert.Contains(t, formats, "toml")
 	assert.Contains(t, formats, "ini")
+	assert.Contains(t, formats, "hcl")
 	assert.Contains(t, formats, "shell")
 
 	// verify it's a copy, not the original slice

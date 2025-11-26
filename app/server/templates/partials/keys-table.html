@@ -16,7 +16,7 @@
         </div>
         {{if $.CanWrite}}
         <div class="key-card-actions">
-            <button class="btn btn-secondary btn-small"
+            <button class="btn btn-edit btn-small"
                     hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
                     hx-target="#modal-content"
                     hx-swap="innerHTML">Edit</button>
@@ -51,7 +51,7 @@
             <td class="date-cell">{{.CreatedAt | formatTime}}</td>
             {{if $.CanWrite}}
             <td class="actions-cell">
-                <button class="btn btn-secondary btn-small"
+                <button class="btn btn-edit btn-small"
                         hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
                         hx-target="#modal-content"
                         hx-swap="innerHTML">Edit</button>

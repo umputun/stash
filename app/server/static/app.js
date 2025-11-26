@@ -19,16 +19,28 @@ function hideAllModals() {
     });
 }
 
-// Close modal on backdrop click
+// Close modal on backdrop click (only for view modals, not edit/create forms)
 document.addEventListener('click', function(e) {
     if (e.target.classList.contains('modal-backdrop')) {
+        // don't close if modal contains a form (edit/create mode)
+        var modalContent = e.target.querySelector('#modal-content');
+        if (modalContent && modalContent.querySelector('form')) {
+            return; // don't close forms on backdrop click
+        }
         hideAllModals();
     }
 });
 
-// Close modal on Escape key
+// Close modal on Escape key (only for view modals, not edit/create forms)
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
+        var mainModal = document.getElementById('main-modal');
+        if (mainModal && mainModal.classList.contains('active')) {
+            var modalContent = mainModal.querySelector('#modal-content');
+            if (modalContent && modalContent.querySelector('form')) {
+                return; // don't close forms on Escape
+            }
+        }
         hideAllModals();
     }
 });
