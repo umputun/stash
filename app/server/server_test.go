@@ -20,14 +20,14 @@ import (
 
 func TestServer_HandleGet(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc: func(key string) ([]byte, error) {
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
 			switch key {
 			case "testkey":
-				return []byte("testvalue"), nil
+				return []byte("testvalue"), "text", nil
 			case "path/to/key":
-				return []byte("nested value"), nil
+				return []byte("nested value"), "text", nil
 			default:
-				return nil, store.ErrNotFound
+				return nil, "", store.ErrNotFound
 			}
 		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
@@ -41,6 +41,7 @@ func TestServer_HandleGet(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, "testvalue", rec.Body.String())
+		assert.Equal(t, "text/plain", rec.Header().Get("Content-Type"))
 	})
 
 	t.Run("get nonexistent key returns 404", func(t *testing.T) {
@@ -59,6 +60,39 @@ func TestServer_HandleGet(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, "nested value", rec.Body.String())
 	})
+}
+
+func TestServer_HandleGet_ContentType(t *testing.T) {
+	tbl := []struct {
+		format, contentType string
+	}{
+		{"json", "application/json"},
+		{"yaml", "application/yaml"},
+		{"xml", "application/xml"},
+		{"toml", "application/toml"},
+		{"hcl", "text/plain"},
+		{"ini", "text/plain"},
+		{"shell", "text/x-shellscript"},
+		{"text", "text/plain"},
+		{"", "application/octet-stream"},
+	}
+
+	for _, tc := range tbl {
+		t.Run(tc.format, func(t *testing.T) {
+			st := &mocks.KVStoreMock{
+				GetWithFormatFunc: func(key string) ([]byte, string, error) { return []byte("value"), tc.format, nil },
+				ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			}
+			srv := newTestServer(t, st)
+
+			req := httptest.NewRequest(http.MethodGet, "/kv/testkey", http.NoBody)
+			rec := httptest.NewRecorder()
+			srv.routes().ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, tc.contentType, rec.Header().Get("Content-Type"))
+		})
+	}
 }
 
 func TestServer_HandleSet(t *testing.T) {
@@ -237,8 +271,8 @@ func TestServer_Ping(t *testing.T) {
 
 func TestServer_HandleGet_InternalError(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc:  func(key string) ([]byte, error) { return nil, errors.New("db error") },
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", errors.New("db error") },
+		ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -247,8 +281,8 @@ func TestServer_HandleGet_InternalError(t *testing.T) {
 	srv.routes().ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	require.Len(t, st.GetCalls(), 1)
-	assert.Equal(t, "testkey", st.GetCalls()[0].Key)
+	require.Len(t, st.GetWithFormatCalls(), 1)
+	assert.Equal(t, "testkey", st.GetWithFormatCalls()[0].Key)
 }
 
 func TestServer_HandleSet_InternalError(t *testing.T) {
@@ -299,11 +333,11 @@ func TestServer_New_InvalidTokens(t *testing.T) {
 
 func TestServer_Handler_BaseURL(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetFunc: func(key string) ([]byte, error) {
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
 			if key == "testkey" {
-				return []byte("testvalue"), nil
+				return []byte("testvalue"), "text", nil
 			}
-			return nil, store.ErrNotFound
+			return nil, "", store.ErrNotFound
 		},
 		SetFunc:  func(key string, value []byte, format string) error { return nil },
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
@@ -500,6 +534,74 @@ func TestServer_GetAuthorFromRequest(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "invalid-token"})
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, git.DefaultAuthor(), author)
+	})
+
+	t.Run("returns token author when valid API token", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		authConfig := `tokens:
+  - token: "mytoken123"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer mytoken123")
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, "token:mytoken1", author.Name)
+		assert.Equal(t, "token:mytoken1@stash", author.Email)
+	})
+
+	t.Run("returns token author with truncated prefix for long token", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		authConfig := `tokens:
+  - token: "verylongtokenvalue1234567890"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer verylongtokenvalue1234567890")
+		author := srv.getAuthorFromRequest(req)
+
+		assert.Equal(t, "token:verylong", author.Name)
+		assert.Equal(t, "token:verylong@stash", author.Email)
+	})
+
+	t.Run("returns default author for invalid API token", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		authConfig := `tokens:
+  - token: "validtoken"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer invalidtoken")
 		author := srv.getAuthorFromRequest(req)
 
 		assert.Equal(t, git.DefaultAuthor(), author)

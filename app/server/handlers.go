@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/rest"
@@ -21,7 +22,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, err := s.store.Get(key)
+	value, format, err := s.store.GetWithFormat(key)
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -31,12 +32,32 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[DEBUG] get %s (%d bytes)", key, len(value))
+	log.Printf("[DEBUG] get %s (%d bytes, format=%s)", key, len(value), format)
 
-	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Type", s.formatToContentType(format))
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(value); err != nil {
 		log.Printf("[WARN] failed to write response: %v", err)
+	}
+}
+
+// formatToContentType maps storage format to HTTP Content-Type.
+func (s *Server) formatToContentType(format string) string {
+	switch format {
+	case "json":
+		return "application/json"
+	case "yaml":
+		return "application/yaml"
+	case "xml":
+		return "application/xml"
+	case "toml":
+		return "application/toml"
+	case "hcl", "ini", "text":
+		return "text/plain"
+	case "shell":
+		return "text/x-shellscript"
+	default:
+		return "application/octet-stream"
 	}
 }
 
@@ -142,7 +163,7 @@ func (s *Server) gitDelete(r *http.Request, key string) {
 }
 
 // getAuthorFromRequest extracts the git author from request context.
-// returns username from session cookie for web UI users, default author otherwise.
+// returns username from session cookie for web UI users, token prefix for API tokens, default author otherwise.
 func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
 	if s.auth == nil {
 		return git.DefaultAuthor()
@@ -160,7 +181,19 @@ func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
 		}
 	}
 
-	// API tokens use default author
+	// check API token from Authorization header
+	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if _, ok := s.auth.GetTokenACL(token); ok {
+			prefix := token
+			if len(prefix) > 8 {
+				prefix = prefix[:8]
+			}
+			name := "token:" + prefix
+			return git.Author{Name: name, Email: name + "@stash"}
+		}
+	}
+
 	return git.DefaultAuthor()
 }
 
