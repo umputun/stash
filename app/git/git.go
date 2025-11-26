@@ -30,6 +30,21 @@ func DefaultAuthor() Author {
 	return Author{Name: "stash", Email: "stash@localhost"}
 }
 
+// KeyValue holds a key's value and format metadata.
+type KeyValue struct {
+	Value  []byte
+	Format string
+}
+
+// CommitRequest holds parameters for a git commit operation.
+type CommitRequest struct {
+	Key       string
+	Value     []byte
+	Operation string
+	Format    string
+	Author    Author
+}
+
 // Config holds git repository configuration
 type Config struct {
 	Path   string // local repository path
@@ -157,15 +172,20 @@ func (s *Store) createNewRepo() error {
 }
 
 // Commit writes key-value to file and commits to git.
-// The author parameter specifies who made the change.
-func (s *Store) Commit(key string, value []byte, operation string, author Author) error {
+func (s *Store) Commit(req CommitRequest) error {
 	// validate key before any file operations
-	if err := s.validateKey(key); err != nil {
+	if err := s.validateKey(req.Key); err != nil {
 		return err
 	}
 
+	// default format to text
+	format := req.Format
+	if format == "" {
+		format = "text"
+	}
+
 	// convert key to file path with .val suffix
-	filePath := keyToPath(key)
+	filePath := keyToPath(req.Key)
 	fullPath := filepath.Join(s.cfg.Path, filePath)
 
 	// ensure parent directory exists
@@ -174,7 +194,7 @@ func (s *Store) Commit(key string, value []byte, operation string, author Author
 	}
 
 	// write file
-	if err := os.WriteFile(fullPath, value, 0o600); err != nil {
+	if err := os.WriteFile(fullPath, req.Value, 0o600); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
@@ -188,14 +208,14 @@ func (s *Store) Commit(key string, value []byte, operation string, author Author
 		return fmt.Errorf("failed to stage file: %w", addErr)
 	}
 
-	// commit with metadata
-	msg := fmt.Sprintf("%s %s\n\ntimestamp: %s\noperation: %s\nkey: %s",
-		operation, key, time.Now().Format(time.RFC3339), operation, key)
+	// commit with metadata including format
+	msg := fmt.Sprintf("%s %s\n\ntimestamp: %s\noperation: %s\nkey: %s\nformat: %s",
+		req.Operation, req.Key, time.Now().Format(time.RFC3339), req.Operation, req.Key, format)
 
 	_, commitErr := wt.Commit(msg, &git.CommitOptions{
 		Author: &object.Signature{
-			Name:  author.Name,
-			Email: author.Email,
+			Name:  req.Author.Name,
+			Email: req.Author.Email,
 			When:  time.Now(),
 		},
 	})
@@ -358,9 +378,11 @@ func (s *Store) Checkout(rev string) error {
 	return nil
 }
 
-// ReadAll reads all key-value pairs from the repository
-func (s *Store) ReadAll() (map[string][]byte, error) {
-	result := make(map[string][]byte)
+// ReadAll reads all key-value pairs from the repository with their formats.
+// Format is extracted from the commit message metadata of the last commit that modified each file.
+// If no format is found in the commit message, defaults to "text".
+func (s *Store) ReadAll() (map[string]KeyValue, error) {
+	result := make(map[string]KeyValue)
 
 	walkErr := filepath.Walk(s.cfg.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -392,7 +414,11 @@ func (s *Store) ReadAll() (map[string][]byte, error) {
 			return fmt.Errorf("failed to get relative path: %w", relErr)
 		}
 		key := pathToKey(relPath)
-		result[key] = content
+
+		// get format from the last commit that modified this file
+		format := s.getFileFormat(relPath)
+
+		result[key] = KeyValue{Value: content, Format: format}
 
 		return nil
 	})
@@ -402,6 +428,38 @@ func (s *Store) ReadAll() (map[string][]byte, error) {
 	}
 
 	return result, nil
+}
+
+// getFileFormat finds the last commit that modified a file and extracts format from its message.
+// returns "text" if no format is found.
+func (s *Store) getFileFormat(filePath string) string {
+	// get log for this specific file
+	logIter, err := s.repo.Log(&git.LogOptions{
+		FileName: &filePath,
+	})
+	if err != nil {
+		return "text"
+	}
+	defer logIter.Close()
+
+	// get the most recent commit for this file
+	commit, err := logIter.Next()
+	if err != nil {
+		return "text"
+	}
+
+	return parseFormatFromCommit(commit.Message)
+}
+
+// parseFormatFromCommit extracts format value from commit message metadata.
+// looks for "format: <value>" line in commit message, returns "text" if not found.
+func parseFormatFromCommit(message string) string {
+	for _, line := range strings.Split(message, "\n") {
+		if strings.HasPrefix(line, "format: ") {
+			return strings.TrimPrefix(line, "format: ")
+		}
+	}
+	return "text"
 }
 
 // keyToPath converts a key to a file path with .val suffix

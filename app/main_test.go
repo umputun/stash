@@ -791,9 +791,9 @@ func TestRunRestore(t *testing.T) {
 	require.NoError(t, err)
 
 	// commit test keys
-	require.NoError(t, gitStore.Commit("app/key1", []byte("value1"), "set", git.DefaultAuthor()))
-	require.NoError(t, gitStore.Commit("app/key2", []byte("value2"), "set", git.DefaultAuthor()))
-	require.NoError(t, gitStore.Commit("config/db", []byte("postgres://localhost"), "set", git.DefaultAuthor()))
+	require.NoError(t, gitStore.Commit(git.CommitRequest{Key: "app/key1", Value: []byte("value1"), Operation: "set", Author: git.DefaultAuthor()}))
+	require.NoError(t, gitStore.Commit(git.CommitRequest{Key: "app/key2", Value: []byte("value2"), Operation: "set", Author: git.DefaultAuthor()}))
+	require.NoError(t, gitStore.Commit(git.CommitRequest{Key: "config/db", Value: []byte("postgres://localhost"), Operation: "set", Author: git.DefaultAuthor()}))
 
 	// get current HEAD commit hash
 	headRef, err := gitStore.Head()

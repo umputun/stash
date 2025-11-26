@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +63,7 @@ func TestStore_Commit(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
-		err = store.Commit("app/config/db", []byte("postgres://localhost/db"), "set", DefaultAuthor())
+		err = store.Commit(CommitRequest{Key: "app/config/db", Value: []byte("postgres://localhost/db"), Operation: "set", Author: DefaultAuthor()})
 		require.NoError(t, err)
 
 		// verify file exists
@@ -76,7 +78,7 @@ func TestStore_Commit(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
-		err = store.Commit("deep/nested/path/key", []byte("value"), "set", DefaultAuthor())
+		err = store.Commit(CommitRequest{Key: "deep/nested/path/key", Value: []byte("value"), Operation: "set", Author: DefaultAuthor()})
 		require.NoError(t, err)
 
 		valFile := filepath.Join(store.cfg.Path, "deep", "nested", "path", "key.val")
@@ -91,7 +93,7 @@ func TestStore_Commit(t *testing.T) {
 		require.NoError(t, err)
 
 		binary := []byte{0x00, 0x01, 0xFF, 0xFE}
-		err = store.Commit("binary/key", binary, "set", DefaultAuthor())
+		err = store.Commit(CommitRequest{Key: "binary/key", Value: binary, Operation: "set", Author: DefaultAuthor()})
 		require.NoError(t, err)
 
 		valFile := filepath.Join(store.cfg.Path, "binary", "key.val")
@@ -108,7 +110,7 @@ func TestStore_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		// create key first
-		err = store.Commit("app/config/db", []byte("value"), "set", DefaultAuthor())
+		err = store.Commit(CommitRequest{Key: "app/config/db", Value: []byte("value"), Operation: "set", Author: DefaultAuthor()})
 		require.NoError(t, err)
 
 		// delete key
@@ -138,17 +140,17 @@ func TestStore_ReadAll(t *testing.T) {
 		require.NoError(t, err)
 
 		// create multiple keys
-		require.NoError(t, store.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
-		require.NoError(t, store.Commit("app/config/db", []byte("postgres://"), "set", DefaultAuthor()))
-		require.NoError(t, store.Commit("app/config/redis", []byte("redis://"), "set", DefaultAuthor()))
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("value1"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, store.Commit(CommitRequest{Key: "app/config/db", Value: []byte("postgres://"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, store.Commit(CommitRequest{Key: "app/config/redis", Value: []byte("redis://"), Operation: "set", Author: DefaultAuthor()}))
 
 		// read all
 		result, err := store.ReadAll()
 		require.NoError(t, err)
 		assert.Len(t, result, 3)
-		assert.Equal(t, []byte("value1"), result["key1"])
-		assert.Equal(t, []byte("postgres://"), result["app/config/db"])
-		assert.Equal(t, []byte("redis://"), result["app/config/redis"])
+		assert.Equal(t, []byte("value1"), result["key1"].Value)
+		assert.Equal(t, []byte("postgres://"), result["app/config/db"].Value)
+		assert.Equal(t, []byte("redis://"), result["app/config/redis"].Value)
 	})
 
 	t.Run("returns empty map for empty repo", func(t *testing.T) {
@@ -169,7 +171,7 @@ func TestStore_Checkout(t *testing.T) {
 		require.NoError(t, err)
 
 		// create first key
-		require.NoError(t, store.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("value1"), Operation: "set", Author: DefaultAuthor()}))
 
 		// get commit hash
 		head, err := store.repo.Head()
@@ -177,7 +179,7 @@ func TestStore_Checkout(t *testing.T) {
 		commitHash := head.Hash().String()
 
 		// create second key
-		require.NoError(t, store.Commit("key2", []byte("value2"), "set", DefaultAuthor()))
+		require.NoError(t, store.Commit(CommitRequest{Key: "key2", Value: []byte("value2"), Operation: "set", Author: DefaultAuthor()}))
 
 		// checkout first commit
 		err = store.Checkout(commitHash)
@@ -187,7 +189,7 @@ func TestStore_Checkout(t *testing.T) {
 		result, err := store.ReadAll()
 		require.NoError(t, err)
 		assert.Len(t, result, 1)
-		assert.Equal(t, []byte("value1"), result["key1"])
+		assert.Equal(t, []byte("value1"), result["key1"].Value)
 	})
 
 	t.Run("fails with invalid revision", func(t *testing.T) {
@@ -293,7 +295,7 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 
 		for _, key := range invalidKeys {
-			err = store.Commit(key, []byte("malicious"), "set", DefaultAuthor())
+			err = store.Commit(CommitRequest{Key: key, Value: []byte("malicious"), Operation: "set", Author: DefaultAuthor()})
 			require.Error(t, err, "should reject key: %q", key)
 			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
 		}
@@ -335,7 +337,7 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 
 		for _, key := range validKeys {
-			err = store.Commit(key, []byte("value"), "set", DefaultAuthor())
+			err = store.Commit(CommitRequest{Key: key, Value: []byte("value"), Operation: "set", Author: DefaultAuthor()})
 			require.NoError(t, err, "should allow key: %s", key)
 		}
 	})
@@ -373,6 +375,98 @@ func TestPathToKey(t *testing.T) {
 	}
 }
 
+func TestStore_CommitWithFormat(t *testing.T) {
+	t.Run("includes format in commit message", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		err = store.Commit(CommitRequest{
+			Key: "app/config", Value: []byte(`{"db": "postgres"}`), Operation: "set", Format: "json", Author: DefaultAuthor(),
+		})
+		require.NoError(t, err)
+
+		// verify commit message contains format
+		head, err := store.repo.Head()
+		require.NoError(t, err)
+		commit, err := store.repo.CommitObject(head.Hash())
+		require.NoError(t, err)
+		assert.Contains(t, commit.Message, "format: json")
+	})
+
+	t.Run("defaults to text format when empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		err = store.Commit(CommitRequest{Key: "key", Value: []byte("value"), Operation: "set", Author: DefaultAuthor()})
+		require.NoError(t, err)
+
+		head, err := store.repo.Head()
+		require.NoError(t, err)
+		commit, err := store.repo.CommitObject(head.Hash())
+		require.NoError(t, err)
+		assert.Contains(t, commit.Message, "format: text")
+	})
+}
+
+func TestStore_ReadAllWithFormat(t *testing.T) {
+	t.Run("returns format from commit metadata", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		// create keys with different formats
+		require.NoError(t, store.Commit(CommitRequest{
+			Key: "config/db", Value: []byte(`{"host":"localhost"}`), Operation: "set", Format: "json", Author: DefaultAuthor(),
+		}))
+		require.NoError(t, store.Commit(CommitRequest{
+			Key: "config/app", Value: []byte("name: myapp"), Operation: "set", Format: "yaml", Author: DefaultAuthor(),
+		}))
+		require.NoError(t, store.Commit(CommitRequest{
+			Key: "readme", Value: []byte("plain text"), Operation: "set", Format: "text", Author: DefaultAuthor(),
+		}))
+
+		result, err := store.ReadAll()
+		require.NoError(t, err)
+		require.Len(t, result, 3)
+
+		assert.JSONEq(t, `{"host":"localhost"}`, string(result["config/db"].Value))
+		assert.Equal(t, "json", result["config/db"].Format)
+
+		assert.Equal(t, []byte("name: myapp"), result["config/app"].Value)
+		assert.Equal(t, "yaml", result["config/app"].Format)
+
+		assert.Equal(t, []byte("plain text"), result["readme"].Value)
+		assert.Equal(t, "text", result["readme"].Format)
+	})
+
+	t.Run("defaults to text for old commits without format", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		// simulate old-style commit without format in message
+		// by creating file and committing directly
+		filePath := filepath.Join(store.cfg.Path, "old-key.val")
+		require.NoError(t, os.WriteFile(filePath, []byte("old value"), 0o600))
+
+		wt, err := store.repo.Worktree()
+		require.NoError(t, err)
+		_, err = wt.Add("old-key.val")
+		require.NoError(t, err)
+		_, err = wt.Commit("set old-key\n\nkey: old-key", &git.CommitOptions{
+			Author: &object.Signature{Name: "test", Email: "test@test"},
+		})
+		require.NoError(t, err)
+
+		result, err := store.ReadAll()
+		require.NoError(t, err)
+		require.Contains(t, result, "old-key")
+		assert.Equal(t, "text", result["old-key"].Format, "should default to text for commits without format")
+	})
+}
+
 func TestStore_BranchUsage(t *testing.T) {
 	t.Run("commits go to configured branch for new repo", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -380,7 +474,7 @@ func TestStore_BranchUsage(t *testing.T) {
 		require.NoError(t, err)
 
 		// commit a key
-		require.NoError(t, store.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("value1"), Operation: "set", Author: DefaultAuthor()}))
 
 		// verify HEAD is on the configured branch
 		head, err := store.repo.Head()
@@ -400,12 +494,12 @@ func TestStore_BranchUsage(t *testing.T) {
 		// create repo on master first
 		store1, err := New(Config{Path: repoPath, Branch: "master"})
 		require.NoError(t, err)
-		require.NoError(t, store1.Commit("key1", []byte("value1"), "set", DefaultAuthor()))
+		require.NoError(t, store1.Commit(CommitRequest{Key: "key1", Value: []byte("value1"), Operation: "set", Author: DefaultAuthor()}))
 
 		// reopen with different branch
 		store2, err := New(Config{Path: repoPath, Branch: "develop"})
 		require.NoError(t, err)
-		require.NoError(t, store2.Commit("key2", []byte("value2"), "set", DefaultAuthor()))
+		require.NoError(t, store2.Commit(CommitRequest{Key: "key2", Value: []byte("value2"), Operation: "set", Author: DefaultAuthor()}))
 
 		// verify HEAD is on develop
 		head, err := store2.repo.Head()

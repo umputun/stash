@@ -15,7 +15,7 @@ import (
 //
 //		// make and configure a mocked server.GitStore
 //		mockedGitStore := &GitStoreMock{
-//			CommitFunc: func(key string, value []byte, operation string, author git.Author) error {
+//			CommitFunc: func(req git.CommitRequest) error {
 //				panic("mock out the Commit method")
 //			},
 //			DeleteFunc: func(key string, author git.Author) error {
@@ -35,7 +35,7 @@ import (
 //	}
 type GitStoreMock struct {
 	// CommitFunc mocks the Commit method.
-	CommitFunc func(key string, value []byte, operation string, author git.Author) error
+	CommitFunc func(req git.CommitRequest) error
 
 	// DeleteFunc mocks the Delete method.
 	DeleteFunc func(key string, author git.Author) error
@@ -50,14 +50,8 @@ type GitStoreMock struct {
 	calls struct {
 		// Commit holds details about calls to the Commit method.
 		Commit []struct {
-			// Key is the key argument value.
-			Key string
-			// Value is the value argument value.
-			Value []byte
-			// Operation is the operation argument value.
-			Operation string
-			// Author is the author argument value.
-			Author git.Author
+			// Req is the req argument value.
+			Req git.CommitRequest
 		}
 		// Delete holds details about calls to the Delete method.
 		Delete []struct {
@@ -80,25 +74,19 @@ type GitStoreMock struct {
 }
 
 // Commit calls CommitFunc.
-func (mock *GitStoreMock) Commit(key string, value []byte, operation string, author git.Author) error {
+func (mock *GitStoreMock) Commit(req git.CommitRequest) error {
 	if mock.CommitFunc == nil {
 		panic("GitStoreMock.CommitFunc: method is nil but GitStore.Commit was just called")
 	}
 	callInfo := struct {
-		Key       string
-		Value     []byte
-		Operation string
-		Author    git.Author
+		Req git.CommitRequest
 	}{
-		Key:       key,
-		Value:     value,
-		Operation: operation,
-		Author:    author,
+		Req: req,
 	}
 	mock.lockCommit.Lock()
 	mock.calls.Commit = append(mock.calls.Commit, callInfo)
 	mock.lockCommit.Unlock()
-	return mock.CommitFunc(key, value, operation, author)
+	return mock.CommitFunc(req)
 }
 
 // CommitCalls gets all the calls that were made to Commit.
@@ -106,16 +94,10 @@ func (mock *GitStoreMock) Commit(key string, value []byte, operation string, aut
 //
 //	len(mockedGitStore.CommitCalls())
 func (mock *GitStoreMock) CommitCalls() []struct {
-	Key       string
-	Value     []byte
-	Operation string
-	Author    git.Author
+	Req git.CommitRequest
 } {
 	var calls []struct {
-		Key       string
-		Value     []byte
-		Operation string
-		Author    git.Author
+		Req git.CommitRequest
 	}
 	mock.lockCommit.RLock()
 	calls = mock.calls.Commit

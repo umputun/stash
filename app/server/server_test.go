@@ -420,7 +420,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
-			CommitFunc: func(key string, value []byte, operation string, author git.Author) error { return nil },
+			CommitFunc: func(req git.CommitRequest) error { return nil },
 		}
 		srv := newTestServer(t, st)
 		srv.SetGitStore(gs)
@@ -431,8 +431,8 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		require.Len(t, gs.CommitCalls(), 1, "gitCommit should be called")
-		assert.Equal(t, "testkey", gs.CommitCalls()[0].Key)
-		assert.Equal(t, []byte("testvalue"), gs.CommitCalls()[0].Value)
+		assert.Equal(t, "testkey", gs.CommitCalls()[0].Req.Key)
+		assert.Equal(t, []byte("testvalue"), gs.CommitCalls()[0].Req.Value)
 	})
 
 	t.Run("handleKeyUpdate calls gitCommit", func(t *testing.T) {
@@ -441,7 +441,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
-			CommitFunc: func(key string, value []byte, operation string, author git.Author) error { return nil },
+			CommitFunc: func(req git.CommitRequest) error { return nil },
 		}
 		srv := newTestServer(t, st)
 		srv.SetGitStore(gs)
@@ -452,8 +452,8 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		require.Len(t, gs.CommitCalls(), 1, "gitCommit should be called")
-		assert.Equal(t, "app/config", gs.CommitCalls()[0].Key)
-		assert.Equal(t, []byte("newvalue"), gs.CommitCalls()[0].Value)
+		assert.Equal(t, "app/config", gs.CommitCalls()[0].Req.Key)
+		assert.Equal(t, []byte("newvalue"), gs.CommitCalls()[0].Req.Value)
 	})
 
 	t.Run("handleKeyDelete calls gitDelete", func(t *testing.T) {
@@ -462,6 +462,7 @@ func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
+			CommitFunc: func(req git.CommitRequest) error { return nil },
 			DeleteFunc: func(key string, author git.Author) error { return nil },
 		}
 		srv := newTestServer(t, st)

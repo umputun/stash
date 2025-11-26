@@ -230,10 +230,10 @@ func runRestore() error {
 	}
 	log.Printf("[INFO] cleared %d existing keys", len(existingKeys))
 
-	// insert all key-value pairs from git
+	// insert all key-value pairs from git with their formats
 	var restored int
-	for key, value := range kvPairs {
-		if setErr := kvStore.Set(key, value, "text"); setErr != nil {
+	for key, kv := range kvPairs {
+		if setErr := kvStore.Set(key, kv.Value, kv.Format); setErr != nil {
 			log.Printf("[WARN] failed to restore key %s: %v", key, setErr)
 			continue
 		}

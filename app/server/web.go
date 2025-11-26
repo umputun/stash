@@ -677,7 +677,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] create %q (%d bytes, format=%s) by user:%s", key, len(value), format, username)
 
 	// commit to git if enabled
-	s.gitCommit(r, key, value, "set")
+	s.gitCommit(r, key, value, "set", format)
 
 	// return updated keys table
 	s.handleKeyList(w, r)
@@ -766,7 +766,7 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] update %q (%d bytes, format=%s) by user:%s", key, len(value), format, username)
 
 	// commit to git if enabled
-	s.gitCommit(r, key, value, "set")
+	s.gitCommit(r, key, value, "set", format)
 
 	// return updated keys table
 	s.handleKeyList(w, r)

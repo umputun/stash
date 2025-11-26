@@ -94,7 +94,7 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] set %q (%d bytes, format=%s) by %s", key, len(value), format, s.getIdentityForLog(r))
 
 	// commit to git if enabled
-	s.gitCommit(r, key, value, "set")
+	s.gitCommit(r, key, value, "set", format)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -128,13 +128,19 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 
 // gitCommit commits a key-value change to git if enabled.
 // logs warning on failure but does not fail the API request.
-func (s *Server) gitCommit(r *http.Request, key string, value []byte, operation string) {
+func (s *Server) gitCommit(r *http.Request, key string, value []byte, operation, format string) {
 	if s.gitStore == nil {
 		return
 	}
 
-	author := s.getAuthorFromRequest(r)
-	if err := s.gitStore.Commit(key, value, operation, author); err != nil {
+	req := git.CommitRequest{
+		Key:       key,
+		Value:     value,
+		Operation: operation,
+		Format:    format,
+		Author:    s.getAuthorFromRequest(r),
+	}
+	if err := s.gitStore.Commit(req); err != nil {
 		log.Printf("[WARN] git commit failed for %s: %v", key, err)
 		return
 	}

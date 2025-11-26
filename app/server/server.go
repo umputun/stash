@@ -48,7 +48,7 @@ type KVStore interface {
 // GitStore defines the interface for git-based versioning operations.
 // Defined here (consumer side) to allow different git implementations.
 type GitStore interface {
-	Commit(key string, value []byte, operation string, author git.Author) error
+	Commit(req git.CommitRequest) error
 	Delete(key string, author git.Author) error
 	Pull() error
 	Push() error
