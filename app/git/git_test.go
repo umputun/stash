@@ -507,3 +507,37 @@ func TestStore_BranchUsage(t *testing.T) {
 		assert.Equal(t, "refs/heads/develop", head.Name().String(), "HEAD should be on develop branch")
 	})
 }
+
+func TestStore_Head(t *testing.T) {
+	t.Run("returns short commit hash", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		// make a commit
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("value1"), Operation: "set", Author: DefaultAuthor()}))
+
+		hash, err := store.Head()
+		require.NoError(t, err)
+		assert.Len(t, hash, 7, "hash should be 7 characters (short form)")
+		assert.Regexp(t, "^[0-9a-f]{7}$", hash, "hash should be hex characters")
+	})
+
+	t.Run("returns different hash after new commit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		// initial commit
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("value1"), Operation: "set", Author: DefaultAuthor()}))
+		hash1, err := store.Head()
+		require.NoError(t, err)
+
+		// second commit
+		require.NoError(t, store.Commit(CommitRequest{Key: "key2", Value: []byte("value2"), Operation: "set", Author: DefaultAuthor()}))
+		hash2, err := store.Head()
+		require.NoError(t, err)
+
+		assert.NotEqual(t, hash1, hash2, "hash should change after new commit")
+	})
+}

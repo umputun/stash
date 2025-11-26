@@ -622,13 +622,11 @@ func waitForServer(t *testing.T, url string) {
 
 func TestSetupLogs(t *testing.T) {
 	t.Run("default mode", func(t *testing.T) {
-		w := setupLogs(false)
-		assert.NotNil(t, w)
+		setupLogs(false) // should not panic
 	})
 
 	t.Run("debug mode", func(t *testing.T) {
-		w := setupLogs(true)
-		assert.NotNil(t, w)
+		setupLogs(true) // should not panic
 	})
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"runtime"
@@ -257,12 +256,11 @@ func validateBaseURL(baseURL string) (string, error) {
 	return strings.TrimSuffix(baseURL, "/"), nil
 }
 
-func setupLogs(debug bool) io.Writer {
+func setupLogs(debug bool) {
 	log.Setup(log.Msec)
 	if debug {
 		log.Setup(log.Debug, log.CallerFunc, log.CallerPkg, log.CallerFile)
 	}
-	return os.Stdout
 }
 
 func signals(cancel context.CancelFunc) {

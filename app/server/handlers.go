@@ -168,46 +168,26 @@ func (s *Server) gitDelete(r *http.Request, key string) {
 	}
 }
 
-// getAuthorFromRequest extracts the git author from request context.
-// returns username from session cookie for web UI users, token prefix for API tokens, default author otherwise.
-func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
-	if s.auth == nil {
-		return git.DefaultAuthor()
-	}
+// identityType represents the type of identity detected from a request.
+type identityType int
 
-	// check session cookie for web UI users
-	for _, cookieName := range sessionCookieNames {
-		cookie, err := r.Cookie(cookieName)
-		if err != nil {
-			continue
-		}
-		username, valid := s.auth.GetSessionUser(cookie.Value)
-		if valid && username != "" {
-			return git.Author{Name: username, Email: username + "@stash"}
-		}
-	}
+const (
+	identityAnonymous identityType = iota
+	identityUser
+	identityToken
+)
 
-	// check API token from Authorization header
-	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if _, ok := s.auth.GetTokenACL(token); ok {
-			prefix := token
-			if len(prefix) > 8 {
-				prefix = prefix[:8]
-			}
-			name := "token:" + prefix
-			return git.Author{Name: name, Email: name + "@stash"}
-		}
-	}
-
-	return git.DefaultAuthor()
+// identity holds information about who made a request.
+type identity struct {
+	typ  identityType
+	name string // username or token prefix
 }
 
-// getIdentityForLog returns identity string for audit logging.
-// returns "user:xxx" for web UI users, "token:xxx" for API tokens, "anonymous" otherwise.
-func (s *Server) getIdentityForLog(r *http.Request) string {
+// getIdentity extracts identity from request context.
+// returns user identity from session cookie, token identity from Authorization header, or anonymous.
+func (s *Server) getIdentity(r *http.Request) identity {
 	if s.auth == nil {
-		return "anonymous"
+		return identity{typ: identityAnonymous}
 	}
 
 	// check session cookie for web UI users
@@ -217,7 +197,7 @@ func (s *Server) getIdentityForLog(r *http.Request) string {
 			continue
 		}
 		if username, valid := s.auth.GetSessionUser(cookie.Value); valid && username != "" {
-			return "user:" + username
+			return identity{typ: identityUser, name: username}
 		}
 	}
 
@@ -229,11 +209,39 @@ func (s *Server) getIdentityForLog(r *http.Request) string {
 			if len(prefix) > 8 {
 				prefix = prefix[:8]
 			}
-			return "token:" + prefix
+			return identity{typ: identityToken, name: "token:" + prefix}
 		}
 	}
 
-	return "anonymous"
+	return identity{typ: identityAnonymous}
+}
+
+// getAuthorFromRequest extracts the git author from request context.
+// returns username from session cookie for web UI users, token prefix for API tokens, default author otherwise.
+func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
+	id := s.getIdentity(r)
+	switch id.typ {
+	case identityUser:
+		return git.Author{Name: id.name, Email: id.name + "@stash"}
+	case identityToken:
+		return git.Author{Name: id.name, Email: id.name + "@stash"}
+	default:
+		return git.DefaultAuthor()
+	}
+}
+
+// getIdentityForLog returns identity string for audit logging.
+// returns "user:xxx" for web UI users, "token:xxx" for API tokens, "anonymous" otherwise.
+func (s *Server) getIdentityForLog(r *http.Request) string {
+	id := s.getIdentity(r)
+	switch id.typ {
+	case identityUser:
+		return "user:" + id.name
+	case identityToken:
+		return id.name // already has "token:" prefix
+	default:
+		return "anonymous"
+	}
 }
 
 // gitPullAndPush pulls from remote, then pushes local commits.
