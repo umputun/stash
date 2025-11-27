@@ -3,11 +3,11 @@
 {{if eq .ViewMode "cards"}}
 <div class="cards-container">
     {{range .Keys}}
-    <div class="key-card">
-        <div class="key-card-header"
-             hx-get="{{$.BaseURL}}/web/keys/view/{{.Key | urlEncode}}"
-             hx-target="#modal-content"
-             hx-swap="innerHTML">
+    <div class="key-card"
+         hx-get="{{$.BaseURL}}/web/keys/view/{{.Key | urlEncode}}"
+         hx-target="#modal-content"
+         hx-swap="innerHTML">
+        <div class="key-card-header">
             <span class="key-card-name">{{.Key}}</span>
         </div>
         <div class="key-card-meta">
@@ -15,7 +15,7 @@
             <span>Updated: {{.UpdatedAt | formatTime}}</span>
         </div>
         {{if .CanWrite}}
-        <div class="key-card-actions">
+        <div class="key-card-actions" onclick="event.stopPropagation()">
             <button class="btn btn-edit btn-small"
                     hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
                     hx-target="#modal-content"

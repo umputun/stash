@@ -231,6 +231,7 @@ body {
 .btn-small {
     padding: 4px 8px;
     font-size: 12px;
+    min-height: 28px;
 }
 
 /* Table */
@@ -531,6 +532,7 @@ tr.clickable-row {
     flex-direction: column;
     gap: 12px;
     transition: box-shadow 0.2s;
+    cursor: pointer;
 }
 
 .key-card:hover {
@@ -542,7 +544,6 @@ tr.clickable-row {
     justify-content: space-between;
     align-items: flex-start;
     gap: 8px;
-    cursor: pointer;
 }
 
 .key-card-name {
@@ -709,7 +710,7 @@ tr.clickable-row {
     }
 
     table {
-        min-width: 500px;
+        min-width: 400px;
     }
 
     th, td {
@@ -729,10 +730,31 @@ tr.clickable-row {
     }
 }
 
+/* Medium-small screens - hide CREATED column first */
+@media (max-width: 650px) {
+    th:nth-child(4),
+    td:nth-child(4) {
+        display: none;
+    }
+}
+
 /* Mobile */
 @media (max-width: 480px) {
     .container {
         padding: 12px;
+    }
+
+    /* hide UPDATED column (CREATED already hidden at 650px) */
+    th:nth-child(3),
+    td:nth-child(3) {
+        display: none;
+    }
+
+    /* smaller action buttons */
+    .actions-cell .btn {
+        padding: 4px 8px;
+        font-size: 12px;
+        min-height: 28px;
     }
 
     .header h1 {
