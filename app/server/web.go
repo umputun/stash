@@ -47,6 +47,7 @@ type templateData struct {
 	SortMode       string
 	Search         string
 	Error          string
+	CanForce       bool // allow force submit despite error (for validation errors, not conflicts)
 	AuthEnabled    bool
 	BaseURL        string
 	ModalWidth     int
@@ -637,6 +638,35 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// check if key already exists
+	_, _, getErr := s.store.GetWithFormat(key)
+	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+		// unexpected store error
+		log.Printf("[ERROR] failed to check key existence: %v", getErr)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if getErr == nil {
+		// key exists - return error
+		w.Header().Set("HX-Retarget", "#modal-content")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		data := templateData{
+			Key:      key,
+			Value:    valueStr,
+			Format:   format,
+			Formats:  s.highlighter.SupportedFormats(),
+			IsNew:    true,
+			Error:    fmt.Sprintf("key %q already exists", key),
+			BaseURL:  s.baseURL,
+			CanWrite: true,
+			Username: username,
+		}
+		if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
+			log.Printf("[ERROR] failed to execute template: %v", err)
+		}
+		return
+	}
+
 	value, err := valueFromForm(valueStr, isBinary)
 	if err != nil {
 		http.Error(w, "invalid value encoding", http.StatusBadRequest)
@@ -657,6 +687,7 @@ func (s *Server) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 				Formats:  s.highlighter.SupportedFormats(),
 				IsNew:    true,
 				Error:    err.Error(),
+				CanForce: true,
 				BaseURL:  s.baseURL,
 				CanWrite: true,
 				Username: username,
@@ -744,6 +775,7 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 				IsBinary:       isBinary,
 				IsNew:          false,
 				Error:          err.Error(),
+				CanForce:       true,
 				BaseURL:        s.baseURL,
 				ModalWidth:     modalWidth,
 				TextareaHeight: textareaHeight,

@@ -343,8 +343,9 @@ func TestHandleKeyEdit(t *testing.T) {
 
 func TestHandleKeyCreate(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte, format string) error { return nil },
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+		SetFunc:           func(key string, value []byte, format string) error { return nil },
+		ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -450,8 +451,9 @@ func TestHandleKeyCreate_Errors(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte, format string) error { return errors.New("db error") },
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			SetFunc:           func(key string, value []byte, format string) error { return errors.New("db error") },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -462,6 +464,29 @@ func TestHandleKeyCreate_Errors(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("duplicate key", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return []byte("existing"), "text", nil },
+			SetFunc:           func(key string, value []byte, format string) error { return nil },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"existing-key"}, "value": {"val"}}
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code) // form re-rendered with error
+		body := rec.Body.String()
+		assert.Contains(t, body, "already exists")
+		assert.Empty(t, st.SetCalls(), "Set should not be called for duplicate key")
+		// verify save button is visible and no force button (can't force duplicate)
+		assert.Contains(t, body, `id="save-btn"`)
+		assert.NotContains(t, body, `id="force-btn"`)
 	})
 }
 
@@ -505,8 +530,9 @@ func TestHandleKeyCreate_Validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			st := &mocks.KVStoreMock{
-				SetFunc:  func(key string, value []byte, format string) error { return nil },
-				ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+				GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+				SetFunc:           func(key string, value []byte, format string) error { return nil },
+				ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
 			}
 			srv := newTestServer(t, st)
 
@@ -958,8 +984,9 @@ func TestHandleKeyEdit_PermissionEnforcement(t *testing.T) {
 
 func TestHandleKeyCreate_PermissionEnforcement(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte, format string) error { return nil },
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+		SetFunc:           func(key string, value []byte, format string) error { return nil },
+		ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	authFile := createMultiUserAuthFile(t)
 	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})

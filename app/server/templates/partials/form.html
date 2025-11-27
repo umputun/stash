@@ -42,8 +42,8 @@
     </div>
     <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="hideModal('main-modal')">Cancel</button>
-        <button type="submit" id="save-btn" class="btn btn-primary" {{if .Error}}style="display:none"{{end}}>{{if .IsNew}}Create{{else}}Save{{end}}</button>
-        {{if .Error}}
+        <button type="submit" id="save-btn" class="btn btn-primary"{{if .CanForce}} style="display:none"{{end}}>{{if .IsNew}}Create{{else}}Save{{end}}</button>
+        {{if .CanForce}}
         <button type="submit" id="force-btn" name="force" value="true" class="btn btn-danger-filled">Submit Anyway</button>
         {{end}}
     </div>

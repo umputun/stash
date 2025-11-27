@@ -416,8 +416,9 @@ func newTestServer(t *testing.T, st KVStore) *Server {
 func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 	t.Run("handleKeyCreate calls gitCommit", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte, format string) error { return nil },
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			SetFunc:           func(key string, value []byte, format string) error { return nil },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
 		}
 		gs := &mocks.GitStoreMock{
 			CommitFunc: func(req git.CommitRequest) error { return nil },
