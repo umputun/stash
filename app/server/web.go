@@ -217,46 +217,24 @@ func (s *Server) getCurrentUser(r *http.Request) string {
 	return ""
 }
 
-// sortKeys sorts keys by the given mode.
-func sortKeys(keys []store.KeyInfo, mode string) {
+// sortByMode sorts a slice by the given mode using a key accessor.
+func sortByMode[T any](keys []T, mode string, getInfo func(*T) store.KeyInfo) {
 	switch mode {
 	case "key":
 		sort.Slice(keys, func(i, j int) bool {
-			return strings.ToLower(keys[i].Key) < strings.ToLower(keys[j].Key)
+			return strings.ToLower(getInfo(&keys[i]).Key) < strings.ToLower(getInfo(&keys[j]).Key)
 		})
 	case "size":
 		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].Size > keys[j].Size // largest first
+			return getInfo(&keys[i]).Size > getInfo(&keys[j]).Size // largest first
 		})
 	case "created":
 		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].CreatedAt.After(keys[j].CreatedAt) // newest first
+			return getInfo(&keys[i]).CreatedAt.After(getInfo(&keys[j]).CreatedAt) // newest first
 		})
 	default: // "updated"
 		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].UpdatedAt.After(keys[j].UpdatedAt) // newest first
-		})
-	}
-}
-
-// sortKeysWithPerm sorts keys with permission info by the given mode.
-func sortKeysWithPerm(keys []keyWithPermission, mode string) {
-	switch mode {
-	case "key":
-		sort.Slice(keys, func(i, j int) bool {
-			return strings.ToLower(keys[i].Key) < strings.ToLower(keys[j].Key)
-		})
-	case "size":
-		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].Size > keys[j].Size // largest first
-		})
-	case "created":
-		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].CreatedAt.After(keys[j].CreatedAt) // newest first
-		})
-	default: // "updated"
-		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].UpdatedAt.After(keys[j].UpdatedAt) // newest first
+			return getInfo(&keys[i]).UpdatedAt.After(getInfo(&keys[j]).UpdatedAt) // newest first
 		})
 	}
 }
@@ -283,31 +261,39 @@ func valueFromForm(value string, isBinary bool) ([]byte, error) {
 	return []byte(value), nil
 }
 
-// filterKeys filters keys by search term (case-insensitive substring match).
-func filterKeys(keys []store.KeyInfo, search string) []store.KeyInfo {
+// filterBySearch filters a slice by search term using a key accessor.
+func filterBySearch[T any](keys []T, search string, getKey func(T) string) []T {
 	if search == "" {
 		return keys
 	}
 	search = strings.ToLower(search)
-	var filtered []store.KeyInfo
+	var filtered []T
 	for _, k := range keys {
-		if strings.Contains(strings.ToLower(k.Key), search) {
+		if strings.Contains(strings.ToLower(getKey(k)), search) {
 			filtered = append(filtered, k)
 		}
 	}
 	return filtered
 }
 
-// filterKeysWithPerm filters keys with permission info by search term.
-func filterKeysWithPerm(keys []keyWithPermission, search string) []keyWithPermission {
-	if search == "" {
-		return keys
+// filterKeysByPermission filters keys based on user permissions and wraps with write permission info.
+func (s *Server) filterKeysByPermission(username string, keys []store.KeyInfo) []keyWithPermission {
+	keyNames := make([]string, len(keys))
+	for i, k := range keys {
+		keyNames[i] = k.Key
 	}
-	search = strings.ToLower(search)
+	allowedKeys := s.auth.FilterUserKeys(username, keyNames)
+	allowedSet := make(map[string]bool, len(allowedKeys))
+	for _, k := range allowedKeys {
+		allowedSet[k] = true
+	}
 	var filtered []keyWithPermission
 	for _, k := range keys {
-		if strings.Contains(strings.ToLower(k.Key), search) {
-			filtered = append(filtered, k)
+		if allowedSet[k.Key] {
+			filtered = append(filtered, keyWithPermission{
+				KeyInfo:  k,
+				CanWrite: s.auth.CheckUserPermission(username, k.Key, true),
+			})
 		}
 	}
 	return filtered
@@ -364,29 +350,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// filter keys based on user permissions
 	username := s.getCurrentUser(r)
-	keyNames := make([]string, len(keys))
-	for i, k := range keys {
-		keyNames[i] = k.Key
-	}
-	allowedKeys := s.auth.FilterUserKeys(username, keyNames)
-	allowedSet := make(map[string]bool, len(allowedKeys))
-	for _, k := range allowedKeys {
-		allowedSet[k] = true
-	}
-	var filteredKeys []keyWithPermission
-	for _, k := range keys {
-		if allowedSet[k.Key] {
-			filteredKeys = append(filteredKeys, keyWithPermission{
-				KeyInfo:  k,
-				CanWrite: s.auth.CheckUserPermission(username, k.Key, true),
-			})
-		}
-	}
+	filteredKeys := s.filterKeysByPermission(username, keys)
 
 	sortMode := getSortMode(r)
-	sortKeysWithPerm(filteredKeys, sortMode)
+	sortByMode(filteredKeys, sortMode, func(k *keyWithPermission) store.KeyInfo { return k.KeyInfo })
 
 	data := templateData{
 		Keys:        filteredKeys,
@@ -413,33 +381,15 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// filter keys based on user permissions
 	username := s.getCurrentUser(r)
-	keyNames := make([]string, len(keys))
-	for i, k := range keys {
-		keyNames[i] = k.Key
-	}
-	allowedKeys := s.auth.FilterUserKeys(username, keyNames)
-	allowedSet := make(map[string]bool, len(allowedKeys))
-	for _, k := range allowedKeys {
-		allowedSet[k] = true
-	}
-	var filteredKeys []keyWithPermission
-	for _, k := range keys {
-		if allowedSet[k.Key] {
-			filteredKeys = append(filteredKeys, keyWithPermission{
-				KeyInfo:  k,
-				CanWrite: s.auth.CheckUserPermission(username, k.Key, true),
-			})
-		}
-	}
+	filteredKeys := s.filterKeysByPermission(username, keys)
 
 	// check URL query first, then form values (for POST requests with hx-include)
 	search := r.URL.Query().Get("search")
 	if search == "" {
 		search = r.FormValue("search")
 	}
-	filteredKeys = filterKeysWithPerm(filteredKeys, search)
+	filteredKeys = filterBySearch(filteredKeys, search, func(k keyWithPermission) string { return k.Key })
 
 	// check if view_mode was just set via Set-Cookie header (from toggle handler)
 	viewMode := getViewMode(r)
@@ -465,7 +415,7 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 			sortMode = "updated"
 		}
 	}
-	sortKeysWithPerm(filteredKeys, sortMode)
+	sortByMode(filteredKeys, sortMode, func(k *keyWithPermission) store.KeyInfo { return k.KeyInfo })
 
 	data := templateData{
 		Keys:     filteredKeys,

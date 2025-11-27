@@ -65,8 +65,9 @@ func TestSortModeLabel(t *testing.T) {
 	}
 }
 
-func TestSortKeys(t *testing.T) {
+func TestSortByMode(t *testing.T) {
 	now := time.Now()
+	keyInfoAccessor := func(k *store.KeyInfo) store.KeyInfo { return *k }
 
 	t.Run("sort by updated descending", func(t *testing.T) {
 		keys := []store.KeyInfo{
@@ -74,7 +75,7 @@ func TestSortKeys(t *testing.T) {
 			{Key: "a", UpdatedAt: now},
 			{Key: "c", UpdatedAt: now.Add(-1 * time.Hour)},
 		}
-		sortKeys(keys, "updated")
+		sortByMode(keys, "updated", keyInfoAccessor)
 		assert.Equal(t, "a", keys[0].Key)
 		assert.Equal(t, "c", keys[1].Key)
 		assert.Equal(t, "b", keys[2].Key)
@@ -86,7 +87,7 @@ func TestSortKeys(t *testing.T) {
 			{Key: "alpha"},
 			{Key: "Beta"},
 		}
-		sortKeys(keys, "key")
+		sortByMode(keys, "key", keyInfoAccessor)
 		assert.Equal(t, "alpha", keys[0].Key)
 		assert.Equal(t, "Beta", keys[1].Key)
 		assert.Equal(t, "Zulu", keys[2].Key)
@@ -98,7 +99,7 @@ func TestSortKeys(t *testing.T) {
 			{Key: "large", Size: 1000},
 			{Key: "medium", Size: 100},
 		}
-		sortKeys(keys, "size")
+		sortByMode(keys, "size", keyInfoAccessor)
 		assert.Equal(t, "large", keys[0].Key)
 		assert.Equal(t, "medium", keys[1].Key)
 		assert.Equal(t, "small", keys[2].Key)
@@ -110,7 +111,7 @@ func TestSortKeys(t *testing.T) {
 			{Key: "new", CreatedAt: now},
 			{Key: "mid", CreatedAt: now.Add(-1 * time.Hour)},
 		}
-		sortKeys(keys, "created")
+		sortByMode(keys, "created", keyInfoAccessor)
 		assert.Equal(t, "new", keys[0].Key)
 		assert.Equal(t, "mid", keys[1].Key)
 		assert.Equal(t, "old", keys[2].Key)
@@ -190,30 +191,31 @@ func TestValueFromForm(t *testing.T) {
 	})
 }
 
-func TestFilterKeys(t *testing.T) {
+func TestFilterBySearch(t *testing.T) {
 	keys := []store.KeyInfo{
 		{Key: "config/db"},
 		{Key: "config/app"},
 		{Key: "secrets/api"},
 	}
+	keyAccessor := func(k store.KeyInfo) string { return k.Key }
 
 	t.Run("empty search returns all", func(t *testing.T) {
-		result := filterKeys(keys, "")
+		result := filterBySearch(keys, "", keyAccessor)
 		assert.Len(t, result, 3)
 	})
 
 	t.Run("filters by substring", func(t *testing.T) {
-		result := filterKeys(keys, "config")
+		result := filterBySearch(keys, "config", keyAccessor)
 		assert.Len(t, result, 2)
 	})
 
 	t.Run("case insensitive", func(t *testing.T) {
-		result := filterKeys(keys, "CONFIG")
+		result := filterBySearch(keys, "CONFIG", keyAccessor)
 		assert.Len(t, result, 2)
 	})
 
 	t.Run("no matches returns empty", func(t *testing.T) {
-		result := filterKeys(keys, "notfound")
+		result := filterBySearch(keys, "notfound", keyAccessor)
 		assert.Empty(t, result)
 	})
 }
@@ -1524,4 +1526,47 @@ func loginAndGetCookie(t *testing.T, srv *Server, username string) *http.Cookie 
 	}
 	t.Fatalf("no auth cookie found after login for user %s", username)
 	return nil
+}
+
+func TestFilterKeysByPermission(t *testing.T) {
+	authFile := createMultiUserAuthFile(t)
+	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, AuthFile: authFile})
+	require.NoError(t, err)
+
+	keys := []store.KeyInfo{
+		{Key: "app/config", Size: 50},
+		{Key: "app/db", Size: 100},
+		{Key: "other/secret", Size: 200},
+	}
+
+	t.Run("admin sees all keys with write permission", func(t *testing.T) {
+		result := srv.filterKeysByPermission("admin", keys)
+		assert.Len(t, result, 3)
+		for _, k := range result {
+			assert.True(t, k.CanWrite, "admin should have write permission for %s", k.Key)
+		}
+	})
+
+	t.Run("readonly sees all keys without write permission", func(t *testing.T) {
+		result := srv.filterKeysByPermission("readonly", keys)
+		assert.Len(t, result, 3)
+		for _, k := range result {
+			assert.False(t, k.CanWrite, "readonly should not have write permission for %s", k.Key)
+		}
+	})
+
+	t.Run("scoped sees only allowed prefix with write permission", func(t *testing.T) {
+		result := srv.filterKeysByPermission("scoped", keys)
+		assert.Len(t, result, 2)
+		for _, k := range result {
+			assert.True(t, k.CanWrite, "scoped should have write permission for %s", k.Key)
+			assert.Contains(t, k.Key, "app/")
+		}
+	})
+
+	t.Run("unknown user sees nothing", func(t *testing.T) {
+		result := srv.filterKeysByPermission("unknown", keys)
+		assert.Empty(t, result)
+	})
 }

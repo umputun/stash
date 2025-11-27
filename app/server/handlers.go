@@ -221,9 +221,7 @@ func (s *Server) getIdentity(r *http.Request) identity {
 func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
 	id := s.getIdentity(r)
 	switch id.typ {
-	case identityUser:
-		return git.Author{Name: id.name, Email: id.name + "@stash"}
-	case identityToken:
+	case identityUser, identityToken:
 		return git.Author{Name: id.name, Email: id.name + "@stash"}
 	default:
 		return git.DefaultAuthor()
