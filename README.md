@@ -109,6 +109,7 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--server.idle-timeout` | `STASH_SERVER_IDLE_TIMEOUT` | `30s` | Idle timeout |
 | `--server.shutdown-timeout` | `STASH_SERVER_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout |
 | `--server.base-url` | `STASH_SERVER_BASE_URL` | - | Base URL path for reverse proxy (e.g., `/stash`) |
+| `--server.page-size` | `STASH_SERVER_PAGE_SIZE` | `50` | Keys per page in web UI (0 to disable pagination) |
 | `--limits.body-size` | `STASH_LIMITS_BODY_SIZE` | `1048576` | Max request body size in bytes (1MB) |
 | `--limits.requests-per-sec` | `STASH_LIMITS_REQUESTS_PER_SEC` | `1000` | Max requests per second |
 | `--limits.login-concurrency` | `STASH_LIMITS_LOGIN_CONCURRENCY` | `5` | Max concurrent login attempts |
