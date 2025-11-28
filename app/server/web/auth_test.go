@@ -79,6 +79,49 @@ func TestHandler_HandleLogin(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 		assert.Contains(t, rec.Body.String(), "Username and password are required")
 	})
+
+	t.Run("session creation error returns 500", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{
+			IsValidUserFunc:   func(username, password string) bool { return true },
+			CreateSessionFunc: func(username string) (string, error) { return "", assert.AnError },
+		}
+		h := newTestHandlerWithAuth(t, auth)
+
+		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"username": {"admin"}, "password": {"testpass"}}
+		rec := httptest.NewRecorder()
+		h.handleLogin(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("HTTPS sets secure cookie with host prefix", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{
+			IsValidUserFunc:   func(username, password string) bool { return true },
+			CreateSessionFunc: func(username string) (string, error) { return "token", nil },
+			LoginTTLFunc:      func() time.Duration { return time.Hour },
+		}
+		h := newTestHandlerWithAuth(t, auth)
+
+		req := httptest.NewRequest(http.MethodPost, "/login", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.PostForm = map[string][]string{"username": {"admin"}, "password": {"pass"}}
+		rec := httptest.NewRecorder()
+		h.handleLogin(rec, req)
+
+		assert.Equal(t, http.StatusSeeOther, rec.Code)
+		var hostCookie *http.Cookie
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == "__Host-stash-auth" {
+				hostCookie = c
+				break
+			}
+		}
+		require.NotNil(t, hostCookie, "should set __Host- prefixed cookie for HTTPS")
+		assert.True(t, hostCookie.Secure)
+	})
 }
 
 func TestHandler_HandleLogout(t *testing.T) {

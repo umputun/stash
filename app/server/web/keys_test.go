@@ -157,6 +157,42 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+
+	t.Run("permission denied", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return []byte("val"), "text", nil },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/restricted", http.NoBody)
+		req.SetPathValue("key", "restricted")
+		rec := httptest.NewRecorder()
+		h.handleKeyEdit(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("store error", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", errors.New("db error") },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/error-key", http.NoBody)
+		req.SetPathValue("key", "error-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyEdit(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
 }
 
 func TestHandler_HandleKeyCreate(t *testing.T) {
