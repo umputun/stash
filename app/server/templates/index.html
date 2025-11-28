@@ -6,7 +6,7 @@
                 hx-post="{{.BaseURL}}/web/sort"
                 hx-target="#keys-table"
                 hx-swap="innerHTML"
-                hx-include="[name='search']"
+                hx-include="[name='search'], [name='page']"
                 title="Change sort order">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -33,7 +33,7 @@
                 hx-post="{{.BaseURL}}/web/view-mode"
                 hx-target="#keys-table"
                 hx-swap="innerHTML"
-                hx-include="[name='search']"
+                hx-include="[name='search'], [name='page']"
                 title="Toggle view mode">
             <span class="icon-view">{{if eq .ViewMode "cards"}}☰{{else}}☷{{end}}</span>
         </button>
@@ -53,8 +53,24 @@
 </div>
 
 <div class="stats">
-    <span id="key-count">{{if eq (len .Keys) 0}}no keys{{else}}{{len .Keys}} {{if eq (len .Keys) 1}}key{{else}}keys{{end}}{{end}}</span>
+    <span id="key-count">{{if eq .TotalKeys 0}}no keys{{else}}{{.TotalKeys}} {{if eq .TotalKeys 1}}key{{else}}keys{{end}}{{end}}</span>
+    <span id="pagination" class="pagination">
+        {{if gt .TotalPages 1}}
+        <button class="btn-page{{if not .HasPrev}} disabled{{end}}"
+                {{if .HasPrev}}hx-get="{{.BaseURL}}/web/keys?page={{sub .Page 1}}"
+                hx-target="#keys-table"
+                hx-swap="innerHTML"
+                hx-include="[name='search']"{{end}}>&#8249;</button>
+        <span class="page-info">{{.Page}} / {{.TotalPages}}</span>
+        <button class="btn-page{{if not .HasNext}} disabled{{end}}"
+                {{if .HasNext}}hx-get="{{.BaseURL}}/web/keys?page={{add .Page 1}}"
+                hx-target="#keys-table"
+                hx-swap="innerHTML"
+                hx-include="[name='search']"{{end}}>&#8250;</button>
+        {{end}}
+    </span>
 </div>
+<input type="hidden" name="page" id="current-page" value="{{.Page}}">
 
 <div class="table-container">
     <div id="keys-table">

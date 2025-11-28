@@ -59,6 +59,13 @@ type templateData struct {
 	ServerValue     string // current server value (shown during conflict)
 	ServerFormat    string // current server format (shown during conflict)
 	ServerUpdatedAt int64  // server's updated_at timestamp (for retry after conflict)
+
+	// pagination fields
+	Page       int  // current page (1-based)
+	TotalPages int  // total number of pages
+	TotalKeys  int  // total keys after filtering (before pagination)
+	HasPrev    bool // has previous page
+	HasNext    bool // has next page
 }
 
 // templateFuncs returns custom template functions.
@@ -78,6 +85,8 @@ func templateFuncs() template.FuncMap {
 		},
 		"urlEncode":     url.PathEscape,
 		"sortModeLabel": sortModeLabel,
+		"add":           func(a, b int) int { return a + b },
+		"sub":           func(a, b int) int { return a - b },
 	}
 }
 
@@ -260,6 +269,36 @@ func (s *Server) filterBySearch(keys []keyWithPermission, search string) []keyWi
 	return filtered
 }
 
+// paginate applies pagination to a slice of keys and returns pagination info.
+// page is 1-based, pageSize is the max keys per page.
+func (s *Server) paginate(keys []keyWithPermission, page, pageSize int) ([]keyWithPermission, int, int, bool, bool) {
+	total := len(keys)
+	if pageSize <= 0 {
+		return keys, 1, 1, false, false
+	}
+
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start >= total {
+		return nil, page, totalPages, page > 1, false
+	}
+	if end > total {
+		end = total
+	}
+	return keys[start:end], page, totalPages, page > 1, page < totalPages
+}
+
 // filterKeysByPermission filters keys based on user permissions and wraps with write permission info.
 func (s *Server) filterKeysByPermission(username string, keys []store.KeyInfo) []keyWithPermission {
 	keyNames := make([]string, len(keys))
@@ -298,8 +337,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	sortMode := s.getSortMode(r)
 	s.sortByMode(filteredKeys, sortMode)
 
+	// pagination
+	totalKeys := len(filteredKeys)
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, parseErr := strconv.Atoi(p); parseErr == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	pagedKeys, page, totalPages, hasPrev, hasNext := s.paginate(filteredKeys, page, s.pageSize())
+
 	data := templateData{
-		Keys:        filteredKeys,
+		Keys:        pagedKeys,
 		Theme:       s.getTheme(r),
 		ViewMode:    s.getViewMode(r),
 		SortMode:    sortMode,
@@ -307,6 +356,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		BaseURL:     s.baseURL,
 		CanWrite:    s.auth.UserCanWrite(username),
 		Username:    username,
+		Page:        page,
+		TotalPages:  totalPages,
+		TotalKeys:   totalKeys,
+		HasPrev:     hasPrev,
+		HasNext:     hasNext,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {

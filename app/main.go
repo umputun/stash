@@ -39,6 +39,7 @@ var opts struct {
 		IdleTimeout     time.Duration `long:"idle-timeout" env:"IDLE_TIMEOUT" default:"30s" description:"idle timeout"`
 		ShutdownTimeout time.Duration `long:"shutdown-timeout" env:"SHUTDOWN_TIMEOUT" default:"5s" description:"graceful shutdown timeout"`
 		BaseURL         string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /stash)"`
+		PageSize        int           `long:"page-size" env:"PAGE_SIZE" default:"50" description:"keys per page in web UI, 0 to disable"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
 	Limits struct {
@@ -167,6 +168,7 @@ func runServer(ctx context.Context) error {
 		BodySizeLimit:    opts.Limits.BodySize,
 		RequestsPerSec:   opts.Limits.RequestsPerSec,
 		LoginConcurrency: opts.Limits.LoginConcurrency,
+		PageSize:         opts.Server.PageSize,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)

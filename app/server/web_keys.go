@@ -178,15 +178,36 @@ func (s *Server) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sortByMode(filteredKeys, sortMode)
 
+	// pagination
+	totalKeys := len(filteredKeys)
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, parseErr := strconv.Atoi(p); parseErr == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	// also check form value (for POST requests like sort/view toggle)
+	if p := r.FormValue("page"); p != "" {
+		if parsed, parseErr := strconv.Atoi(p); parseErr == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	pagedKeys, page, totalPages, hasPrev, hasNext := s.paginate(filteredKeys, page, s.pageSize())
+
 	data := templateData{
-		Keys:     filteredKeys,
-		Search:   search,
-		Theme:    s.getTheme(r),
-		ViewMode: viewMode,
-		SortMode: sortMode,
-		BaseURL:  s.baseURL,
-		CanWrite: s.auth.UserCanWrite(username),
-		Username: username,
+		Keys:       pagedKeys,
+		Search:     search,
+		Theme:      s.getTheme(r),
+		ViewMode:   viewMode,
+		SortMode:   sortMode,
+		BaseURL:    s.baseURL,
+		CanWrite:   s.auth.UserCanWrite(username),
+		Username:   username,
+		Page:       page,
+		TotalPages: totalPages,
+		TotalKeys:  totalKeys,
+		HasPrev:    hasPrev,
+		HasNext:    hasNext,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "keys-table", data); err != nil {

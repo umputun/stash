@@ -565,6 +565,166 @@ func createMixedPermAuthFile(t *testing.T) string {
 	return f
 }
 
+func TestPaginate(t *testing.T) {
+	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+	srv := newTestServer(t, st)
+
+	makeKeys := func(n int) []keyWithPermission {
+		keys := make([]keyWithPermission, n)
+		for i := range keys {
+			keys[i] = keyWithPermission{KeyInfo: store.KeyInfo{Key: "key" + string(rune('a'+i))}}
+		}
+		return keys
+	}
+
+	tests := []struct {
+		name       string
+		keys       []keyWithPermission
+		page       int
+		pageSize   int
+		wantLen    int
+		wantPage   int
+		wantTotal  int
+		wantPrev   bool
+		wantNext   bool
+	}{
+		{name: "first page", keys: makeKeys(10), page: 1, pageSize: 3, wantLen: 3, wantPage: 1, wantTotal: 4, wantPrev: false, wantNext: true},
+		{name: "middle page", keys: makeKeys(10), page: 2, pageSize: 3, wantLen: 3, wantPage: 2, wantTotal: 4, wantPrev: true, wantNext: true},
+		{name: "last page partial", keys: makeKeys(10), page: 4, pageSize: 3, wantLen: 1, wantPage: 4, wantTotal: 4, wantPrev: true, wantNext: false},
+		{name: "page beyond total clamps", keys: makeKeys(10), page: 10, pageSize: 3, wantLen: 1, wantPage: 4, wantTotal: 4, wantPrev: true, wantNext: false},
+		{name: "page zero clamps to 1", keys: makeKeys(10), page: 0, pageSize: 3, wantLen: 3, wantPage: 1, wantTotal: 4, wantPrev: false, wantNext: true},
+		{name: "negative page clamps to 1", keys: makeKeys(10), page: -5, pageSize: 3, wantLen: 3, wantPage: 1, wantTotal: 4, wantPrev: false, wantNext: true},
+		{name: "empty keys", keys: nil, page: 1, pageSize: 3, wantLen: 0, wantPage: 1, wantTotal: 1, wantPrev: false, wantNext: false},
+		{name: "exact page fit", keys: makeKeys(6), page: 2, pageSize: 3, wantLen: 3, wantPage: 2, wantTotal: 2, wantPrev: true, wantNext: false},
+		{name: "single page", keys: makeKeys(2), page: 1, pageSize: 3, wantLen: 2, wantPage: 1, wantTotal: 1, wantPrev: false, wantNext: false},
+		{name: "page size zero returns all", keys: makeKeys(5), page: 1, pageSize: 0, wantLen: 5, wantPage: 1, wantTotal: 1, wantPrev: false, wantNext: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, page, totalPages, hasPrev, hasNext := srv.paginate(tc.keys, tc.page, tc.pageSize)
+			assert.Len(t, result, tc.wantLen, "result length")
+			assert.Equal(t, tc.wantPage, page, "page")
+			assert.Equal(t, tc.wantTotal, totalPages, "totalPages")
+			assert.Equal(t, tc.wantPrev, hasPrev, "hasPrev")
+			assert.Equal(t, tc.wantNext, hasNext, "hasNext")
+		})
+	}
+}
+
+func TestPageSize(t *testing.T) {
+	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
+
+	t.Run("returns configured page size", func(t *testing.T) {
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, PageSize: 25})
+		require.NoError(t, err)
+		assert.Equal(t, 25, srv.pageSize())
+	})
+
+	t.Run("returns 0 (disabled) when set to 0", func(t *testing.T) {
+		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, PageSize: 0})
+		require.NoError(t, err)
+		assert.Equal(t, 0, srv.pageSize())
+	})
+}
+
+func TestHandleIndexWithPagination(t *testing.T) {
+	keys := make([]store.KeyInfo, 10)
+	for i := range keys {
+		keys[i] = store.KeyInfo{Key: "key" + string(rune('a'+i)), Size: 100}
+	}
+	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return keys, nil }}
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, PageSize: 3})
+	require.NoError(t, err)
+
+	t.Run("first page", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "10 keys") // total count
+		assert.Contains(t, body, "1 / 4")   // page indicator
+	})
+
+	t.Run("page 2 via query param", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/?page=2", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "2 / 4") // page indicator
+	})
+}
+
+func TestHandleKeyListWithPagination(t *testing.T) {
+	keys := make([]store.KeyInfo, 10)
+	for i := range keys {
+		keys[i] = store.KeyInfo{Key: "key" + string(rune('a'+i)), Size: 100}
+	}
+	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return keys, nil }}
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, PageSize: 3})
+	require.NoError(t, err)
+
+	t.Run("first page of keys", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/web/keys", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "keya")   // first key visible
+		assert.Contains(t, body, "1 / 4")  // pagination OOB
+		assert.Contains(t, body, "10 key") // total count OOB
+	})
+
+	t.Run("page 2 shows next keys", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/web/keys?page=2", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "keyd") // 4th key (index 3) visible on page 2
+		assert.Contains(t, body, "2 / 4")
+	})
+
+	t.Run("search resets pagination context", func(t *testing.T) {
+		// search for keys containing 'a' - should only find 'keya'
+		req := httptest.NewRequest(http.MethodGet, "/web/keys?search=keya", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "keya")
+		assert.Contains(t, body, `1 key`)
+	})
+}
+
+func TestHandleKeyListPaginationDisabled(t *testing.T) {
+	keys := make([]store.KeyInfo, 10)
+	for i := range keys {
+		keys[i] = store.KeyInfo{Key: "key" + string(rune('a'+i)), Size: 100}
+	}
+	st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return keys, nil }}
+	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, PageSize: 0})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/web/keys", http.NoBody)
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "keya") // first key
+	assert.Contains(t, body, "keyj") // last key (all 10 visible)
+	assert.Contains(t, body, "10 keys")
+	assert.NotContains(t, body, "1 / ") // no pagination controls
+}
+
 // loginAndGetCookie logs in a user and returns the session cookie for subsequent requests.
 func loginAndGetCookie(t *testing.T, srv *Server, username string) *http.Cookie {
 	t.Helper()

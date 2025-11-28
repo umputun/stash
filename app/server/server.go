@@ -75,6 +75,7 @@ type Config struct {
 	LoginTTL        time.Duration // session duration
 	BaseURL         string        // base URL path for reverse proxy (e.g., /stash)
 	GitPush         bool          // auto-push git commits
+	PageSize        int           // keys per page in web UI (0 = unlimited)
 
 	// limits
 	BodySizeLimit    int64 // max request body size in bytes
@@ -241,6 +242,14 @@ func (s *Server) loginConcurrency() int64 {
 		return s.cfg.LoginConcurrency
 	}
 	return 5 // default
+}
+
+// pageSize returns the configured page size. Returns 0 if pagination is disabled (PageSize <= 0).
+func (s *Server) pageSize() int {
+	if s.cfg.PageSize <= 0 {
+		return 0 // disabled
+	}
+	return s.cfg.PageSize
 }
 
 // normalizeKey cleans up key input: trims whitespace, strips leading/trailing slashes,
