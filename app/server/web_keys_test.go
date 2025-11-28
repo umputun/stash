@@ -1047,3 +1047,113 @@ func TestCalculateModalDimensions(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckConflict(t *testing.T) {
+	now := time.Now()
+
+	t.Run("no timestamp skips check", func(t *testing.T) {
+		st := &mocks.KVStoreMock{}
+		srv := newTestServer(t, st)
+
+		conflict, err := srv.checkConflict("test-key", 0)
+		require.NoError(t, err)
+		assert.Nil(t, conflict)
+		assert.Empty(t, st.GetInfoCalls(), "GetInfo should not be called")
+	})
+
+	t.Run("negative timestamp skips check", func(t *testing.T) {
+		st := &mocks.KVStoreMock{}
+		srv := newTestServer(t, st)
+
+		conflict, err := srv.checkConflict("test-key", -1)
+		require.NoError(t, err)
+		assert.Nil(t, conflict)
+	})
+
+	t.Run("key not found returns no conflict", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{}, store.ErrNotFound
+			},
+		}
+		srv := newTestServer(t, st)
+
+		conflict, err := srv.checkConflict("test-key", now.Unix())
+		require.NoError(t, err)
+		assert.Nil(t, conflict)
+	})
+
+	t.Run("db error returns error", func(t *testing.T) {
+		dbErr := errors.New("database connection failed")
+		st := &mocks.KVStoreMock{
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{}, dbErr
+			},
+		}
+		srv := newTestServer(t, st)
+
+		conflict, err := srv.checkConflict("test-key", now.Unix())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unable to verify")
+		assert.Contains(t, err.Error(), "database connection failed")
+		assert.Nil(t, conflict)
+	})
+
+	t.Run("timestamps match returns no conflict", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{Key: key, UpdatedAt: now}, nil
+			},
+		}
+		srv := newTestServer(t, st)
+
+		conflict, err := srv.checkConflict("test-key", now.Unix())
+		require.NoError(t, err)
+		assert.Nil(t, conflict)
+	})
+
+	t.Run("timestamps differ returns conflict", func(t *testing.T) {
+		serverTime := now.Add(time.Minute)
+		st := &mocks.KVStoreMock{
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{Key: key, UpdatedAt: serverTime}, nil
+			},
+			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+				return []byte("server value"), "text", nil
+			},
+		}
+		srv := newTestServer(t, st)
+
+		conflict, err := srv.checkConflict("test-key", now.Unix())
+		require.NoError(t, err)
+		require.NotNil(t, conflict)
+		assert.Equal(t, "server value", conflict.ServerValue)
+		assert.Equal(t, "text", conflict.ServerFormat)
+		assert.Equal(t, serverTime.Unix(), conflict.ServerUpdatedAt)
+	})
+}
+
+func TestHandleKeyUpdate_ConflictCheckError(t *testing.T) {
+	dbErr := errors.New("database unavailable")
+	st := &mocks.KVStoreMock{
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		GetInfoFunc: func(key string) (store.KeyInfo, error) {
+			return store.KeyInfo{}, dbErr
+		},
+	}
+	srv := newTestServer(t, st)
+
+	form := url.Values{
+		"key":        {"test-key"},
+		"value":      {"test value"},
+		"format":     {"text"},
+		"updated_at": {"1234567890"}, // non-zero to trigger conflict check
+	}
+	req := httptest.NewRequest(http.MethodPut, "/web/keys/test-key", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "unable to verify")
+}
