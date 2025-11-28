@@ -578,15 +578,15 @@ func TestPaginate(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		keys       []keyWithPermission
-		page       int
-		pageSize   int
-		wantLen    int
-		wantPage   int
-		wantTotal  int
-		wantPrev   bool
-		wantNext   bool
+		name      string
+		keys      []keyWithPermission
+		page      int
+		pageSize  int
+		wantLen   int
+		wantPage  int
+		wantTotal int
+		wantPrev  bool
+		wantNext  bool
 	}{
 		{name: "first page", keys: makeKeys(10), page: 1, pageSize: 3, wantLen: 3, wantPage: 1, wantTotal: 4, wantPrev: false, wantNext: true},
 		{name: "middle page", keys: makeKeys(10), page: 2, pageSize: 3, wantLen: 3, wantPage: 2, wantTotal: 4, wantPrev: true, wantNext: true},

@@ -13,6 +13,96 @@ import (
 	"github.com/umputun/stash/app/store"
 )
 
+// handleList returns all keys the caller has read access to.
+// GET /kv
+// Optional query params: ?prefix=app/config (filter by prefix)
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	keys, err := s.store.List()
+	if err != nil {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to list keys")
+		return
+	}
+
+	// extract key names for filtering
+	keyNames := make([]string, len(keys))
+	for i, k := range keys {
+		keyNames[i] = k.Key
+	}
+
+	// filter by auth permissions
+	filteredNames := s.filterKeysByAuth(r, keyNames)
+	if filteredNames == nil {
+		// no valid auth, but this shouldn't happen since tokenAuth middleware already checked
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusUnauthorized, nil, "unauthorized")
+		return
+	}
+
+	// convert filtered names back to KeyInfo slice
+	nameSet := make(map[string]bool, len(filteredNames))
+	for _, name := range filteredNames {
+		nameSet[name] = true
+	}
+	filtered := make([]store.KeyInfo, 0, len(filteredNames))
+	for _, k := range keys {
+		if nameSet[k.Key] {
+			filtered = append(filtered, k)
+		}
+	}
+
+	// filter by prefix if specified
+	prefix := r.URL.Query().Get("prefix")
+	if prefix != "" {
+		var prefixed []store.KeyInfo
+		for _, k := range filtered {
+			if strings.HasPrefix(k.Key, prefix) {
+				prefixed = append(prefixed, k)
+			}
+		}
+		filtered = prefixed
+	}
+
+	log.Printf("[DEBUG] list keys: %d found, %d after auth filter", len(keys), len(filtered))
+	rest.RenderJSON(w, filtered)
+}
+
+// filterKeysByAuth filters keys based on the caller's auth credentials.
+// returns nil if auth is required but caller has no valid credentials.
+// priority: session cookie > Bearer token > public ACL
+func (s *Server) filterKeysByAuth(r *http.Request, keys []string) []string {
+	// no auth = return all keys
+	if s.auth == nil || !s.auth.Enabled() {
+		return keys
+	}
+
+	// check session cookie first (authenticated user has priority over public)
+	for _, cookieName := range sessionCookieNames {
+		cookie, err := r.Cookie(cookieName)
+		if err != nil {
+			continue
+		}
+		username, valid := s.auth.GetSessionUser(cookie.Value)
+		if valid {
+			return s.auth.FilterUserKeys(username, keys)
+		}
+	}
+
+	// check Bearer token (authenticated token has priority over public)
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if filtered := s.auth.FilterTokenKeys(token, keys); filtered != nil {
+			return filtered
+		}
+	}
+
+	// fall back to public access for unauthenticated requests
+	if filtered := s.auth.FilterPublicKeys(keys); filtered != nil {
+		return filtered
+	}
+
+	return nil // no valid auth
+}
+
 // handleGet retrieves the value for a key.
 // GET /kv/{key...}
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {

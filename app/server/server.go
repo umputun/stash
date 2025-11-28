@@ -212,8 +212,9 @@ func (s *Server) routes() http.Handler {
 	// kv API routes (token auth)
 	router.Mount("/kv").Route(func(kv *routegroup.Bundle) {
 		kv.Use(tokenAuth)
-		kv.HandleFunc("GET /{key...}", s.handleGet)
-		kv.HandleFunc("PUT /{key...}", s.handleSet)
+		kv.HandleFunc("GET /{$}", s.handleList)     // list keys (must be before {key...})
+		kv.HandleFunc("GET /{key...}", s.handleGet) // get specific key
+		kv.HandleFunc("PUT /{key...}", s.handleSet) // set key
 		kv.HandleFunc("DELETE /{key...}", s.handleDelete)
 	})
 

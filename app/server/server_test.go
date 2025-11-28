@@ -639,3 +639,239 @@ func TestNormalizeKey(t *testing.T) {
 		})
 	}
 }
+
+func TestServer_HandleList(t *testing.T) {
+	now := time.Now()
+	testKeys := []store.KeyInfo{
+		{Key: "app/config", Size: 100, Format: "json", CreatedAt: now, UpdatedAt: now},
+		{Key: "app/secret", Size: 50, Format: "text", CreatedAt: now, UpdatedAt: now},
+		{Key: "db/host", Size: 20, Format: "text", CreatedAt: now, UpdatedAt: now},
+	}
+
+	t.Run("list all keys without auth", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv := newTestServer(t, st)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`)
+	})
+
+	t.Run("list keys with prefix filter", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv := newTestServer(t, st)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/?prefix=app/", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
+		assert.NotContains(t, rec.Body.String(), `"Key":"db/host"`)
+	})
+
+	t.Run("list empty keys", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return []store.KeyInfo{}, nil },
+		}
+		srv := newTestServer(t, st)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "[]\n", rec.Body.String())
+	})
+
+	t.Run("list returns internal error", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, errors.New("db error") },
+		}
+		srv := newTestServer(t, st)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+}
+
+func TestServer_HandleList_WithAuth(t *testing.T) {
+	now := time.Now()
+	testKeys := []store.KeyInfo{
+		{Key: "app/config", Size: 100, Format: "json", CreatedAt: now, UpdatedAt: now},
+		{Key: "app/secret", Size: 50, Format: "text", CreatedAt: now, UpdatedAt: now},
+		{Key: "db/host", Size: 20, Format: "text", CreatedAt: now, UpdatedAt: now},
+	}
+
+	t.Run("list with token auth filters by permission", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		authConfig := `tokens:
+  - token: "apptoken"
+    permissions:
+      - prefix: "app/*"
+        access: r
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv, err := New(st, validator.NewService(), Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer apptoken")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
+		assert.NotContains(t, rec.Body.String(), `"Key":"db/host"`) // no permission
+	})
+
+	t.Run("list with invalid token returns 401", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		authConfig := `tokens:
+  - token: "validtoken"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv, err := New(st, validator.NewService(), Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer invalidtoken")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("list with session auth filters by user permission", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		// bcrypt hash for "password123"
+		authConfig := `users:
+  - name: "dbadmin"
+    password: "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
+    permissions:
+      - prefix: "db/*"
+        access: rw
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv, err := New(st, validator.NewService(), Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		})
+		require.NoError(t, err)
+
+		// create session for user
+		sessionToken, err := srv.auth.CreateSession("dbadmin")
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.NotContains(t, rec.Body.String(), `"Key":"app/config"`) // no permission
+		assert.NotContains(t, rec.Body.String(), `"Key":"app/secret"`) // no permission
+		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`)       // has permission
+	})
+
+	t.Run("list with public access returns filtered keys", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		authConfig := `tokens:
+  - token: "*"
+    permissions:
+      - prefix: "app/*"
+        access: r
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv, err := New(st, validator.NewService(), Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		})
+		require.NoError(t, err)
+
+		// no auth header - should use public access
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
+		assert.NotContains(t, rec.Body.String(), `"Key":"db/host"`) // no public permission
+	})
+
+	t.Run("admin token sees all keys even with public ACL configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		authFile := tmpDir + "/auth.yml"
+		// both public (limited) and admin (full) tokens configured
+		authConfig := `tokens:
+  - token: "*"
+    permissions:
+      - prefix: "app/*"
+        access: r
+  - token: "admintoken"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
+		}
+		srv, err := New(st, validator.NewService(), Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		})
+		require.NoError(t, err)
+
+		// admin token should see ALL keys, not just public subset
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer admintoken")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
+		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`) // admin sees everything
+	})
+}

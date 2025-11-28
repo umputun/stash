@@ -46,6 +46,7 @@ make run      # run with logging enabled
 ## API
 
 ```
+GET    /kv/           # list keys (returns JSON array of KeyInfo, supports ?prefix=)
 GET    /kv/{key...}   # get value (returns raw body, 200/404)
 PUT    /kv/{key...}   # set value (body is value, returns 200)
 DELETE /kv/{key...}   # delete key (returns 204/404)
@@ -53,6 +54,8 @@ GET    /ping          # health check (returns "pong")
 ```
 
 Keys can contain slashes (e.g., `app/config/database`).
+
+List endpoint returns only keys the caller has read permission for when auth is enabled.
 
 ## Web UI Routes
 

@@ -283,7 +283,7 @@ func parsePermissionString(s string) (Permission, error) {
 
 // Enabled returns true if authentication is enabled.
 func (a *Auth) Enabled() bool {
-	return a != nil && (len(a.users) > 0 || len(a.tokens) > 0)
+	return a != nil && (len(a.users) > 0 || len(a.tokens) > 0 || a.publicACL != nil)
 }
 
 // LoginTTL returns the configured login session TTL.
@@ -432,6 +432,42 @@ func (a *Auth) FilterUserKeys(username string, keys []string) []string {
 	return filtered
 }
 
+// FilterTokenKeys filters keys based on token's read permissions.
+// Returns nil if token doesn't exist.
+func (a *Auth) FilterTokenKeys(token string, keys []string) []string {
+	if a == nil {
+		return keys // no auth = show all keys
+	}
+	acl, ok := a.tokens[token]
+	if !ok {
+		return nil
+	}
+
+	var filtered []string
+	for _, key := range keys {
+		if acl.CheckKeyPermission(key, false) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
+}
+
+// FilterPublicKeys filters keys based on public ACL read permissions.
+// Returns nil if public access is not configured.
+func (a *Auth) FilterPublicKeys(keys []string) []string {
+	if a == nil || a.publicACL == nil {
+		return nil
+	}
+
+	var filtered []string
+	for _, key := range keys {
+		if a.publicACL.CheckKeyPermission(key, false) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
+}
+
 // CheckKeyPermission checks if this ACL grants permission for a key.
 func (acl TokenACL) CheckKeyPermission(key string, needWrite bool) bool {
 	for _, pp := range acl.prefixes {
@@ -527,15 +563,20 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 // TokenAuth returns middleware that requires a valid Bearer token with appropriate permissions.
 // Used for API routes. Returns 401/403 if not authorized.
 // Public access (token="*") is checked first and allows unauthenticated requests.
+// For list operations (empty key), only validates token existence, filtering happens in handler.
 func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := normalizeKey(strings.TrimPrefix(r.URL.Path, "/kv/"))
 		needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
+		isList := key == "" && r.Method == http.MethodGet // list operation has no key
 
 		// check public access first (token="*" in config)
-		if a.publicACL != nil && a.publicACL.CheckKeyPermission(key, needWrite) {
-			next.ServeHTTP(w, r)
-			return
+		// for list operation, public access means pass-through (handler filters results)
+		if a.publicACL != nil {
+			if isList || a.publicACL.CheckKeyPermission(key, needWrite) {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		// also accept session cookie for API (allows UI to call API)
@@ -547,6 +588,11 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 			username, valid := a.GetSessionUser(cookie.Value)
 			if !valid {
 				continue
+			}
+			// for list operation, just verify session is valid (handler filters results)
+			if isList {
+				next.ServeHTTP(w, r)
+				return
 			}
 			// check user permissions for the key
 			if !a.CheckUserPermission(username, key, needWrite) {
@@ -570,6 +616,12 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 		// check if token exists
 		if _, ok := a.GetTokenACL(token); !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// for list operation, just verify token exists (handler filters results)
+		if isList {
+			next.ServeHTTP(w, r)
 			return
 		}
 

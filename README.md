@@ -406,6 +406,27 @@ curl -X DELETE http://localhost:8080/kv/mykey
 
 Returns 204 on success, or 404 if key not found.
 
+### List keys
+
+```bash
+# list all keys
+curl http://localhost:8080/kv/
+
+# list keys with prefix filter
+curl "http://localhost:8080/kv/?prefix=app/config"
+```
+
+Returns JSON array of key metadata with status 200:
+
+```json
+[
+  {"Key": "app/config/db", "Size": 128, "Format": "json", "CreatedAt": "...", "UpdatedAt": "..."},
+  {"Key": "app/config/redis", "Size": 64, "Format": "yaml", "CreatedAt": "...", "UpdatedAt": "..."}
+]
+```
+
+When authentication is enabled, only keys the caller has read permission for are returned.
+
 ### Health check
 
 ```bash
