@@ -35,7 +35,7 @@
         <div class="form-group">
             <label for="key">Key</label>
             <input type="text" id="key" name="key" value="{{.Key}}"
-                   {{if not .IsNew}}readonly{{end}}
+                   {{if not .IsNew}}readonly{{else}}autofocus{{end}}
                    placeholder="e.g., app/config/database"
                    oninput="var e=document.getElementById('form-error');if(e)e.remove()"
                    required>
@@ -50,6 +50,7 @@
             <input type="hidden" name="is_binary" value="true">
             {{end}}
             <textarea id="value" name="value" placeholder="Enter value..."
+                      {{if not .IsNew}}autofocus{{end}}
                       oninput="var e=document.getElementById('form-error');if(e)e.remove();var s=document.getElementById('save-btn');if(s)s.style.display='';var f=document.getElementById('force-btn');if(f)f.style.display='none'"
                       required>{{.Value}}</textarea>
         </div>
