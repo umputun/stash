@@ -200,6 +200,58 @@ func TestStore_Checkout(t *testing.T) {
 		err = store.Checkout("invalid-rev")
 		require.Error(t, err)
 	})
+
+	t.Run("checkout by branch", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history"), Branch: "master"})
+		require.NoError(t, err)
+
+		// create commit on master
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("v1"), Operation: "set", Author: DefaultAuthor()}))
+
+		// create develop branch by reopening with different branch
+		store2, err := New(Config{Path: filepath.Join(tmpDir, ".history"), Branch: "develop"})
+		require.NoError(t, err)
+		require.NoError(t, store2.Commit(CommitRequest{Key: "key2", Value: []byte("v2"), Operation: "set", Author: DefaultAuthor()}))
+
+		// checkout back to master branch by name
+		err = store2.Checkout("master")
+		require.NoError(t, err)
+
+		// verify we're on master (only key1 should exist)
+		result, err := store2.ReadAll()
+		require.NoError(t, err)
+		assert.Len(t, result, 1)
+		assert.Contains(t, result, "key1")
+	})
+
+	t.Run("checkout by tag", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		// create a commit
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("v1"), Operation: "set", Author: DefaultAuthor()}))
+
+		// get commit hash and create tag
+		head, err := store.repo.Head()
+		require.NoError(t, err)
+		_, err = store.repo.CreateTag("v1.0.0", head.Hash(), nil)
+		require.NoError(t, err)
+
+		// create another commit
+		require.NoError(t, store.Commit(CommitRequest{Key: "key2", Value: []byte("v2"), Operation: "set", Author: DefaultAuthor()}))
+
+		// checkout tag
+		err = store.Checkout("v1.0.0")
+		require.NoError(t, err)
+
+		// verify we're at the tagged commit (only key1 exists)
+		result, err := store.ReadAll()
+		require.NoError(t, err)
+		assert.Len(t, result, 1)
+		assert.Contains(t, result, "key1")
+	})
 }
 
 func TestStore_Push(t *testing.T) {
@@ -540,4 +592,23 @@ func TestStore_Head(t *testing.T) {
 
 		assert.NotEqual(t, hash1, hash2, "hash should change after new commit")
 	})
+
+}
+
+func TestParseFormatFromCommit(t *testing.T) {
+	tests := []struct {
+		name, message, expected string
+	}{
+		{"with format", "set key\n\nkey: test\nformat: json", "json"},
+		{"text format", "set key\n\nkey: test\nformat: text", "text"},
+		{"yaml format", "set key\n\nformat: yaml\nkey: test", "yaml"},
+		{"no format in message", "set key\n\nkey: test", "text"},
+		{"empty message", "", "text"},
+		{"no metadata", "simple commit message", "text"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, parseFormatFromCommit(tc.message))
+		})
+	}
 }
