@@ -193,6 +193,46 @@ func TestSQLite_List(t *testing.T) {
 	})
 }
 
+func TestStore_GetInfo(t *testing.T) {
+	st := newTestStore(t)
+	defer st.Close()
+
+	// create a key
+	err := st.Set("testkey", []byte("testvalue"), "json")
+	require.NoError(t, err)
+
+	t.Run("returns key info for existing key", func(t *testing.T) {
+		info, err := st.GetInfo("testkey")
+		require.NoError(t, err)
+
+		assert.Equal(t, "testkey", info.Key)
+		assert.Equal(t, 9, info.Size) // len("testvalue")
+		assert.Equal(t, "json", info.Format)
+		assert.False(t, info.CreatedAt.IsZero())
+		assert.False(t, info.UpdatedAt.IsZero())
+	})
+
+	t.Run("returns ErrNotFound for nonexistent key", func(t *testing.T) {
+		_, err := st.GetInfo("nonexistent")
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("updated_at changes on update", func(t *testing.T) {
+		info1, err := st.GetInfo("testkey")
+		require.NoError(t, err)
+
+		time.Sleep(1100 * time.Millisecond) // ensure timestamp changes
+		err = st.Set("testkey", []byte("updated"), "text")
+		require.NoError(t, err)
+
+		info2, err := st.GetInfo("testkey")
+		require.NoError(t, err)
+
+		assert.True(t, info2.UpdatedAt.After(info1.UpdatedAt), "updated_at should be newer")
+		assert.Equal(t, info1.CreatedAt, info2.CreatedAt, "created_at should not change")
+	})
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")

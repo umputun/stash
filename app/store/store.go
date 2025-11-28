@@ -14,6 +14,7 @@ var ErrNotFound = errors.New("key not found")
 type Interface interface {
 	Get(key string) ([]byte, error)
 	GetWithFormat(key string) ([]byte, string, error)
+	GetInfo(key string) (KeyInfo, error)
 	Set(key string, value []byte, format string) error
 	Delete(key string) error
 	List() ([]KeyInfo, error)

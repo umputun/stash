@@ -253,6 +253,30 @@ func (s *Store) GetWithFormat(key string) ([]byte, string, error) {
 	return result.Value, result.Format, nil
 }
 
+// GetInfo retrieves metadata for the given key without loading the value.
+// Returns ErrNotFound if the key does not exist.
+func (s *Store) GetInfo(key string) (KeyInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var info KeyInfo
+	var query string
+	switch s.dbType {
+	case DBTypePostgres:
+		query = `SELECT key, octet_length(value) as size, format, created_at, updated_at FROM kv WHERE key = $1`
+	default:
+		query = `SELECT key, length(value) as size, format, created_at, updated_at FROM kv WHERE key = ?`
+	}
+	err := s.db.Get(&info, query, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KeyInfo{}, ErrNotFound
+	}
+	if err != nil {
+		return KeyInfo{}, fmt.Errorf("failed to get info for key %q: %w", key, err)
+	}
+	return info, nil
+}
+
 // Set stores the value for the given key with the specified format.
 // Creates a new key or updates an existing one.
 // If format is empty, defaults to "text".

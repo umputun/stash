@@ -413,6 +413,13 @@ func newTestServer(t *testing.T, st KVStore) *Server {
 	return srv
 }
 
+func newTestServerWithValidator(t *testing.T, st KVStore, val Validator) *Server {
+	t.Helper()
+	srv, err := New(st, val, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
+	require.NoError(t, err)
+	return srv
+}
+
 func TestServer_WebHandlers_GitIntegration(t *testing.T) {
 	t.Run("handleKeyCreate calls gitCommit", func(t *testing.T) {
 		st := &mocks.KVStoreMock{

@@ -540,7 +540,7 @@ docker-compose up -d
 
 ## Notes
 
-- **Concurrency**: Stash uses last-write-wins semantics with no conflict detection. Concurrent updates to the same key will silently overwrite.
+- **Concurrency**: The API uses last-write-wins semantics. The Web UI has conflict detection - if another user modifies a key while you're editing, you'll see a warning with options to reload or overwrite.
 
 ## License
 

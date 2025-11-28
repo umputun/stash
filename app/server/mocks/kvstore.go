@@ -21,6 +21,9 @@ import (
 //			GetFunc: func(key string) ([]byte, error) {
 //				panic("mock out the Get method")
 //			},
+//			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+//				panic("mock out the GetInfo method")
+//			},
 //			GetWithFormatFunc: func(key string) ([]byte, string, error) {
 //				panic("mock out the GetWithFormat method")
 //			},
@@ -43,6 +46,9 @@ type KVStoreMock struct {
 	// GetFunc mocks the Get method.
 	GetFunc func(key string) ([]byte, error)
 
+	// GetInfoFunc mocks the GetInfo method.
+	GetInfoFunc func(key string) (store.KeyInfo, error)
+
 	// GetWithFormatFunc mocks the GetWithFormat method.
 	GetWithFormatFunc func(key string) ([]byte, string, error)
 
@@ -61,6 +67,11 @@ type KVStoreMock struct {
 		}
 		// Get holds details about calls to the Get method.
 		Get []struct {
+			// Key is the key argument value.
+			Key string
+		}
+		// GetInfo holds details about calls to the GetInfo method.
+		GetInfo []struct {
 			// Key is the key argument value.
 			Key string
 		}
@@ -84,6 +95,7 @@ type KVStoreMock struct {
 	}
 	lockDelete        sync.RWMutex
 	lockGet           sync.RWMutex
+	lockGetInfo       sync.RWMutex
 	lockGetWithFormat sync.RWMutex
 	lockList          sync.RWMutex
 	lockSet           sync.RWMutex
@@ -150,6 +162,38 @@ func (mock *KVStoreMock) GetCalls() []struct {
 	mock.lockGet.RLock()
 	calls = mock.calls.Get
 	mock.lockGet.RUnlock()
+	return calls
+}
+
+// GetInfo calls GetInfoFunc.
+func (mock *KVStoreMock) GetInfo(key string) (store.KeyInfo, error) {
+	if mock.GetInfoFunc == nil {
+		panic("KVStoreMock.GetInfoFunc: method is nil but KVStore.GetInfo was just called")
+	}
+	callInfo := struct {
+		Key string
+	}{
+		Key: key,
+	}
+	mock.lockGetInfo.Lock()
+	mock.calls.GetInfo = append(mock.calls.GetInfo, callInfo)
+	mock.lockGetInfo.Unlock()
+	return mock.GetInfoFunc(key)
+}
+
+// GetInfoCalls gets all the calls that were made to GetInfo.
+// Check the length with:
+//
+//	len(mockedKVStore.GetInfoCalls())
+func (mock *KVStoreMock) GetInfoCalls() []struct {
+	Key string
+} {
+	var calls []struct {
+		Key string
+	}
+	mock.lockGetInfo.RLock()
+	calls = mock.calls.GetInfo
+	mock.lockGetInfo.RUnlock()
 	return calls
 }
 
