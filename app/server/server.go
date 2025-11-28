@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ type Server struct {
 	tmpl        *template.Template
 	auth        *Auth
 	highlighter *Highlighter
+	staticFS    fs.FS // embedded static files
 }
 
 // KVStore defines the interface for key-value storage operations.
@@ -92,6 +94,11 @@ func New(st KVStore, val Validator, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize auth: %w", err)
 	}
 
+	staticContent, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load static files: %w", err)
+	}
+
 	return &Server{
 		store:       st,
 		validator:   val,
@@ -101,6 +108,7 @@ func New(st KVStore, val Validator, cfg Config) (*Server, error) {
 		tmpl:        tmpl,
 		auth:        auth,
 		highlighter: NewHighlighter(),
+		staticFS:    staticContent,
 	}, nil
 }
 
@@ -176,7 +184,7 @@ func (s *Server) routes() http.Handler {
 	}
 
 	// public routes (no auth required)
-	router.Handle("GET /static/", staticHandler())
+	router.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
 	if s.auth.Enabled() {
 		router.HandleFunc("GET /login", s.handleLoginForm)
 		// stricter throttle on login to prevent brute-force
