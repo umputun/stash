@@ -5,10 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"io/fs"
 	"net/http"
-	"strings"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -16,25 +14,25 @@ import (
 	"github.com/go-pkgz/routegroup"
 
 	"github.com/umputun/stash/app/git"
+	"github.com/umputun/stash/app/server/api"
+	"github.com/umputun/stash/app/server/web"
 	"github.com/umputun/stash/app/store"
 )
 
 //go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
-//go:generate moq -out mocks/gitstore.go -pkg mocks -skip-ensure -fmt goimports . GitStore
 //go:generate moq -out mocks/validator.go -pkg mocks -skip-ensure -fmt goimports . Validator
 
 // Server represents the HTTP server.
 type Server struct {
-	store       KVStore
-	gitStore    GitStore  // optional git store for versioning
-	validator   Validator // format validator
-	cfg         Config
-	version     string
-	baseURL     string
-	tmpl        *template.Template
-	auth        *Auth
-	highlighter *Highlighter
-	staticFS    fs.FS // embedded static files
+	store      KVStore
+	validator  Validator // format validator
+	cfg        Config
+	version    string
+	baseURL    string
+	auth       *Auth
+	apiHandler *api.Handler
+	webHandler *web.Handler
+	staticFS   fs.FS // embedded static files
 }
 
 // KVStore defines the interface for key-value storage operations.
@@ -48,19 +46,19 @@ type KVStore interface {
 	List() ([]store.KeyInfo, error)
 }
 
-// GitStore defines the interface for git-based versioning operations.
-// Defined here (consumer side) to allow different git implementations.
-type GitStore interface {
+// GitService defines the interface for git operations.
+// Defined here (consumer side) to allow different implementations.
+type GitService interface {
 	Commit(req git.CommitRequest) error
 	Delete(key string, author git.Author) error
-	Pull() error
-	Push() error
 }
 
 // Validator defines the interface for format validation.
 // Defined here (consumer side) to allow different validator implementations.
 type Validator interface {
 	Validate(format string, value []byte) error
+	IsValidFormat(format string) bool
+	SupportedFormats() []string
 }
 
 // Config holds server configuration.
@@ -74,7 +72,6 @@ type Config struct {
 	AuthFile        string        // path to auth config file (empty = auth disabled)
 	LoginTTL        time.Duration // session duration
 	BaseURL         string        // base URL path for reverse proxy (e.g., /stash)
-	GitPush         bool          // auto-push git commits
 	PageSize        int           // keys per page in web UI (0 = unlimited)
 
 	// limits
@@ -84,38 +81,42 @@ type Config struct {
 }
 
 // New creates a new Server instance.
-func New(st KVStore, val Validator, cfg Config) (*Server, error) {
-	tmpl, err := parseTemplates()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse templates: %w", err)
-	}
-
+// gs is optional git service, pass nil to disable git versioning.
+func New(st KVStore, val Validator, gs GitService, cfg Config) (*Server, error) {
 	auth, err := NewAuth(cfg.AuthFile, cfg.LoginTTL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth: %w", err)
 	}
 
-	staticContent, err := fs.Sub(staticFS, "static")
+	staticContent, err := web.StaticFS()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load static files: %w", err)
 	}
 
-	return &Server{
-		store:       st,
-		validator:   val,
-		cfg:         cfg,
-		version:     cfg.Version,
-		baseURL:     cfg.BaseURL,
-		tmpl:        tmpl,
-		auth:        auth,
-		highlighter: NewHighlighter(),
-		staticFS:    staticContent,
-	}, nil
-}
+	s := &Server{
+		store:     st,
+		validator: val,
+		cfg:       cfg,
+		version:   cfg.Version,
+		baseURL:   cfg.BaseURL,
+		auth:      auth,
+		staticFS:  staticContent,
+	}
 
-// SetGitStore sets the git store for versioning.
-func (s *Server) SetGitStore(gs GitStore) {
-	s.gitStore = gs
+	// create web handler
+	webHandler, err := web.New(st, auth, val, gs, web.Config{
+		BaseURL:  cfg.BaseURL,
+		PageSize: cfg.PageSize,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create web handler: %w", err)
+	}
+	s.webHandler = webHandler
+
+	// create api handler
+	s.apiHandler = api.New(st, auth, val, gs)
+
+	return s, nil
 }
 
 // Run starts the HTTP server and blocks until context is canceled.
@@ -187,35 +188,21 @@ func (s *Server) routes() http.Handler {
 	// public routes (no auth required)
 	router.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
 	if s.auth.Enabled() {
-		router.HandleFunc("GET /login", s.handleLoginForm)
+		s.webHandler.RegisterAuth(router)
 		// stricter throttle on login to prevent brute-force
-		router.Handle("POST /login", rest.Throttle(s.loginConcurrency())(http.HandlerFunc(s.handleLogin)))
-		router.HandleFunc("POST /logout", s.handleLogout)
+		s.webHandler.RegisterLogin(router, rest.Throttle(s.loginConcurrency()))
 	}
 
 	// web UI routes (session auth)
-	router.Group().Route(func(web *routegroup.Bundle) {
-		web.Use(sessionAuth)
-		web.HandleFunc("GET /{$}", s.handleIndex)
-		web.HandleFunc("GET /web/keys", s.handleKeyList)
-		web.HandleFunc("GET /web/keys/new", s.handleKeyNew)
-		web.HandleFunc("GET /web/keys/view/{key...}", s.handleKeyView)
-		web.HandleFunc("GET /web/keys/edit/{key...}", s.handleKeyEdit)
-		web.HandleFunc("POST /web/keys", s.handleKeyCreate)
-		web.HandleFunc("PUT /web/keys/{key...}", s.handleKeyUpdate)
-		web.HandleFunc("DELETE /web/keys/{key...}", s.handleKeyDelete)
-		web.HandleFunc("POST /web/theme", s.handleThemeToggle)
-		web.HandleFunc("POST /web/view-mode", s.handleViewModeToggle)
-		web.HandleFunc("POST /web/sort", s.handleSortToggle)
+	router.Group().Route(func(webRouter *routegroup.Bundle) {
+		webRouter.Use(sessionAuth)
+		s.webHandler.Register(webRouter)
 	})
 
 	// kv API routes (token auth)
 	router.Mount("/kv").Route(func(kv *routegroup.Bundle) {
 		kv.Use(tokenAuth)
-		kv.HandleFunc("GET /{$}", s.handleList)     // list keys (must be before {key...})
-		kv.HandleFunc("GET /{key...}", s.handleGet) // get specific key
-		kv.HandleFunc("PUT /{key...}", s.handleSet) // set key
-		kv.HandleFunc("DELETE /{key...}", s.handleDelete)
+		s.apiHandler.Register(kv)
 	})
 
 	return router
@@ -245,20 +232,7 @@ func (s *Server) loginConcurrency() int64 {
 	return 5 // default
 }
 
-// pageSize returns the configured page size. Returns 0 if pagination is disabled (PageSize <= 0).
-func (s *Server) pageSize() int {
-	if s.cfg.PageSize <= 0 {
-		return 0 // disabled
-	}
-	return s.cfg.PageSize
-}
-
-// normalizeKey cleans up key input: trims whitespace, strips leading/trailing slashes,
-// replaces internal spaces with underscores.
-// package-level function because both Server handlers and Auth middleware need it.
-func normalizeKey(key string) string {
-	key = strings.TrimSpace(key)
-	key = strings.Trim(key, "/")
-	key = strings.ReplaceAll(key, " ", "_")
-	return key
+// url returns a URL path with the base URL prefix.
+func (s *Server) url(path string) string {
+	return s.baseURL + path
 }

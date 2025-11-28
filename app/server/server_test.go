@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/umputun/stash/app/git"
+	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/app/validator"
@@ -322,7 +322,7 @@ func TestServer_New_InvalidTokens(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
-	_, err := New(st, validator.NewService(), Config{
+	_, err := New(st, validator.NewService(), nil, Config{
 		Address:     ":8080",
 		ReadTimeout: 5 * time.Second,
 		AuthFile:    "/nonexistent/auth.yml", // file doesn't exist
@@ -344,7 +344,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	}
 
 	t.Run("without base URL routes work at root", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: ""})
+		srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: ""})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/testkey", http.NoBody)
@@ -356,7 +356,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("with base URL routes work under prefix", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
+		srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash/kv/testkey", http.NoBody)
@@ -368,7 +368,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("base URL redirects to trailing slash", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
+		srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash", http.NoBody)
@@ -380,7 +380,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("with base URL root path still accessible via prefix", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
+		srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash/ping", http.NoBody)
@@ -392,7 +392,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 	})
 
 	t.Run("with base URL set correctly passes to KV API", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/app/stash"})
+		srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/app/stash"})
 		require.NoError(t, err)
 
 		body := bytes.NewBufferString("newvalue")
@@ -408,213 +408,9 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 func newTestServer(t *testing.T, st KVStore) *Server {
 	t.Helper()
-	srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
+	srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
 	require.NoError(t, err)
 	return srv
-}
-
-func newTestServerWithValidator(t *testing.T, st KVStore, val Validator) *Server {
-	t.Helper()
-	srv, err := New(st, val, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
-	require.NoError(t, err)
-	return srv
-}
-
-func TestServer_WebHandlers_GitIntegration(t *testing.T) {
-	t.Run("handleKeyCreate calls gitCommit", func(t *testing.T) {
-		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-			SetFunc:           func(key string, value []byte, format string) error { return nil },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
-		}
-		gs := &mocks.GitStoreMock{
-			CommitFunc: func(req git.CommitRequest) error { return nil },
-		}
-		srv := newTestServer(t, st)
-		srv.SetGitStore(gs)
-
-		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
-		req.Form = map[string][]string{"key": {"testkey"}, "value": {"testvalue"}}
-		rec := httptest.NewRecorder()
-		srv.routes().ServeHTTP(rec, req)
-
-		require.Len(t, gs.CommitCalls(), 1, "gitCommit should be called")
-		assert.Equal(t, "testkey", gs.CommitCalls()[0].Req.Key)
-		assert.Equal(t, []byte("testvalue"), gs.CommitCalls()[0].Req.Value)
-	})
-
-	t.Run("handleKeyUpdate calls gitCommit", func(t *testing.T) {
-		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte, format string) error { return nil },
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
-		}
-		gs := &mocks.GitStoreMock{
-			CommitFunc: func(req git.CommitRequest) error { return nil },
-		}
-		srv := newTestServer(t, st)
-		srv.SetGitStore(gs)
-
-		req := httptest.NewRequest(http.MethodPut, "/web/keys/app/config", http.NoBody)
-		req.Form = map[string][]string{"value": {"newvalue"}}
-		rec := httptest.NewRecorder()
-		srv.routes().ServeHTTP(rec, req)
-
-		require.Len(t, gs.CommitCalls(), 1, "gitCommit should be called")
-		assert.Equal(t, "app/config", gs.CommitCalls()[0].Req.Key)
-		assert.Equal(t, []byte("newvalue"), gs.CommitCalls()[0].Req.Value)
-	})
-
-	t.Run("handleKeyDelete calls gitDelete", func(t *testing.T) {
-		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return nil },
-			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
-		}
-		gs := &mocks.GitStoreMock{
-			CommitFunc: func(req git.CommitRequest) error { return nil },
-			DeleteFunc: func(key string, author git.Author) error { return nil },
-		}
-		srv := newTestServer(t, st)
-		srv.SetGitStore(gs)
-
-		req := httptest.NewRequest(http.MethodDelete, "/web/keys/app/config", http.NoBody)
-		rec := httptest.NewRecorder()
-		srv.routes().ServeHTTP(rec, req)
-
-		require.Len(t, gs.DeleteCalls(), 1, "gitDelete should be called")
-		assert.Equal(t, "app/config", gs.DeleteCalls()[0].Key)
-	})
-}
-
-func TestServer_GetAuthorFromRequest(t *testing.T) {
-	t.Run("returns default author when auth is nil", func(t *testing.T) {
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv := newTestServer(t, st) // no auth configured
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, git.DefaultAuthor(), author)
-	})
-
-	t.Run("returns default author when no session cookie", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
-		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
-
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
-		require.NoError(t, err)
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, git.DefaultAuthor(), author)
-	})
-
-	t.Run("returns user author when valid session exists", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
-		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
-
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
-		require.NoError(t, err)
-
-		// create session
-		sessionToken, err := srv.auth.CreateSession("testuser")
-		require.NoError(t, err)
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, "testuser", author.Name)
-		assert.Equal(t, "testuser@stash", author.Email)
-	})
-
-	t.Run("returns default author for invalid session", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
-		require.NoError(t, os.WriteFile(authFile, []byte("users:\n  - name: testuser\n    password: pass\n"), 0o600))
-
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
-		require.NoError(t, err)
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "invalid-token"})
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, git.DefaultAuthor(), author)
-	})
-
-	t.Run("returns token author when valid API token", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
-		authConfig := `tokens:
-  - token: "mytoken123"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
-		require.NoError(t, err)
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header.Set("Authorization", "Bearer mytoken123")
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, "token:mytoken1", author.Name)
-		assert.Equal(t, "token:mytoken1@stash", author.Email)
-	})
-
-	t.Run("returns token author with truncated prefix for long token", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
-		authConfig := `tokens:
-  - token: "verylongtokenvalue1234567890"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
-		require.NoError(t, err)
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header.Set("Authorization", "Bearer verylongtokenvalue1234567890")
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, "token:verylong", author.Name)
-		assert.Equal(t, "token:verylong@stash", author.Email)
-	})
-
-	t.Run("returns default author for invalid API token", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
-		authConfig := `tokens:
-  - token: "validtoken"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-		st := &mocks.KVStoreMock{ListFunc: func() ([]store.KeyInfo, error) { return nil, nil }}
-		srv, err := New(st, validator.NewService(), Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile})
-		require.NoError(t, err)
-
-		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header.Set("Authorization", "Bearer invalidtoken")
-		author := srv.getAuthorFromRequest(req)
-
-		assert.Equal(t, git.DefaultAuthor(), author)
-	})
 }
 
 func TestNormalizeKey(t *testing.T) {
@@ -635,7 +431,7 @@ func TestNormalizeKey(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			assert.Equal(t, tc.expected, normalizeKey(tc.input))
+			assert.Equal(t, tc.expected, internal.NormalizeKey(tc.input))
 		})
 	}
 }
@@ -730,7 +526,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), Config{
+		srv, err := New(st, validator.NewService(), nil, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
 		})
 		require.NoError(t, err)
@@ -760,7 +556,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), Config{
+		srv, err := New(st, validator.NewService(), nil, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
 		})
 		require.NoError(t, err)
@@ -789,7 +585,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), Config{
+		srv, err := New(st, validator.NewService(), nil, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
 		})
 		require.NoError(t, err)
@@ -823,7 +619,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), Config{
+		srv, err := New(st, validator.NewService(), nil, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
 		})
 		require.NoError(t, err)
@@ -858,7 +654,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func() ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), Config{
+		srv, err := New(st, validator.NewService(), nil, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
 		})
 		require.NoError(t, err)

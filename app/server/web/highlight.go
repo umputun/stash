@@ -1,19 +1,15 @@
-package server
+package web
 
 import (
 	"bytes"
 	"html"
 	"html/template"
-	"slices"
 
 	"github.com/alecthomas/chroma/v2"
 	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 )
-
-// supportedFormats lists all formats that can be syntax highlighted.
-var supportedFormats = []string{"text", "json", "yaml", "xml", "toml", "ini", "hcl", "shell"}
 
 // formatToLexer maps format names to Chroma lexer names.
 var formatToLexer = map[string]string{
@@ -76,14 +72,4 @@ func (h *Highlighter) Code(code, format string) template.HTML {
 	}
 
 	return template.HTML(buf.String()) //nolint:gosec // chroma output is safe
-}
-
-// IsValidFormat checks if format is in the list of supported formats.
-func (h *Highlighter) IsValidFormat(format string) bool {
-	return slices.Contains(supportedFormats, format)
-}
-
-// SupportedFormats returns a copy of supported formats list.
-func (h *Highlighter) SupportedFormats() []string {
-	return slices.Clone(supportedFormats)
 }

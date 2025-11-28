@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
+
+	"github.com/umputun/stash/app/server/internal"
 )
 
 // Permission represents read/write access level.
@@ -25,10 +27,6 @@ const (
 	PermissionWrite                       // write-only access
 	PermissionReadWrite                   // full read-write access
 )
-
-// sessionCookieNames defines the cookie names to check for session auth.
-// __Host- prefix is used for enhanced security over HTTPS.
-var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 // String returns a string representation of the permission.
 func (p Permission) String() string {
@@ -319,6 +317,12 @@ func (a *Auth) ValidateUser(username, password string) *User {
 	return &user
 }
 
+// IsValidUser checks if username/password are valid credentials.
+// This is the interface-friendly version of ValidateUser.
+func (a *Auth) IsValidUser(username, password string) bool {
+	return a.ValidateUser(username, password) != nil
+}
+
 // GetTokenACL returns the ACL for a token and whether it exists.
 func (a *Auth) GetTokenACL(token string) (TokenACL, bool) {
 	if a == nil {
@@ -326,6 +330,12 @@ func (a *Auth) GetTokenACL(token string) (TokenACL, bool) {
 	}
 	acl, ok := a.tokens[token]
 	return acl, ok
+}
+
+// HasTokenACL checks if a token exists in the ACL.
+func (a *Auth) HasTokenACL(token string) bool {
+	_, ok := a.GetTokenACL(token)
+	return ok
 }
 
 // CheckPermission checks if a token has the required permission for a key.
@@ -548,7 +558,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
-			for _, cookieName := range sessionCookieNames {
+			for _, cookieName := range internal.SessionCookieNames {
 				if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(cookie.Value) {
 					next.ServeHTTP(w, r)
 					return
@@ -566,7 +576,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 // For list operations (empty key), only validates token existence, filtering happens in handler.
 func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := normalizeKey(strings.TrimPrefix(r.URL.Path, "/kv/"))
+		key := internal.NormalizeKey(strings.TrimPrefix(r.URL.Path, "/kv/"))
 		needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
 		isList := key == "" && r.Method == http.MethodGet // list operation has no key
 
@@ -580,7 +590,7 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 		}
 
 		// also accept session cookie for API (allows UI to call API)
-		for _, cookieName := range sessionCookieNames {
+		for _, cookieName := range internal.SessionCookieNames {
 			cookie, err := r.Cookie(cookieName)
 			if err != nil {
 				continue

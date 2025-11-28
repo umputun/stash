@@ -1,4 +1,4 @@
-package server
+package web
 
 import (
 	"testing"
@@ -91,53 +91,4 @@ func TestHighlighter_Code(t *testing.T) {
 		assert.Contains(t, string(result), "chroma")
 		assert.Contains(t, string(result), "items")
 	})
-}
-
-func TestHighlighter_IsValidFormat(t *testing.T) {
-	h := NewHighlighter()
-
-	tests := []struct {
-		format string
-		valid  bool
-	}{
-		{"text", true},
-		{"json", true},
-		{"yaml", true},
-		{"xml", true},
-		{"toml", true},
-		{"ini", true},
-		{"shell", true},
-		{"", false},
-		{"javascript", false},
-		{"python", false},
-		{"TEXT", false}, // case sensitive
-		{"Json", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.format, func(t *testing.T) {
-			result := h.IsValidFormat(tt.format)
-			assert.Equal(t, tt.valid, result)
-		})
-	}
-}
-
-func TestHighlighter_SupportedFormats(t *testing.T) {
-	h := NewHighlighter()
-	formats := h.SupportedFormats()
-
-	assert.Len(t, formats, 8)
-	assert.Contains(t, formats, "text")
-	assert.Contains(t, formats, "json")
-	assert.Contains(t, formats, "yaml")
-	assert.Contains(t, formats, "xml")
-	assert.Contains(t, formats, "toml")
-	assert.Contains(t, formats, "ini")
-	assert.Contains(t, formats, "hcl")
-	assert.Contains(t, formats, "shell")
-
-	// verify it's a copy, not the original slice
-	formats[0] = "modified"
-	originalFormats := h.SupportedFormats()
-	assert.Equal(t, "text", originalFormats[0])
 }
