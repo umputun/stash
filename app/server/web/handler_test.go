@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/server/web/mocks"
 	"github.com/umputun/stash/app/store"
 )
@@ -30,31 +29,6 @@ func TestSortModeLabel(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.mode, func(t *testing.T) {
 			result := sortModeLabel(tc.mode)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestNormalizeKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{name: "simple key", input: "foo", expected: "foo"},
-		{name: "key with leading slash", input: "/foo", expected: "foo"},
-		{name: "key with trailing slash", input: "foo/", expected: "foo"},
-		{name: "key with both slashes", input: "/foo/bar/", expected: "foo/bar"},
-		{name: "key with spaces", input: "foo bar", expected: "foo_bar"},
-		{name: "key with whitespace", input: "  foo  ", expected: "foo"},
-		{name: "key with spaces and slashes", input: " /foo bar/ ", expected: "foo_bar"},
-		{name: "empty key", input: "", expected: ""},
-		{name: "only slashes", input: "///", expected: ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := internal.NormalizeKey(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
@@ -541,6 +515,28 @@ func newTestHandlerWithBaseURL(t *testing.T, baseURL string) *Handler {
 	h, err := New(st, auth, defaultValidatorMock(), nil, Config{BaseURL: baseURL})
 	require.NoError(t, err)
 	return h
+}
+
+func TestHandler_GetAuthor(t *testing.T) {
+	h := newTestHandler(t)
+
+	t.Run("empty username returns default author", func(t *testing.T) {
+		author := h.getAuthor("")
+		assert.Equal(t, "stash", author.Name)
+		assert.Equal(t, "stash@localhost", author.Email)
+	})
+
+	t.Run("username creates author", func(t *testing.T) {
+		author := h.getAuthor("testuser")
+		assert.Equal(t, "testuser", author.Name)
+		assert.Equal(t, "testuser@stash", author.Email)
+	})
+
+	t.Run("admin username creates admin author", func(t *testing.T) {
+		author := h.getAuthor("admin")
+		assert.Equal(t, "admin", author.Name)
+		assert.Equal(t, "admin@stash", author.Email)
+	})
 }
 
 // newTestHandlerWithAuth creates a test handler with a custom auth provider.

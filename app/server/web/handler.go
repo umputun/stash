@@ -23,9 +23,13 @@ import (
 	"github.com/go-pkgz/routegroup"
 
 	"github.com/umputun/stash/app/git"
-	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/store"
 )
+
+// sessionCookieNames defines cookie names for session authentication.
+// __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
+// fallback cookie name works on HTTP for development.
+var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 //go:embed static
 var staticFS embed.FS
@@ -319,7 +323,7 @@ func (h *Handler) cookiePath() string {
 
 // getCurrentUser returns the username from the session cookie, or empty string if not logged in.
 func (h *Handler) getCurrentUser(r *http.Request) string {
-	for _, cookieName := range internal.SessionCookieNames {
+	for _, cookieName := range sessionCookieNames {
 		if cookie, err := r.Cookie(cookieName); err == nil {
 			if username, ok := h.auth.GetSessionUser(cookie.Value); ok {
 				return username

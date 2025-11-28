@@ -3,6 +3,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -54,3 +55,12 @@ func (noopLocker) RLock()   {}
 func (noopLocker) RUnlock() {}
 func (noopLocker) Lock()    {}
 func (noopLocker) Unlock()  {}
+
+// NormalizeKey normalizes a key by trimming spaces, leading/trailing slashes,
+// and replacing spaces with underscores.
+func NormalizeKey(key string) string {
+	key = strings.TrimSpace(key)
+	key = strings.Trim(key, "/")
+	key = strings.ReplaceAll(key, " ", "_")
+	return key
+}

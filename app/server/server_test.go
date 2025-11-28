@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/app/validator"
@@ -411,29 +410,6 @@ func newTestServer(t *testing.T, st KVStore) *Server {
 	srv, err := New(st, validator.NewService(), nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
 	require.NoError(t, err)
 	return srv
-}
-
-func TestNormalizeKey(t *testing.T) {
-	tests := []struct {
-		input, expected string
-	}{
-		{"foo", "foo"},
-		{"  foo  ", "foo"},
-		{"/foo", "foo"},
-		{"foo/", "foo"},
-		{"/foo/", "foo"},
-		{"foo/bar", "foo/bar"},
-		{"foo bar", "foo_bar"},
-		{"  /foo bar/  ", "foo_bar"},
-		{"foo/bar baz/qux", "foo/bar_baz/qux"},
-		{"//foo//bar//", "foo//bar"},
-		{"", ""},
-	}
-	for _, tc := range tests {
-		t.Run(tc.input, func(t *testing.T) {
-			assert.Equal(t, tc.expected, internal.NormalizeKey(tc.input))
-		})
-	}
 }
 
 func TestServer_HandleList(t *testing.T) {

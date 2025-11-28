@@ -12,7 +12,6 @@ import (
 
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/api/mocks"
-	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -342,29 +341,6 @@ func TestHandler_FormatToContentType(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.format, func(t *testing.T) {
 			result := h.formatToContentType(tc.format)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-func TestHandler_NormalizeKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{name: "simple key", input: "foo", expected: "foo"},
-		{name: "key with leading slash", input: "/foo", expected: "foo"},
-		{name: "key with trailing slash", input: "foo/", expected: "foo"},
-		{name: "key with both slashes", input: "/foo/bar/", expected: "foo/bar"},
-		{name: "key with spaces", input: "foo bar", expected: "foo_bar"},
-		{name: "key with whitespace", input: "  foo  ", expected: "foo"},
-		{name: "empty key", input: "", expected: ""},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := internal.NormalizeKey(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

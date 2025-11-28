@@ -247,33 +247,140 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 		assert.Contains(t, body, "already exists")
 		assert.Empty(t, st.SetCalls(), "Set should not be called for duplicate key")
 	})
+
+	t.Run("permission denied", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"restricted/key"}, "value": {"val"}}
+		rec := httptest.NewRecorder()
+		h.handleKeyCreate(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "Access denied")
+	})
+
+	t.Run("store check error", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", errors.New("db connection failed") },
+			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"key": {"newkey"}, "value": {"val"}}
+		rec := httptest.NewRecorder()
+		h.handleKeyCreate(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
 }
 
 func TestHandler_HandleKeyUpdate(t *testing.T) {
-	st := &mocks.KVStoreMock{
-		SetFunc:  func(key string, value []byte, format string) error { return nil },
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
-	}
-	auth := &mocks.AuthProviderMock{
-		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
-		FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
-		UserCanWriteFunc:        func(username string) bool { return true },
-	}
-	h := newTestHandlerWithAll(t, st, defaultValidatorMock(), auth)
+	t.Run("success", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte, format string) error { return nil },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+			FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
+			UserCanWriteFunc:        func(username string) bool { return true },
+		}
+		h := newTestHandlerWithAll(t, st, defaultValidatorMock(), auth)
 
-	req := httptest.NewRequest(http.MethodPut, "/web/keys/updatekey", http.NoBody)
-	req.SetPathValue("key", "updatekey")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.PostForm = map[string][]string{
-		"value": {"updated"},
-	}
-	rec := httptest.NewRecorder()
-	h.handleKeyUpdate(rec, req)
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/updatekey", http.NoBody)
+		req.SetPathValue("key", "updatekey")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"updated"}}
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
-	require.Len(t, st.SetCalls(), 1)
-	assert.Equal(t, "updatekey", st.SetCalls()[0].Key)
-	assert.Equal(t, "updated", string(st.SetCalls()[0].Value))
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1)
+		assert.Equal(t, "updatekey", st.SetCalls()[0].Key)
+		assert.Equal(t, "updated", string(st.SetCalls()[0].Value))
+	})
+
+	t.Run("permission denied", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/restricted", http.NoBody)
+		req.SetPathValue("key", "restricted")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"val"}}
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
+
+		// handler re-renders form with error message (HTMX pattern)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Access denied")
+	})
+
+	t.Run("store error", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc:  func(key string, value []byte, format string) error { return errors.New("db error") },
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {"val"}}
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("validation error", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		val := &mocks.ValidatorMock{
+			IsValidFormatFunc:    func(format string) bool { return true },
+			ValidateFunc:         func(format string, value []byte) error { return errors.New("invalid json") },
+			SupportedFormatsFunc: func() []string { return []string{"text", "json", "yaml"} },
+		}
+		h := newTestHandlerWithAll(t, st, val, auth)
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{"value": {`{invalid`}, "format": {"json"}}
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
+
+		// handler re-renders form with validation error (HTMX pattern)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "invalid json")
+	})
 }
 
 func TestHandler_HandleKeyDelete(t *testing.T) {
@@ -505,6 +612,48 @@ func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		require.Len(t, st.SetCalls(), 1, "expected Set to be called when force_overwrite=true")
+	})
+}
+
+func TestHandler_RenderValidationError(t *testing.T) {
+	h := newTestHandler(t)
+
+	t.Run("renders form with error message", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		params := validationErrorParams{
+			Key:       "test/key",
+			Value:     `{"invalid": json`,
+			Format:    "json",
+			IsBinary:  false,
+			Username:  "testuser",
+			Error:     "invalid json: unexpected end of JSON input",
+			UpdatedAt: 1234567890,
+		}
+		h.renderValidationError(rec, params)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "#modal-content", rec.Header().Get("HX-Retarget"))
+		assert.Equal(t, "innerHTML", rec.Header().Get("HX-Reswap"))
+		body := rec.Body.String()
+		assert.Contains(t, body, "test/key")
+		assert.Contains(t, body, "invalid json")
+		assert.Contains(t, body, "1234567890")
+	})
+
+	t.Run("sets CanForce to true", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		params := validationErrorParams{
+			Key:    "key",
+			Value:  "value",
+			Format: "yaml",
+			Error:  "validation error",
+		}
+		h.renderValidationError(rec, params)
+
+		body := rec.Body.String()
+		// form should contain force submit button since CanForce is true
+		assert.Contains(t, body, "Submit Anyway")
+		assert.Contains(t, body, `name="force"`)
 	})
 }
 

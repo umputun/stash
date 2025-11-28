@@ -12,7 +12,6 @@ import (
 	log "github.com/go-pkgz/lgr"
 
 	"github.com/umputun/stash/app/git"
-	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -247,7 +246,7 @@ func (h *Handler) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyView renders the key view modal.
 func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 
 	// check read permission
 	username := h.getCurrentUser(r)
@@ -297,7 +296,7 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyEdit renders the key edit form.
 func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 
 	// check write permission
 	username := h.getCurrentUser(r)
@@ -352,7 +351,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key := internal.NormalizeKey(r.FormValue("key"))
+	key := store.NormalizeKey(r.FormValue("key"))
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
@@ -467,7 +466,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyUpdate updates an existing key.
 func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
@@ -583,7 +582,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 
 // handleKeyDelete deletes a key.
 func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 
 	// check write permission
 	username := h.getCurrentUser(r)

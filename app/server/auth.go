@@ -14,8 +14,13 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 
-	"github.com/umputun/stash/app/server/internal"
+	"github.com/umputun/stash/app/store"
 )
+
+// sessionCookieNames defines cookie names for session authentication.
+// __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
+// fallback cookie name works on HTTP for development.
+var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 // Permission represents read/write access level.
 type Permission int
@@ -558,7 +563,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
-			for _, cookieName := range internal.SessionCookieNames {
+			for _, cookieName := range sessionCookieNames {
 				if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(cookie.Value) {
 					next.ServeHTTP(w, r)
 					return
@@ -576,7 +581,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 // For list operations (empty key), only validates token existence, filtering happens in handler.
 func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := internal.NormalizeKey(strings.TrimPrefix(r.URL.Path, "/kv/"))
+		key := store.NormalizeKey(strings.TrimPrefix(r.URL.Path, "/kv/"))
 		needWrite := r.Method == http.MethodPut || r.Method == http.MethodDelete
 		isList := key == "" && r.Method == http.MethodGet // list operation has no key
 
@@ -590,7 +595,7 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 		}
 
 		// also accept session cookie for API (allows UI to call API)
-		for _, cookieName := range internal.SessionCookieNames {
+		for _, cookieName := range sessionCookieNames {
 			cookie, err := r.Cookie(cookieName)
 			if err != nil {
 				continue

@@ -4,8 +4,6 @@ import (
 	"net/http"
 
 	log "github.com/go-pkgz/lgr"
-
-	"github.com/umputun/stash/app/server/internal"
 )
 
 // handleLoginForm renders the login page.
@@ -71,7 +69,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 // handleLogout logs the user out by clearing the session.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// invalidate session
-	for _, cookieName := range internal.SessionCookieNames {
+	for _, cookieName := range sessionCookieNames {
 		if cookie, err := r.Cookie(cookieName); err == nil {
 			h.auth.InvalidateSession(cookie.Value)
 		}

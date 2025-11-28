@@ -12,9 +12,13 @@ import (
 	"github.com/go-pkgz/routegroup"
 
 	"github.com/umputun/stash/app/git"
-	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/store"
 )
+
+// sessionCookieNames defines cookie names for session authentication.
+// __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
+// fallback cookie name works on HTTP for development.
+var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 // GitService defines the interface for git operations.
 type GitService interface {
@@ -139,7 +143,7 @@ func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
 	}
 
 	// check session cookie first (authenticated user has priority over public)
-	for _, cookieName := range internal.SessionCookieNames {
+	for _, cookieName := range sessionCookieNames {
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
 			continue
@@ -170,7 +174,7 @@ func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
 // handleGet retrieves the value for a key.
 // GET /kv/{key...}
 func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
@@ -219,7 +223,7 @@ func (h *Handler) formatToContentType(format string) string {
 // PUT /kv/{key...}
 // Accepts format via X-Stash-Format header or ?format= query param (defaults to "text").
 func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
@@ -261,7 +265,7 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 // handleDelete removes a key from the store.
 // DELETE /kv/{key...}
 func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
-	key := internal.NormalizeKey(r.PathValue("key"))
+	key := store.NormalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
@@ -312,7 +316,7 @@ func (h *Handler) getIdentity(r *http.Request) identity {
 	}
 
 	// check session cookie for web UI users
-	for _, cookieName := range internal.SessionCookieNames {
+	for _, cookieName := range sessionCookieNames {
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
 			continue
