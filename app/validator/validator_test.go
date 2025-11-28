@@ -38,8 +38,14 @@ func TestService_Validate(t *testing.T) {
 		{name: "valid xml simple", format: "xml", value: []byte(`<root>content</root>`), wantErr: false},
 		{name: "valid xml nested", format: "xml", value: []byte(`<root><child>value</child></root>`), wantErr: false},
 		{name: "valid xml with attributes", format: "xml", value: []byte(`<root attr="val">content</root>`), wantErr: false},
+		{name: "valid xml self-closing", format: "xml", value: []byte(`<empty/>`), wantErr: false},
+		{name: "valid xml with declaration", format: "xml", value: []byte(`<?xml version="1.0"?><root/>`), wantErr: false},
 		{name: "invalid xml unclosed tag", format: "xml", value: []byte(`<root>content`), wantErr: true},
 		{name: "invalid xml mismatched tags", format: "xml", value: []byte(`<root>content</other>`), wantErr: true},
+		{name: "invalid xml plain text", format: "xml", value: []byte(`just plain text`), wantErr: true},
+		{name: "invalid xml no root element", format: "xml", value: []byte(`https://example.com { >sdccs >>>`), wantErr: true},
+		{name: "invalid xml empty", format: "xml", value: []byte(``), wantErr: true},
+		{name: "invalid xml whitespace only", format: "xml", value: []byte(`   `), wantErr: true},
 
 		// toml tests
 		{name: "valid toml simple", format: "toml", value: []byte(`key = "value"`), wantErr: false},
@@ -110,6 +116,50 @@ func TestService_Validate_ErrorMessages(t *testing.T) {
 			err := svc.Validate(tt.format, tt.value)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestService_SupportedFormats(t *testing.T) {
+	svc := NewService()
+	formats := svc.SupportedFormats()
+
+	assert.NotEmpty(t, formats)
+	assert.Contains(t, formats, "text")
+	assert.Contains(t, formats, "json")
+	assert.Contains(t, formats, "yaml")
+	assert.Contains(t, formats, "xml")
+	assert.Contains(t, formats, "toml")
+	assert.Contains(t, formats, "ini")
+	assert.Contains(t, formats, "hcl")
+	assert.Contains(t, formats, "shell")
+}
+
+func TestService_IsValidFormat(t *testing.T) {
+	svc := NewService()
+
+	tests := []struct {
+		format string
+		valid  bool
+	}{
+		{format: "text", valid: true},
+		{format: "json", valid: true},
+		{format: "yaml", valid: true},
+		{format: "xml", valid: true},
+		{format: "toml", valid: true},
+		{format: "ini", valid: true},
+		{format: "hcl", valid: true},
+		{format: "shell", valid: true},
+		{format: "unknown", valid: false},
+		{format: "", valid: false},
+		{format: "javascript", valid: false},
+		{format: "TEXT", valid: false}, // case-sensitive
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.format, func(t *testing.T) {
+			result := svc.IsValidFormat(tc.format)
+			assert.Equal(t, tc.valid, result, "format %q", tc.format)
 		})
 	}
 }
