@@ -1,4 +1,5 @@
-package server
+// Package api provides HTTP handlers for the KV API.
+package api
 
 import (
 	"errors"
@@ -8,16 +9,79 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/rest"
+	"github.com/go-pkgz/routegroup"
 
 	"github.com/umputun/stash/app/git"
+	"github.com/umputun/stash/app/server/internal"
 	"github.com/umputun/stash/app/store"
 )
+
+// GitService defines the interface for git operations.
+type GitService interface {
+	Commit(req git.CommitRequest) error
+	Delete(key string, author git.Author) error
+}
+
+//go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
+//go:generate moq -out mocks/authprovider.go -pkg mocks -skip-ensure -fmt goimports . AuthProvider
+//go:generate moq -out mocks/formatvalidator.go -pkg mocks -skip-ensure -fmt goimports . FormatValidator
+//go:generate moq -out mocks/gitservice.go -pkg mocks -skip-ensure -fmt goimports . GitService
+
+// KVStore defines the interface for key-value storage operations.
+type KVStore interface {
+	Get(key string) ([]byte, error)
+	GetWithFormat(key string) ([]byte, string, error)
+	Set(key string, value []byte, format string) error
+	Delete(key string) error
+	List() ([]store.KeyInfo, error)
+}
+
+// AuthProvider defines the interface for authentication operations.
+type AuthProvider interface {
+	Enabled() bool
+	GetSessionUser(token string) (string, bool)
+	FilterUserKeys(username string, keys []string) []string
+	FilterTokenKeys(token string, keys []string) []string
+	FilterPublicKeys(keys []string) []string
+	HasTokenACL(token string) bool
+}
+
+// FormatValidator defines the interface for format validation.
+type FormatValidator interface {
+	IsValidFormat(format string) bool
+}
+
+// Handler handles API requests for /kv/* endpoints.
+type Handler struct {
+	store           KVStore
+	auth            AuthProvider
+	formatValidator FormatValidator
+	git             GitService
+}
+
+// New creates a new API handler.
+func New(st KVStore, auth AuthProvider, fv FormatValidator, gs GitService) *Handler {
+	return &Handler{
+		store:           st,
+		auth:            auth,
+		formatValidator: fv,
+		git:             gs,
+	}
+}
+
+// Register registers API routes on the given router.
+func (h *Handler) Register(r *routegroup.Bundle) {
+	r.HandleFunc("GET /{$}", h.handleList)     // list keys (must be before {key...})
+	r.HandleFunc("GET /{key...}", h.handleGet) // get specific key
+	r.HandleFunc("PUT /{key...}", h.handleSet) // set key
+	r.HandleFunc("DELETE /{key...}", h.handleDelete)
+}
 
 // handleList returns all keys the caller has read access to.
 // GET /kv
 // Optional query params: ?prefix=app/config (filter by prefix)
-func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.store.List()
+func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
+	keys, err := h.store.List()
 	if err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to list keys")
 		return
@@ -30,7 +94,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// filter by auth permissions
-	filteredNames := s.filterKeysByAuth(r, keyNames)
+	filteredNames := h.filterKeysByAuth(r, keyNames)
 	if filteredNames == nil {
 		// no valid auth, but this shouldn't happen since tokenAuth middleware already checked
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusUnauthorized, nil, "unauthorized")
@@ -68,21 +132,21 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 // filterKeysByAuth filters keys based on the caller's auth credentials.
 // returns nil if auth is required but caller has no valid credentials.
 // priority: session cookie > Bearer token > public ACL
-func (s *Server) filterKeysByAuth(r *http.Request, keys []string) []string {
+func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
 	// no auth = return all keys
-	if s.auth == nil || !s.auth.Enabled() {
+	if h.auth == nil || !h.auth.Enabled() {
 		return keys
 	}
 
 	// check session cookie first (authenticated user has priority over public)
-	for _, cookieName := range sessionCookieNames {
+	for _, cookieName := range internal.SessionCookieNames {
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
 			continue
 		}
-		username, valid := s.auth.GetSessionUser(cookie.Value)
+		username, valid := h.auth.GetSessionUser(cookie.Value)
 		if valid {
-			return s.auth.FilterUserKeys(username, keys)
+			return h.auth.FilterUserKeys(username, keys)
 		}
 	}
 
@@ -90,13 +154,13 @@ func (s *Server) filterKeysByAuth(r *http.Request, keys []string) []string {
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if filtered := s.auth.FilterTokenKeys(token, keys); filtered != nil {
+		if filtered := h.auth.FilterTokenKeys(token, keys); filtered != nil {
 			return filtered
 		}
 	}
 
 	// fall back to public access for unauthenticated requests
-	if filtered := s.auth.FilterPublicKeys(keys); filtered != nil {
+	if filtered := h.auth.FilterPublicKeys(keys); filtered != nil {
 		return filtered
 	}
 
@@ -105,14 +169,14 @@ func (s *Server) filterKeysByAuth(r *http.Request, keys []string) []string {
 
 // handleGet retrieves the value for a key.
 // GET /kv/{key...}
-func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
-	key := normalizeKey(r.PathValue("key"))
+func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
+	key := internal.NormalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
 	}
 
-	value, format, err := s.store.GetWithFormat(key)
+	value, format, err := h.store.GetWithFormat(key)
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -124,7 +188,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[DEBUG] get %s (%d bytes, format=%s)", key, len(value), format)
 
-	w.Header().Set("Content-Type", s.formatToContentType(format))
+	w.Header().Set("Content-Type", h.formatToContentType(format))
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(value); err != nil {
 		log.Printf("[WARN] failed to write response: %v", err)
@@ -132,7 +196,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // formatToContentType maps storage format to HTTP Content-Type.
-func (s *Server) formatToContentType(format string) string {
+func (h *Handler) formatToContentType(format string) string {
 	switch format {
 	case "json":
 		return "application/json"
@@ -154,8 +218,8 @@ func (s *Server) formatToContentType(format string) string {
 // handleSet stores a value for a key.
 // PUT /kv/{key...}
 // Accepts format via X-Stash-Format header or ?format= query param (defaults to "text").
-func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
-	key := normalizeKey(r.PathValue("key"))
+func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
+	key := internal.NormalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
@@ -172,33 +236,38 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = r.URL.Query().Get("format")
 	}
-	if !s.highlighter.IsValidFormat(format) {
+	if !h.formatValidator.IsValidFormat(format) {
 		format = "text"
 	}
 
-	if err := s.store.Set(key, value, format); err != nil {
+	if err := h.store.Set(key, value, format); err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to set key")
 		return
 	}
 
-	log.Printf("[INFO] set %q (%d bytes, format=%s) by %s", key, len(value), format, s.getIdentityForLog(r))
+	log.Printf("[INFO] set %q (%d bytes, format=%s) by %s", key, len(value), format, h.getIdentityForLog(r))
 
 	// commit to git if enabled
-	s.gitCommit(r, key, value, "set", format)
+	if h.git != nil {
+		req := git.CommitRequest{Key: key, Value: value, Operation: "set", Format: format, Author: h.getAuthorFromRequest(r)}
+		if err := h.git.Commit(req); err != nil {
+			log.Printf("[WARN] git commit failed for %s: %v", key, err)
+		}
+	}
 
 	w.WriteHeader(http.StatusOK)
 }
 
 // handleDelete removes a key from the store.
 // DELETE /kv/{key...}
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	key := normalizeKey(r.PathValue("key"))
+func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
+	key := internal.NormalizeKey(r.PathValue("key"))
 	if key == "" {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
 		return
 	}
 
-	err := s.store.Delete(key)
+	err := h.store.Delete(key)
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -208,54 +277,16 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[INFO] delete %q by %s", key, s.getIdentityForLog(r))
+	log.Printf("[INFO] delete %q by %s", key, h.getIdentityForLog(r))
 
 	// delete from git if enabled
-	s.gitDelete(r, key)
+	if h.git != nil {
+		if err := h.git.Delete(key, h.getAuthorFromRequest(r)); err != nil {
+			log.Printf("[WARN] git delete failed for %s: %v", key, err)
+		}
+	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// gitCommit commits a key-value change to git if enabled.
-// logs warning on failure but does not fail the API request.
-func (s *Server) gitCommit(r *http.Request, key string, value []byte, operation, format string) {
-	if s.gitStore == nil {
-		return
-	}
-
-	req := git.CommitRequest{
-		Key:       key,
-		Value:     value,
-		Operation: operation,
-		Format:    format,
-		Author:    s.getAuthorFromRequest(r),
-	}
-	if err := s.gitStore.Commit(req); err != nil {
-		log.Printf("[WARN] git commit failed for %s: %v", key, err)
-		return
-	}
-
-	if s.cfg.GitPush {
-		s.gitPullAndPush()
-	}
-}
-
-// gitDelete deletes a key from git if enabled.
-// logs warning on failure but does not fail the API request.
-func (s *Server) gitDelete(r *http.Request, key string) {
-	if s.gitStore == nil {
-		return
-	}
-
-	author := s.getAuthorFromRequest(r)
-	if err := s.gitStore.Delete(key, author); err != nil {
-		log.Printf("[WARN] git delete failed for %s: %v", key, err)
-		return
-	}
-
-	if s.cfg.GitPush {
-		s.gitPullAndPush()
-	}
 }
 
 // identityType represents the type of identity detected from a request.
@@ -275,18 +306,18 @@ type identity struct {
 
 // getIdentity extracts identity from request context.
 // returns user identity from session cookie, token identity from Authorization header, or anonymous.
-func (s *Server) getIdentity(r *http.Request) identity {
-	if s.auth == nil {
+func (h *Handler) getIdentity(r *http.Request) identity {
+	if h.auth == nil {
 		return identity{typ: identityAnonymous}
 	}
 
 	// check session cookie for web UI users
-	for _, cookieName := range sessionCookieNames {
+	for _, cookieName := range internal.SessionCookieNames {
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
 			continue
 		}
-		if username, valid := s.auth.GetSessionUser(cookie.Value); valid && username != "" {
+		if username, valid := h.auth.GetSessionUser(cookie.Value); valid && username != "" {
 			return identity{typ: identityUser, name: username}
 		}
 	}
@@ -294,7 +325,7 @@ func (s *Server) getIdentity(r *http.Request) identity {
 	// check API token from Authorization header
 	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if _, ok := s.auth.GetTokenACL(token); ok {
+		if h.auth.HasTokenACL(token) {
 			prefix := token
 			if len(prefix) > 8 {
 				prefix = prefix[:8]
@@ -308,8 +339,8 @@ func (s *Server) getIdentity(r *http.Request) identity {
 
 // getAuthorFromRequest extracts the git author from request context.
 // returns username from session cookie for web UI users, token prefix for API tokens, default author otherwise.
-func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
-	id := s.getIdentity(r)
+func (h *Handler) getAuthorFromRequest(r *http.Request) git.Author {
+	id := h.getIdentity(r)
 	switch id.typ {
 	case identityUser, identityToken:
 		return git.Author{Name: id.name, Email: id.name + "@stash"}
@@ -320,8 +351,8 @@ func (s *Server) getAuthorFromRequest(r *http.Request) git.Author {
 
 // getIdentityForLog returns identity string for audit logging.
 // returns "user:xxx" for web UI users, "token:xxx" for API tokens, "anonymous" otherwise.
-func (s *Server) getIdentityForLog(r *http.Request) string {
-	id := s.getIdentity(r)
+func (h *Handler) getIdentityForLog(r *http.Request) string {
+	id := h.getIdentity(r)
 	switch id.typ {
 	case identityUser:
 		return "user:" + id.name
@@ -329,20 +360,5 @@ func (s *Server) getIdentityForLog(r *http.Request) string {
 		return id.name // already has "token:" prefix
 	default:
 		return "anonymous"
-	}
-}
-
-// gitPullAndPush pulls from remote, then pushes local commits.
-// if pull fails due to merge conflict, logs instructions for manual resolution.
-// note: local commit is already done and preserved even if pull/push fails.
-func (s *Server) gitPullAndPush() {
-	if err := s.gitStore.Pull(); err != nil {
-		log.Printf("[WARN] git pull failed: %v (local commit preserved)", err)
-		log.Printf("[WARN] to sync: cd <git-path> && git pull --rebase && git push")
-		return
-	}
-
-	if err := s.gitStore.Push(); err != nil {
-		log.Printf("[WARN] git push failed: %v (local commit preserved)", err)
 	}
 }

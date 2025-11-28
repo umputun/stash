@@ -153,28 +153,8 @@ func runServer(ctx context.Context) error {
 	}
 	defer kvStore.Close()
 
-	// initialize and start HTTP server
-	srv, err := server.New(kvStore, validator.NewService(), server.Config{
-		Address:          opts.Server.Address,
-		ReadTimeout:      opts.Server.ReadTimeout,
-		WriteTimeout:     opts.Server.WriteTimeout,
-		IdleTimeout:      opts.Server.IdleTimeout,
-		ShutdownTimeout:  opts.Server.ShutdownTimeout,
-		Version:          revision,
-		AuthFile:         opts.Auth.File,
-		LoginTTL:         opts.Auth.LoginTTL,
-		BaseURL:          baseURL,
-		GitPush:          opts.Git.Push,
-		BodySizeLimit:    opts.Limits.BodySize,
-		RequestsPerSec:   opts.Limits.RequestsPerSec,
-		LoginConcurrency: opts.Limits.LoginConcurrency,
-		PageSize:         opts.Server.PageSize,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to initialize server: %w", err)
-	}
-
-	// initialize git store if enabled
+	// initialize git service if enabled
+	var gitService server.GitService // use interface type to avoid typed nil issue
 	if opts.Git.Enabled {
 		gitStore, gitErr := git.New(git.Config{
 			Path:   opts.Git.Path,
@@ -185,7 +165,27 @@ func runServer(ctx context.Context) error {
 		if gitErr != nil {
 			return fmt.Errorf("failed to initialize git store: %w", gitErr)
 		}
-		srv.SetGitStore(gitStore)
+		gitService = git.NewService(gitStore, opts.Git.Push)
+	}
+
+	// initialize and start HTTP server
+	srv, err := server.New(kvStore, validator.NewService(), gitService, server.Config{
+		Address:          opts.Server.Address,
+		ReadTimeout:      opts.Server.ReadTimeout,
+		WriteTimeout:     opts.Server.WriteTimeout,
+		IdleTimeout:      opts.Server.IdleTimeout,
+		ShutdownTimeout:  opts.Server.ShutdownTimeout,
+		Version:          revision,
+		AuthFile:         opts.Auth.File,
+		LoginTTL:         opts.Auth.LoginTTL,
+		BaseURL:          baseURL,
+		BodySizeLimit:    opts.Limits.BodySize,
+		RequestsPerSec:   opts.Limits.RequestsPerSec,
+		LoginConcurrency: opts.Limits.LoginConcurrency,
+		PageSize:         opts.Server.PageSize,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
 	if err := srv.Run(ctx); err != nil {

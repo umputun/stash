@@ -9,12 +9,12 @@ import (
 	"github.com/umputun/stash/app/git"
 )
 
-// GitStoreMock is a mock implementation of server.GitStore.
+// StorerMock is a mock implementation of git.Storer.
 //
-//	func TestSomethingThatUsesGitStore(t *testing.T) {
+//	func TestSomethingThatUsesStorer(t *testing.T) {
 //
-//		// make and configure a mocked server.GitStore
-//		mockedGitStore := &GitStoreMock{
+//		// make and configure a mocked git.Storer
+//		mockedStorer := &StorerMock{
 //			CommitFunc: func(req git.CommitRequest) error {
 //				panic("mock out the Commit method")
 //			},
@@ -29,11 +29,11 @@ import (
 //			},
 //		}
 //
-//		// use mockedGitStore in code that requires server.GitStore
+//		// use mockedStorer in code that requires git.Storer
 //		// and then make assertions.
 //
 //	}
-type GitStoreMock struct {
+type StorerMock struct {
 	// CommitFunc mocks the Commit method.
 	CommitFunc func(req git.CommitRequest) error
 
@@ -74,9 +74,9 @@ type GitStoreMock struct {
 }
 
 // Commit calls CommitFunc.
-func (mock *GitStoreMock) Commit(req git.CommitRequest) error {
+func (mock *StorerMock) Commit(req git.CommitRequest) error {
 	if mock.CommitFunc == nil {
-		panic("GitStoreMock.CommitFunc: method is nil but GitStore.Commit was just called")
+		panic("StorerMock.CommitFunc: method is nil but Storer.Commit was just called")
 	}
 	callInfo := struct {
 		Req git.CommitRequest
@@ -92,8 +92,8 @@ func (mock *GitStoreMock) Commit(req git.CommitRequest) error {
 // CommitCalls gets all the calls that were made to Commit.
 // Check the length with:
 //
-//	len(mockedGitStore.CommitCalls())
-func (mock *GitStoreMock) CommitCalls() []struct {
+//	len(mockedStorer.CommitCalls())
+func (mock *StorerMock) CommitCalls() []struct {
 	Req git.CommitRequest
 } {
 	var calls []struct {
@@ -106,9 +106,9 @@ func (mock *GitStoreMock) CommitCalls() []struct {
 }
 
 // Delete calls DeleteFunc.
-func (mock *GitStoreMock) Delete(key string, author git.Author) error {
+func (mock *StorerMock) Delete(key string, author git.Author) error {
 	if mock.DeleteFunc == nil {
-		panic("GitStoreMock.DeleteFunc: method is nil but GitStore.Delete was just called")
+		panic("StorerMock.DeleteFunc: method is nil but Storer.Delete was just called")
 	}
 	callInfo := struct {
 		Key    string
@@ -126,8 +126,8 @@ func (mock *GitStoreMock) Delete(key string, author git.Author) error {
 // DeleteCalls gets all the calls that were made to Delete.
 // Check the length with:
 //
-//	len(mockedGitStore.DeleteCalls())
-func (mock *GitStoreMock) DeleteCalls() []struct {
+//	len(mockedStorer.DeleteCalls())
+func (mock *StorerMock) DeleteCalls() []struct {
 	Key    string
 	Author git.Author
 } {
@@ -142,9 +142,9 @@ func (mock *GitStoreMock) DeleteCalls() []struct {
 }
 
 // Pull calls PullFunc.
-func (mock *GitStoreMock) Pull() error {
+func (mock *StorerMock) Pull() error {
 	if mock.PullFunc == nil {
-		panic("GitStoreMock.PullFunc: method is nil but GitStore.Pull was just called")
+		panic("StorerMock.PullFunc: method is nil but Storer.Pull was just called")
 	}
 	callInfo := struct {
 	}{}
@@ -157,8 +157,8 @@ func (mock *GitStoreMock) Pull() error {
 // PullCalls gets all the calls that were made to Pull.
 // Check the length with:
 //
-//	len(mockedGitStore.PullCalls())
-func (mock *GitStoreMock) PullCalls() []struct {
+//	len(mockedStorer.PullCalls())
+func (mock *StorerMock) PullCalls() []struct {
 } {
 	var calls []struct {
 	}
@@ -169,9 +169,9 @@ func (mock *GitStoreMock) PullCalls() []struct {
 }
 
 // Push calls PushFunc.
-func (mock *GitStoreMock) Push() error {
+func (mock *StorerMock) Push() error {
 	if mock.PushFunc == nil {
-		panic("GitStoreMock.PushFunc: method is nil but GitStore.Push was just called")
+		panic("StorerMock.PushFunc: method is nil but Storer.Push was just called")
 	}
 	callInfo := struct {
 	}{}
@@ -184,8 +184,8 @@ func (mock *GitStoreMock) Push() error {
 // PushCalls gets all the calls that were made to Push.
 // Check the length with:
 //
-//	len(mockedGitStore.PushCalls())
-func (mock *GitStoreMock) PushCalls() []struct {
+//	len(mockedStorer.PushCalls())
+func (mock *StorerMock) PushCalls() []struct {
 } {
 	var calls []struct {
 	}
