@@ -2,10 +2,13 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -321,6 +324,9 @@ func TestHandleKeyEdit(t *testing.T) {
 			}
 			return nil, "", store.ErrNotFound
 		},
+		GetInfoFunc: func(key string) (store.KeyInfo, error) {
+			return store.KeyInfo{Key: key, UpdatedAt: time.Now()}, nil
+		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
@@ -592,7 +598,10 @@ func TestHandleKeyUpdate_Validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			st := &mocks.KVStoreMock{
-				SetFunc:  func(key string, value []byte, format string) error { return nil },
+				SetFunc: func(key string, value []byte, format string) error { return nil },
+				GetInfoFunc: func(key string) (store.KeyInfo, error) {
+					return store.KeyInfo{Key: key, UpdatedAt: time.Now()}, nil
+				},
 				ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 			}
 			srv := newTestServer(t, st)
@@ -626,6 +635,168 @@ func TestHandleKeyUpdate_Validation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleKeyUpdate_ConflictDetection(t *testing.T) {
+	originalTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	modifiedTime := time.Date(2024, 1, 1, 12, 5, 0, 0, time.UTC) // 5 minutes later
+
+	t.Run("conflict detected when timestamp differs", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(key string, value []byte, format string) error { return nil },
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{Key: key, UpdatedAt: modifiedTime}, nil // server has newer timestamp
+			},
+			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+				return []byte("server value"), "text", nil
+			},
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		form := url.Values{
+			"value":      {"my edited value"},
+			"format":     {"text"},
+			"updated_at": {fmt.Sprintf("%d", originalTime.Unix())}, // old timestamp
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Empty(t, st.SetCalls(), "expected Set NOT to be called on conflict")
+		body := rec.Body.String()
+		assert.Contains(t, body, "Conflict detected")
+		assert.Contains(t, body, "server value")
+		assert.Contains(t, body, "Reload")
+		assert.Contains(t, body, "Overwrite")
+	})
+
+	t.Run("no conflict when timestamps match", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(key string, value []byte, format string) error { return nil },
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{Key: key, UpdatedAt: originalTime}, nil
+			},
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		form := url.Values{
+			"value":      {"my edited value"},
+			"format":     {"text"},
+			"updated_at": {fmt.Sprintf("%d", originalTime.Unix())},
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1, "expected Set to be called")
+	})
+
+	t.Run("force_overwrite bypasses conflict check", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(key string, value []byte, format string) error { return nil },
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{Key: key, UpdatedAt: modifiedTime}, nil // server has newer timestamp
+			},
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		form := url.Values{
+			"value":           {"my edited value"},
+			"format":          {"text"},
+			"updated_at":      {fmt.Sprintf("%d", originalTime.Unix())}, // old timestamp
+			"force_overwrite": {"true"},
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1, "expected Set to be called when force_overwrite=true")
+	})
+
+	t.Run("no updated_at skips conflict check", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(key string, value []byte, format string) error { return nil },
+			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+				return store.KeyInfo{Key: key, UpdatedAt: modifiedTime}, nil
+			},
+			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		}
+		srv := newTestServer(t, st)
+
+		form := url.Values{
+			"value":  {"my edited value"},
+			"format": {"text"},
+			// no updated_at field
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.routes().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, st.SetCalls(), 1, "expected Set to be called without updated_at")
+	})
+}
+
+func TestHandleKeyUpdate_ValidationPreservesTimestamp(t *testing.T) {
+	// this test verifies that when validation fails, the form re-renders with
+	// the ORIGINAL timestamp from the request, not a fresh one from the store.
+	// this prevents a race condition where another user's changes could be
+	// silently overwritten after a validation retry.
+	originalTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	serverTime := time.Date(2024, 1, 1, 12, 10, 0, 0, time.UTC) // server has newer timestamp
+
+	st := &mocks.KVStoreMock{
+		SetFunc: func(key string, value []byte, format string) error { return nil },
+		GetInfoFunc: func(key string) (store.KeyInfo, error) {
+			// return ORIGINAL time first (for conflict check), then server time (simulating race)
+			return store.KeyInfo{Key: key, UpdatedAt: originalTime}, nil
+		},
+		GetWithFormatFunc: func(key string) ([]byte, string, error) {
+			return []byte("test value"), "text", nil
+		},
+		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+	}
+	val := &mocks.ValidatorMock{
+		ValidateFunc: func(format string, value []byte) error {
+			return fmt.Errorf("invalid JSON") // force validation to fail
+		},
+	}
+	srv := newTestServerWithValidator(t, st, val)
+
+	form := url.Values{
+		"value":      {"{invalid json"},
+		"format":     {"json"},
+		"updated_at": {fmt.Sprintf("%d", originalTime.Unix())}, // user's original timestamp
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.routes().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, st.SetCalls(), "expected Set NOT to be called on validation error")
+
+	body := rec.Body.String()
+	// the form should preserve the ORIGINAL timestamp, not the server's newer one
+	assert.Contains(t, body, fmt.Sprintf(`value="%d"`, originalTime.Unix()),
+		"form should preserve original timestamp for conflict detection on retry")
+	assert.NotContains(t, body, fmt.Sprintf(`value="%d"`, serverTime.Unix()),
+		"form should NOT use server's newer timestamp")
 }
 
 func TestHandleThemeToggle(t *testing.T) {
@@ -940,6 +1111,9 @@ func TestHandleKeyEdit_PermissionEnforcement(t *testing.T) {
 				return []byte("value"), "text", nil
 			}
 			return nil, "", store.ErrNotFound
+		},
+		GetInfoFunc: func(key string) (store.KeyInfo, error) {
+			return store.KeyInfo{Key: key, UpdatedAt: time.Now()}, nil
 		},
 		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
 	}

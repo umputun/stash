@@ -54,6 +54,13 @@ type templateData struct {
 	TextareaHeight int
 	CanWrite       bool   // user has write permission (for showing edit controls)
 	Username       string // current logged-in username
+
+	// conflict detection fields
+	UpdatedAt       int64  // unix timestamp when key was loaded (for optimistic locking)
+	Conflict        bool   // true when a conflict was detected on save
+	ServerValue     string // current server value (shown during conflict)
+	ServerFormat    string // current server format (shown during conflict)
+	ServerUpdatedAt int64  // server's updated_at timestamp (for retry after conflict)
 }
 
 // templateFuncs returns custom template functions.
@@ -259,6 +266,79 @@ func valueFromForm(value string, isBinary bool) ([]byte, error) {
 		return decoded, nil
 	}
 	return []byte(value), nil
+}
+
+// conflictInfo holds data about a detected conflict.
+type conflictInfo struct {
+	ServerValue     string
+	ServerFormat    string
+	ServerUpdatedAt int64
+}
+
+// checkConflict checks if the key was modified since the form was loaded.
+// Returns nil if no conflict, or conflictInfo if conflict detected.
+func (s *Server) checkConflict(key string, formUpdatedAt int64) *conflictInfo {
+	if formUpdatedAt <= 0 {
+		return nil // no timestamp to compare, skip conflict check
+	}
+
+	info, err := s.store.GetInfo(key)
+	if err != nil {
+		return nil // key might not exist or other error, skip conflict check
+	}
+
+	serverUpdatedAt := info.UpdatedAt.Unix()
+	if serverUpdatedAt == formUpdatedAt {
+		return nil // no conflict
+	}
+
+	// conflict detected - get current server value
+	serverValue, serverFormat, _ := s.store.GetWithFormat(key)
+	serverDisplayValue, _ := valueForDisplay(serverValue)
+
+	return &conflictInfo{
+		ServerValue:     serverDisplayValue,
+		ServerFormat:    serverFormat,
+		ServerUpdatedAt: serverUpdatedAt,
+	}
+}
+
+// validationErrorParams holds parameters for rendering a validation error form.
+type validationErrorParams struct {
+	Key       string
+	Value     string
+	Format    string
+	IsBinary  bool
+	Username  string
+	Error     string
+	UpdatedAt int64 // original timestamp from form (preserve for conflict detection on retry)
+}
+
+// renderValidationError re-renders the form with a validation error message.
+// preserves original updated_at timestamp for conflict detection on retry.
+func (s *Server) renderValidationError(w http.ResponseWriter, p validationErrorParams) {
+	w.Header().Set("HX-Retarget", "#modal-content")
+	w.Header().Set("HX-Reswap", "innerHTML")
+	modalWidth, textareaHeight := s.calculateModalDimensions(p.Value)
+	data := templateData{
+		Key:            p.Key,
+		Value:          p.Value,
+		Format:         p.Format,
+		Formats:        s.highlighter.SupportedFormats(),
+		IsBinary:       p.IsBinary,
+		IsNew:          false,
+		Error:          p.Error,
+		CanForce:       true,
+		BaseURL:        s.baseURL,
+		ModalWidth:     modalWidth,
+		TextareaHeight: textareaHeight,
+		CanWrite:       true,
+		Username:       p.Username,
+		UpdatedAt:      p.UpdatedAt,
+	}
+	if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
+		log.Printf("[ERROR] failed to execute template: %v", err)
+	}
 }
 
 // filterBySearch filters a slice by search term using a key accessor.
@@ -528,6 +608,12 @@ func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// get key info for conflict detection (updated_at timestamp)
+	var updatedAt int64
+	if info, infoErr := s.store.GetInfo(key); infoErr == nil {
+		updatedAt = info.UpdatedAt.Unix()
+	}
+
 	displayValue, isBinary := valueForDisplay(value)
 	modalWidth, textareaHeight := s.calculateModalDimensions(displayValue)
 	data := templateData{
@@ -542,6 +628,7 @@ func (s *Server) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		TextareaHeight: textareaHeight,
 		CanWrite:       true,
 		Username:       username,
+		UpdatedAt:      updatedAt,
 	}
 
 	if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
@@ -709,32 +796,47 @@ func (s *Server) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// validate value unless force flag is set or value is binary
-	force := r.FormValue("force") == "true"
-	if !force && !isBinary {
-		if err := s.validator.Validate(format, value); err != nil {
-			// re-render form with validation error
+	// check for conflicts (optimistic locking) unless force_overwrite is set
+	forceOverwrite := r.FormValue("force_overwrite") == "true"
+	formUpdatedAt, _ := strconv.ParseInt(r.FormValue("updated_at"), 10, 64)
+	if !forceOverwrite {
+		if conflict := s.checkConflict(key, formUpdatedAt); conflict != nil {
 			w.Header().Set("HX-Retarget", "#modal-content")
 			w.Header().Set("HX-Reswap", "innerHTML")
 			modalWidth, textareaHeight := s.calculateModalDimensions(valueStr)
 			data := templateData{
-				Key:            key,
-				Value:          valueStr,
-				Format:         format,
-				Formats:        s.highlighter.SupportedFormats(),
-				IsBinary:       isBinary,
-				IsNew:          false,
-				Error:          err.Error(),
-				CanForce:       true,
-				BaseURL:        s.baseURL,
-				ModalWidth:     modalWidth,
-				TextareaHeight: textareaHeight,
-				CanWrite:       true,
-				Username:       username,
+				Key:             key,
+				Value:           valueStr,
+				Format:          format,
+				Formats:         s.highlighter.SupportedFormats(),
+				IsBinary:        isBinary,
+				IsNew:           false,
+				BaseURL:         s.baseURL,
+				ModalWidth:      modalWidth,
+				TextareaHeight:  textareaHeight,
+				CanWrite:        true,
+				Username:        username,
+				Conflict:        true,
+				ServerValue:     conflict.ServerValue,
+				ServerFormat:    conflict.ServerFormat,
+				ServerUpdatedAt: conflict.ServerUpdatedAt,
+				UpdatedAt:       formUpdatedAt,
 			}
 			if err := s.tmpl.ExecuteTemplate(w, "form", data); err != nil {
 				log.Printf("[ERROR] failed to execute template: %v", err)
 			}
+			log.Printf("[WARN] conflict detected for key %q: form=%d, server=%d", key, formUpdatedAt, conflict.ServerUpdatedAt)
+			return
+		}
+	}
+
+	// validate value unless force flag is set or value is binary
+	force := r.FormValue("force") == "true"
+	if !force && !isBinary {
+		if validationErr := s.validator.Validate(format, value); validationErr != nil {
+			s.renderValidationError(w, validationErrorParams{
+				Key: key, Value: valueStr, Format: format, IsBinary: isBinary, Username: username, Error: validationErr.Error(), UpdatedAt: formUpdatedAt,
+			})
 			return
 		}
 	}

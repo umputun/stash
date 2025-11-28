@@ -14,8 +14,22 @@
       hx-target="#keys-table"
       hx-swap="innerHTML"
       data-close-modal>
+    {{if not .IsNew}}<input type="hidden" name="updated_at" value="{{.UpdatedAt}}">{{end}}
     <div class="modal-body">
-        {{if .Error}}
+        {{if .Conflict}}
+        <div class="conflict-warning">
+            <strong>Conflict detected:</strong> This key was modified by another user while you were editing.
+            <details>
+                <summary>Show current server value</summary>
+                <pre class="conflict-value">{{.ServerValue}}</pre>
+            </details>
+            <div class="conflict-actions">
+                <button type="button" class="btn btn-secondary" hx-get="{{.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}" hx-target="#modal-content" hx-swap="innerHTML">Reload</button>
+                <button type="submit" name="force_overwrite" value="true" class="btn btn-danger-filled">Overwrite</button>
+            </div>
+        </div>
+        <input type="hidden" name="server_updated_at" value="{{.ServerUpdatedAt}}">
+        {{else if .Error}}
         <div class="error-message" id="form-error">{{.Error}}</div>
         {{end}}
         <div class="form-group">
@@ -40,6 +54,7 @@
                       required>{{.Value}}</textarea>
         </div>
     </div>
+    {{if not .Conflict}}
     <div class="modal-footer">
         <button type="button" class="btn btn-secondary" onclick="hideModal('main-modal')">Cancel</button>
         <button type="submit" id="save-btn" class="btn btn-primary"{{if .CanForce}} style="display:none"{{end}}>{{if .IsNew}}Create{{else}}Save{{end}}</button>
@@ -47,6 +62,7 @@
         <button type="submit" id="force-btn" name="force" value="true" class="btn btn-danger-filled">Submit Anyway</button>
         {{end}}
     </div>
+    {{end}}
 </form>
 {{if not .IsNew}}
 <style>

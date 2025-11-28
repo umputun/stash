@@ -78,6 +78,15 @@ func (c *Cached) Delete(key string) error {
 	return nil
 }
 
+// GetInfo retrieves metadata for a key from the underlying store (not cached).
+func (c *Cached) GetInfo(key string) (KeyInfo, error) {
+	info, err := c.store.GetInfo(key)
+	if err != nil {
+		return KeyInfo{}, fmt.Errorf("store get info: %w", err)
+	}
+	return info, nil
+}
+
 // List returns all keys from the underlying store (not cached).
 func (c *Cached) List() ([]KeyInfo, error) {
 	keys, err := c.store.List()

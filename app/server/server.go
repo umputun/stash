@@ -40,6 +40,7 @@ type Server struct {
 type KVStore interface {
 	Get(key string) ([]byte, error)
 	GetWithFormat(key string) ([]byte, string, error)
+	GetInfo(key string) (store.KeyInfo, error)
 	Set(key string, value []byte, format string) error
 	Delete(key string) error
 	List() ([]store.KeyInfo, error)
