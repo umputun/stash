@@ -15,12 +15,30 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// supportedFormats lists all supported value formats.
+var supportedFormats = []string{"text", "json", "yaml", "xml", "toml", "ini", "hcl", "shell"}
+
 // Service provides format validation for known data formats.
 type Service struct{}
 
 // NewService creates a new validation service.
 func NewService() *Service {
 	return &Service{}
+}
+
+// SupportedFormats returns the list of supported formats.
+func (s *Service) SupportedFormats() []string {
+	return supportedFormats
+}
+
+// IsValidFormat checks if format is in the list of supported formats.
+func (s *Service) IsValidFormat(format string) bool {
+	for _, f := range supportedFormats {
+		if f == format {
+			return true
+		}
+	}
+	return false
 }
 
 // Validate checks if value is valid for the given format.
@@ -64,14 +82,21 @@ func (s *Service) validateYAML(value []byte) error {
 
 func (s *Service) validateXML(value []byte) error {
 	decoder := xml.NewDecoder(bytes.NewReader(value))
+	hasElement := false
 	for {
-		_, err := decoder.Token()
+		tok, err := decoder.Token()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
 			return fmt.Errorf("invalid xml: %w", err)
 		}
+		if _, ok := tok.(xml.StartElement); ok {
+			hasElement = true
+		}
+	}
+	if !hasElement {
+		return fmt.Errorf("invalid xml: no root element found")
 	}
 	return nil
 }
