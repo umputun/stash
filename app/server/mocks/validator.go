@@ -13,6 +13,12 @@ import (
 //
 //		// make and configure a mocked server.Validator
 //		mockedValidator := &ValidatorMock{
+//			IsValidFormatFunc: func(format string) bool {
+//				panic("mock out the IsValidFormat method")
+//			},
+//			SupportedFormatsFunc: func() []string {
+//				panic("mock out the SupportedFormats method")
+//			},
 //			ValidateFunc: func(format string, value []byte) error {
 //				panic("mock out the Validate method")
 //			},
@@ -23,11 +29,25 @@ import (
 //
 //	}
 type ValidatorMock struct {
+	// IsValidFormatFunc mocks the IsValidFormat method.
+	IsValidFormatFunc func(format string) bool
+
+	// SupportedFormatsFunc mocks the SupportedFormats method.
+	SupportedFormatsFunc func() []string
+
 	// ValidateFunc mocks the Validate method.
 	ValidateFunc func(format string, value []byte) error
 
 	// calls tracks calls to the methods.
 	calls struct {
+		// IsValidFormat holds details about calls to the IsValidFormat method.
+		IsValidFormat []struct {
+			// Format is the format argument value.
+			Format string
+		}
+		// SupportedFormats holds details about calls to the SupportedFormats method.
+		SupportedFormats []struct {
+		}
 		// Validate holds details about calls to the Validate method.
 		Validate []struct {
 			// Format is the format argument value.
@@ -36,7 +56,68 @@ type ValidatorMock struct {
 			Value []byte
 		}
 	}
-	lockValidate sync.RWMutex
+	lockIsValidFormat    sync.RWMutex
+	lockSupportedFormats sync.RWMutex
+	lockValidate         sync.RWMutex
+}
+
+// IsValidFormat calls IsValidFormatFunc.
+func (mock *ValidatorMock) IsValidFormat(format string) bool {
+	if mock.IsValidFormatFunc == nil {
+		panic("ValidatorMock.IsValidFormatFunc: method is nil but Validator.IsValidFormat was just called")
+	}
+	callInfo := struct {
+		Format string
+	}{
+		Format: format,
+	}
+	mock.lockIsValidFormat.Lock()
+	mock.calls.IsValidFormat = append(mock.calls.IsValidFormat, callInfo)
+	mock.lockIsValidFormat.Unlock()
+	return mock.IsValidFormatFunc(format)
+}
+
+// IsValidFormatCalls gets all the calls that were made to IsValidFormat.
+// Check the length with:
+//
+//	len(mockedValidator.IsValidFormatCalls())
+func (mock *ValidatorMock) IsValidFormatCalls() []struct {
+	Format string
+} {
+	var calls []struct {
+		Format string
+	}
+	mock.lockIsValidFormat.RLock()
+	calls = mock.calls.IsValidFormat
+	mock.lockIsValidFormat.RUnlock()
+	return calls
+}
+
+// SupportedFormats calls SupportedFormatsFunc.
+func (mock *ValidatorMock) SupportedFormats() []string {
+	if mock.SupportedFormatsFunc == nil {
+		panic("ValidatorMock.SupportedFormatsFunc: method is nil but Validator.SupportedFormats was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockSupportedFormats.Lock()
+	mock.calls.SupportedFormats = append(mock.calls.SupportedFormats, callInfo)
+	mock.lockSupportedFormats.Unlock()
+	return mock.SupportedFormatsFunc()
+}
+
+// SupportedFormatsCalls gets all the calls that were made to SupportedFormats.
+// Check the length with:
+//
+//	len(mockedValidator.SupportedFormatsCalls())
+func (mock *ValidatorMock) SupportedFormatsCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockSupportedFormats.RLock()
+	calls = mock.calls.SupportedFormats
+	mock.lockSupportedFormats.RUnlock()
+	return calls
 }
 
 // Validate calls ValidateFunc.

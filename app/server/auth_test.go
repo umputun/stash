@@ -194,7 +194,7 @@ func TestNewAuth_Errors(t *testing.T) {
         access: invalid`)
 		_, err := NewAuth(f, time.Hour)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid access")
+		assert.Contains(t, err.Error(), "value must be one of")
 	})
 
 	t.Run("duplicate prefix", func(t *testing.T) {

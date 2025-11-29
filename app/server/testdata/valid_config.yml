@@ -1,0 +1,11 @@
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "test-token"
+    permissions:
+      - prefix: "public/*"
+        access: r

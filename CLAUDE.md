@@ -11,6 +11,7 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `handlers.go` - HTTP handlers for KV API operations (with git integration)
   - `web.go` - Web UI handlers, templates, static file serving, per-user permission checks
   - `auth.go` - Authentication: YAML config (users + tokens), sessions, middleware, prefix-based ACL
+  - `verify.go` - JSON schema validation for auth config (embedded schema)
   - `static/` - Embedded CSS, JS, HTMX library
   - `templates/` - Embedded HTML templates (base, index, login, partials)
   - `mocks/` - Generated mocks (moq)

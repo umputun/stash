@@ -1,5 +1,7 @@
 package server
 
+//go:generate go run internal/schema/main.go schema.json
+
 import (
 	"fmt"
 	"net/http"
@@ -59,27 +61,27 @@ func (p Permission) CanWrite() bool {
 
 // AuthConfig represents the auth configuration file (stash-auth.yml).
 type AuthConfig struct {
-	Users  []UserConfig  `yaml:"users"`
-	Tokens []TokenConfig `yaml:"tokens"`
+	Users  []UserConfig  `yaml:"users,omitempty" json:"users,omitempty" jsonschema:"description=users for web UI auth"`
+	Tokens []TokenConfig `yaml:"tokens,omitempty" json:"tokens,omitempty" jsonschema:"description=API tokens"`
 }
 
 // UserConfig represents a user in the auth config file.
 type UserConfig struct {
-	Name        string             `yaml:"name"`
-	Password    string             `yaml:"password"` // bcrypt hash
-	Permissions []PermissionConfig `yaml:"permissions"`
+	Name        string             `yaml:"name" json:"name" jsonschema:"required"`
+	Password    string             `yaml:"password" json:"password" jsonschema:"required"` // bcrypt hash
+	Permissions []PermissionConfig `yaml:"permissions,omitempty" json:"permissions,omitempty"`
 }
 
 // TokenConfig represents an API token in the auth config file.
 type TokenConfig struct {
-	Token       string             `yaml:"token"`
-	Permissions []PermissionConfig `yaml:"permissions"`
+	Token       string             `yaml:"token" json:"token" jsonschema:"required"`
+	Permissions []PermissionConfig `yaml:"permissions,omitempty" json:"permissions,omitempty"`
 }
 
 // PermissionConfig represents a prefix-permission pair in the config file.
 type PermissionConfig struct {
-	Prefix string `yaml:"prefix"`
-	Access string `yaml:"access"` // r, w, rw
+	Prefix string `yaml:"prefix" json:"prefix" jsonschema:"required"`
+	Access string `yaml:"access" json:"access" jsonschema:"required,enum=r,enum=read,enum=w,enum=write,enum=rw,enum=readwrite,enum=read-write"`
 }
 
 // User represents an authenticated user with ACL.
@@ -89,11 +91,16 @@ type User struct {
 	ACL          TokenACL // reuse ACL structure for permissions
 }
 
-// LoadAuthConfig reads and parses the auth YAML file.
+// LoadAuthConfig reads, validates and parses the auth YAML file.
 func LoadAuthConfig(path string) (*AuthConfig, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // path is from CLI flag, controlled by admin
 	if err != nil {
 		return nil, fmt.Errorf("failed to read auth config file: %w", err)
+	}
+
+	// validate against embedded JSON schema
+	if err := VerifyAuthConfig(data); err != nil {
+		return nil, err
 	}
 
 	var cfg AuthConfig

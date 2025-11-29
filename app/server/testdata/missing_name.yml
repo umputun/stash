@@ -1,0 +1,5 @@
+users:
+  - password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw

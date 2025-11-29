@@ -1,0 +1,7 @@
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    unknown_field: "should fail"
+    permissions:
+      - prefix: "*"
+        access: rw

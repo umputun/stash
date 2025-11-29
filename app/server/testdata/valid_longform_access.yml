@@ -1,0 +1,21 @@
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: readwrite
+  - name: reader
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: read
+  - name: writer
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: write
+tokens:
+  - token: "test-token"
+    permissions:
+      - prefix: "public/*"
+        access: read-write
