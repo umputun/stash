@@ -207,6 +207,8 @@ stash server --auth.file=/path/to/stash-auth.yml
 chmod 600 stash-auth.yml
 ```
 
+**Validation**: The auth config is validated against an embedded JSON schema at startup. Invalid configs (wrong field names, invalid access values, etc.) will cause the server to fail with a descriptive error message.
+
 ### Generating Password Hashes
 
 ```bash

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/umputun/stash/app/server/auth-config",
+  "$ref": "#/$defs/AuthConfig",
+  "$defs": {
+    "AuthConfig": {
+      "properties": {
+        "users": {
+          "items": {
+            "$ref": "#/$defs/UserConfig"
+          },
+          "type": "array",
+          "description": "users for web UI auth"
+        },
+        "tokens": {
+          "items": {
+            "$ref": "#/$defs/TokenConfig"
+          },
+          "type": "array",
+          "description": "API tokens"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PermissionConfig": {
+      "properties": {
+        "prefix": {
+          "type": "string"
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "r",
+            "read",
+            "w",
+            "write",
+            "rw",
+            "readwrite",
+            "read-write"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "prefix",
+        "access"
+      ]
+    },
+    "TokenConfig": {
+      "properties": {
+        "token": {
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/PermissionConfig"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "token"
+      ]
+    },
+    "UserConfig": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "permissions": {
+          "items": {
+            "$ref": "#/$defs/PermissionConfig"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "password"
+      ]
+    }
+  },
+  "title": "Stash Auth Configuration"
+}

@@ -670,6 +670,36 @@ func TestRun_InvalidAuthFile(t *testing.T) {
 	opts.Auth.File = ""
 }
 
+func TestRun_InvalidAuthFileSchema(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18488"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	// create auth config with invalid access value (schema validation)
+	invalidConfig := `users:
+  - name: admin
+    password: hash
+    permissions:
+      - prefix: "*"
+        access: invalid
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(invalidConfig), 0o600))
+	opts.Auth.File = authFile
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := runServer(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config validation failed")
+	assert.Contains(t, err.Error(), "value must be one of")
+
+	// reset
+	opts.Auth.File = ""
+}
+
 func TestSignals(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
