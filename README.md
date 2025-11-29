@@ -115,6 +115,7 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--limits.login-concurrency` | `STASH_LIMITS_LOGIN_CONCURRENCY` | `5` | Max concurrent login attempts |
 | `--auth.file` | `STASH_AUTH_FILE` | - | Path to auth config file (enables auth) |
 | `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL |
+| `--auth.hot-reload` | `STASH_AUTH_HOT_RELOAD` | `false` | Watch auth config for changes and reload |
 | `--cache.enabled` | `STASH_CACHE_ENABLED` | `false` | Enable in-memory cache for reads |
 | `--cache.max-keys` | `STASH_CACHE_MAX_KEYS` | `1000` | Maximum number of cached keys |
 | `--git.enabled` | `STASH_GIT_ENABLED` | `false` | Enable git versioning |
@@ -208,6 +209,21 @@ chmod 600 stash-auth.yml
 ```
 
 **Validation**: The auth config is validated against an embedded JSON schema at startup. Invalid configs (wrong field names, invalid access values, etc.) will cause the server to fail with a descriptive error message.
+
+### Hot-Reload
+
+Enable hot-reload to automatically pick up changes to the auth config file without restarting the server:
+
+```bash
+stash server --auth.file=/path/to/stash-auth.yml --auth.hot-reload
+```
+
+When the auth config file changes:
+- New users, tokens, and permissions take effect immediately
+- All active sessions are invalidated (users must re-login)
+- Invalid config changes are rejected and the existing config is preserved
+
+Hot-reload watches the directory containing the auth file, so it works correctly with editors that use atomic saves (vim, VSCode, etc.).
 
 ### Generating Password Hashes
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1085,4 +1086,360 @@ func createTempFile(t *testing.T, content string) string {
 	err := os.WriteFile(f, []byte(content), 0o600)
 	require.NoError(t, err)
 	return f
+}
+
+func TestAuth_Reload(t *testing.T) {
+	initialConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "token1"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, initialConfig)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	// verify initial config
+	assert.True(t, auth.HasTokenACL("token1"))
+	assert.False(t, auth.HasTokenACL("token2"))
+
+	// create a session
+	session, err := auth.CreateSession("admin")
+	require.NoError(t, err)
+	assert.True(t, auth.ValidateSession(session))
+
+	// update config file with new token
+	newConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: viewer
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: r
+tokens:
+  - token: "token2"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	err = os.WriteFile(f, []byte(newConfig), 0o600)
+	require.NoError(t, err)
+
+	// reload config
+	err = auth.Reload()
+	require.NoError(t, err)
+
+	// verify new config is loaded
+	assert.False(t, auth.HasTokenACL("token1"), "old token should be gone")
+	assert.True(t, auth.HasTokenACL("token2"), "new token should exist")
+
+	// verify session was invalidated
+	assert.False(t, auth.ValidateSession(session), "session should be invalidated after reload")
+
+	// verify new user exists
+	assert.True(t, auth.CheckUserPermission("viewer", "test", false))
+}
+
+func TestAuth_Reload_InvalidConfig(t *testing.T) {
+	initialConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, initialConfig)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	// verify initial state
+	assert.True(t, auth.CheckUserPermission("admin", "test", true))
+
+	// write invalid config
+	err = os.WriteFile(f, []byte("invalid: yaml: content:"), 0o600)
+	require.NoError(t, err)
+
+	// reload should fail
+	err = auth.Reload()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load auth config")
+
+	// original config should still work
+	assert.True(t, auth.CheckUserPermission("admin", "test", true))
+}
+
+func TestAuth_Reload_EmptyConfig(t *testing.T) {
+	initialConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, initialConfig)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	// write empty config (no users or tokens)
+	err = os.WriteFile(f, []byte("users: []\ntokens: []"), 0o600)
+	require.NoError(t, err)
+
+	// reload should fail
+	err = auth.Reload()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one user or token")
+
+	// original config should still work
+	assert.True(t, auth.CheckUserPermission("admin", "test", true))
+}
+
+func TestAuth_Reload_NilAuth(t *testing.T) {
+	var auth *Auth
+	err := auth.Reload()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auth not enabled")
+}
+
+func TestAuth_Reload_SessionsInvalidated(t *testing.T) {
+	config := `
+users:
+  - name: user1
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: user2
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, config)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	// create multiple sessions
+	session1, err := auth.CreateSession("user1")
+	require.NoError(t, err)
+	session2, err := auth.CreateSession("user2")
+	require.NoError(t, err)
+
+	assert.True(t, auth.ValidateSession(session1))
+	assert.True(t, auth.ValidateSession(session2))
+
+	// reload with same config
+	err = auth.Reload()
+	require.NoError(t, err)
+
+	// all sessions should be invalidated
+	assert.False(t, auth.ValidateSession(session1), "session1 should be invalidated")
+	assert.False(t, auth.ValidateSession(session2), "session2 should be invalidated")
+}
+
+func TestAuth_ConcurrentAccess(t *testing.T) {
+	config := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "apitoken"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, config)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	// run concurrent reads and reloads
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			_ = auth.Reload()
+		}
+	}()
+
+	// concurrent reads while reloading
+	for i := 0; i < 1000; i++ {
+		_ = auth.Enabled()
+		_ = auth.HasTokenACL("apitoken")
+		_ = auth.CheckUserPermission("admin", "test", false)
+		_ = auth.FilterUserKeys("admin", []string{"a", "b", "c"})
+		_ = auth.FilterTokenKeys("apitoken", []string{"a", "b", "c"})
+		_ = auth.UserCanWrite("admin")
+	}
+
+	<-done
+}
+
+func TestAuth_StartWatcher(t *testing.T) {
+	config := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "token1"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	f := createTempFile(t, config)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = auth.StartWatcher(ctx)
+	require.NoError(t, err)
+
+	// verify initial config
+	assert.True(t, auth.HasTokenACL("token1"))
+	assert.False(t, auth.HasTokenACL("token2"))
+
+	// update config file
+	newConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "token2"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	err = os.WriteFile(f, []byte(newConfig), 0o600)
+	require.NoError(t, err)
+
+	// wait for reload using Eventually (avoids flaky timing)
+	require.Eventually(t, func() bool {
+		return auth.HasTokenACL("token2")
+	}, 2*time.Second, 10*time.Millisecond, "new token should exist after reload")
+
+	// verify old token is gone
+	assert.False(t, auth.HasTokenACL("token1"), "old token should be gone")
+}
+
+func TestAuth_StartWatcher_AtomicRename(t *testing.T) {
+	config := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "auth.yml")
+	err := os.WriteFile(authFile, []byte(config), 0o600)
+	require.NoError(t, err)
+
+	auth, err := NewAuth(authFile, time.Hour)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = auth.StartWatcher(ctx)
+	require.NoError(t, err)
+
+	// verify initial config
+	assert.True(t, auth.CheckUserPermission("admin", "test", true))
+	assert.False(t, auth.CheckUserPermission("newuser", "test", false))
+
+	// simulate vim-style save: write temp file then rename
+	newConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: newuser
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	tmpFile := filepath.Join(dir, "auth.yml.tmp")
+	err = os.WriteFile(tmpFile, []byte(newConfig), 0o600)
+	require.NoError(t, err)
+	err = os.Rename(tmpFile, authFile)
+	require.NoError(t, err)
+
+	// wait for reload using Eventually (avoids flaky timing)
+	require.Eventually(t, func() bool {
+		return auth.CheckUserPermission("newuser", "test", false)
+	}, 2*time.Second, 10*time.Millisecond, "new user should exist after rename")
+}
+
+func TestAuth_StartWatcher_ContextCancel(t *testing.T) {
+	config := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, config)
+	auth, err := NewAuth(f, time.Hour)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	err = auth.StartWatcher(ctx)
+	require.NoError(t, err)
+
+	// cancel the context
+	cancel()
+
+	// give the goroutine time to clean up
+	time.Sleep(50 * time.Millisecond)
+
+	// further file changes should not trigger reload
+	// (we can't easily verify this, but at least verify no panic/crash)
+}
+
+func TestAuth_StartWatcher_NilAuth(t *testing.T) {
+	var auth *Auth
+	err := auth.StartWatcher(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auth not enabled")
+}
+
+func TestAuth_StartWatcher_EmptyAuthFile(t *testing.T) {
+	auth := &Auth{
+		authFile: "",
+		users:    make(map[string]User),
+		tokens:   make(map[string]TokenACL),
+		sessions: make(map[string]session),
+	}
+	err := auth.StartWatcher(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "auth file path not set")
 }
