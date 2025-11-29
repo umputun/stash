@@ -260,13 +260,7 @@ func (s *Store) GetInfo(key string) (KeyInfo, error) {
 	defer s.mu.RUnlock()
 
 	var info KeyInfo
-	var query string
-	switch s.dbType {
-	case DBTypePostgres:
-		query = `SELECT key, octet_length(value) as size, format, created_at, updated_at FROM kv WHERE key = $1`
-	default:
-		query = `SELECT key, length(value) as size, format, created_at, updated_at FROM kv WHERE key = ?`
-	}
+	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv WHERE key = ?`)
 	err := s.db.Get(&info, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return KeyInfo{}, ErrNotFound
@@ -289,17 +283,9 @@ func (s *Store) Set(key string, value []byte, format string) error {
 	}
 
 	now := time.Now().UTC()
-	var query string
-	switch s.dbType {
-	case DBTypePostgres:
-		query = `
-			INSERT INTO kv (key, value, format, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, format = EXCLUDED.format, updated_at = EXCLUDED.updated_at`
-	default:
-		query = `
-			INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`
-	}
+	query := s.adoptQuery(`
+		INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`)
 	if _, err := s.db.Exec(query, key, value, format, now, now); err != nil {
 		return fmt.Errorf("failed to set key %q: %w", key, err)
 	}
@@ -323,14 +309,7 @@ func (s *Store) SetWithVersion(key string, value []byte, format string, expected
 	now := time.Now().UTC()
 
 	// atomic update: only succeeds if version matches
-	var query string
-	switch s.dbType {
-	case DBTypePostgres:
-		query = `UPDATE kv SET value = $1, format = $2, updated_at = $3 WHERE key = $4 AND updated_at = $5`
-	default:
-		query = `UPDATE kv SET value = ?, format = ?, updated_at = ? WHERE key = ? AND updated_at = ?`
-	}
-
+	query := s.adoptQuery(`UPDATE kv SET value = ?, format = ?, updated_at = ? WHERE key = ? AND updated_at = ?`)
 	result, err := s.db.Exec(query, value, format, now, key, expectedVersion)
 	if err != nil {
 		return fmt.Errorf("failed to update key %q: %w", key, err)
@@ -404,13 +383,7 @@ func (s *Store) List() ([]KeyInfo, error) {
 	defer s.mu.RUnlock()
 
 	var keys []KeyInfo
-	var query string
-	switch s.dbType {
-	case DBTypePostgres:
-		query = `SELECT key, octet_length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`
-	default:
-		query = `SELECT key, length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`
-	}
+	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`)
 	if err := s.db.Select(&keys, query); err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
@@ -425,12 +398,20 @@ func (s *Store) Close() error {
 	return nil
 }
 
-// adoptQuery converts SQLite placeholders (?) to PostgreSQL ($1, $2, ...).
+// adoptQuery converts SQLite query syntax to PostgreSQL:
+// - placeholders: ? → $1, $2, ...
+// - functions: length( → octet_length(
+// - case: excluded. → EXCLUDED.
 func (s *Store) adoptQuery(query string) string {
 	if s.dbType != DBTypePostgres {
 		return query
 	}
 
+	// function and keyword mappings
+	query = strings.ReplaceAll(query, "length(", "octet_length(")
+	query = strings.ReplaceAll(query, "excluded.", "EXCLUDED.")
+
+	// placeholder conversion
 	result := make([]byte, 0, len(query)+10)
 	paramNum := 1
 	for i := 0; i < len(query); i++ {

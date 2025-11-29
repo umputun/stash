@@ -336,6 +336,56 @@ func TestStore_Postgres(t *testing.T) {
 		assert.True(t, found1, "pglist1 not found")
 		assert.True(t, found2, "pglist2 not found")
 	})
+
+	t.Run("get info returns correct metadata", func(t *testing.T) {
+		err := store.Set("pginfo", []byte("test value"), "json")
+		require.NoError(t, err)
+
+		info, err := store.GetInfo("pginfo")
+		require.NoError(t, err)
+		assert.Equal(t, "pginfo", info.Key)
+		assert.Equal(t, 10, info.Size) // len("test value")
+		assert.Equal(t, "json", info.Format)
+		assert.False(t, info.CreatedAt.IsZero())
+		assert.False(t, info.UpdatedAt.IsZero())
+	})
+
+	t.Run("set with version succeeds when version matches", func(t *testing.T) {
+		err := store.Set("pgversioned", []byte("initial"), "text")
+		require.NoError(t, err)
+
+		info, err := store.GetInfo("pgversioned")
+		require.NoError(t, err)
+
+		err = store.SetWithVersion("pgversioned", []byte("updated"), "json", info.UpdatedAt)
+		require.NoError(t, err)
+
+		value, format, err := store.GetWithFormat("pgversioned")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("updated"), value)
+		assert.Equal(t, "json", format)
+	})
+
+	t.Run("set with version fails on conflict", func(t *testing.T) {
+		err := store.Set("pgconflict", []byte("original"), "text")
+		require.NoError(t, err)
+
+		info1, err := store.GetInfo("pgconflict")
+		require.NoError(t, err)
+
+		// simulate concurrent update
+		time.Sleep(1100 * time.Millisecond)
+		err = store.Set("pgconflict", []byte("concurrent"), "yaml")
+		require.NoError(t, err)
+
+		// try update with old version
+		err = store.SetWithVersion("pgconflict", []byte("my-update"), "json", info1.UpdatedAt)
+		require.ErrorIs(t, err, ErrConflict)
+
+		var conflictErr *ConflictError
+		require.ErrorAs(t, err, &conflictErr)
+		assert.Equal(t, []byte("concurrent"), conflictErr.Info.CurrentValue)
+	})
 }
 
 func TestDetectDBType(t *testing.T) {
@@ -360,14 +410,28 @@ func TestDetectDBType(t *testing.T) {
 }
 
 func TestAdoptQuery(t *testing.T) {
-	// sQLite store - no changes
-	sqliteStore := &Store{dbType: DBTypeSQLite}
-	assert.Equal(t, "SELECT * FROM kv WHERE key = ?", sqliteStore.adoptQuery("SELECT * FROM kv WHERE key = ?"))
+	t.Run("sqlite no changes", func(t *testing.T) {
+		s := &Store{dbType: DBTypeSQLite}
+		assert.Equal(t, "SELECT * FROM kv WHERE key = ?", s.adoptQuery("SELECT * FROM kv WHERE key = ?"))
+		assert.Equal(t, "SELECT length(value) FROM kv", s.adoptQuery("SELECT length(value) FROM kv"))
+		assert.Equal(t, "excluded.value", s.adoptQuery("excluded.value"))
+	})
 
-	// postgreSQL store - converts placeholders
-	pgStore := &Store{dbType: DBTypePostgres}
-	assert.Equal(t, "SELECT * FROM kv WHERE key = $1", pgStore.adoptQuery("SELECT * FROM kv WHERE key = ?"))
-	assert.Equal(t, "INSERT INTO kv VALUES ($1, $2, $3)", pgStore.adoptQuery("INSERT INTO kv VALUES (?, ?, ?)"))
+	t.Run("postgres converts placeholders", func(t *testing.T) {
+		s := &Store{dbType: DBTypePostgres}
+		assert.Equal(t, "SELECT * FROM kv WHERE key = $1", s.adoptQuery("SELECT * FROM kv WHERE key = ?"))
+		assert.Equal(t, "INSERT INTO kv VALUES ($1, $2, $3)", s.adoptQuery("INSERT INTO kv VALUES (?, ?, ?)"))
+	})
+
+	t.Run("postgres converts length to octet_length", func(t *testing.T) {
+		s := &Store{dbType: DBTypePostgres}
+		assert.Equal(t, "SELECT octet_length(value) FROM kv", s.adoptQuery("SELECT length(value) FROM kv"))
+	})
+
+	t.Run("postgres converts excluded to EXCLUDED", func(t *testing.T) {
+		s := &Store{dbType: DBTypePostgres}
+		assert.Equal(t, "SET value = EXCLUDED.value", s.adoptQuery("SET value = excluded.value"))
+	})
 }
 
 func TestSQLite_Format(t *testing.T) {
