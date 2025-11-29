@@ -3,14 +3,27 @@ package server
 import (
 	"bytes"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 
-	"github.com/santhosh-tekuri/jsonschema/v5"
+	"github.com/invopop/jsonschema"
+	validator "github.com/santhosh-tekuri/jsonschema/v5"
 	"gopkg.in/yaml.v3"
 )
 
 //go:embed schema.json
 var embeddedSchemaData []byte
+
+// GenerateAuthSchema generates JSON schema for AuthConfig struct.
+func GenerateAuthSchema() ([]byte, error) {
+	schema := jsonschema.Reflect(&AuthConfig{})
+	schema.Title = "Stash Auth Configuration"
+	data, err := json.MarshalIndent(schema, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal schema: %w", err)
+	}
+	return data, nil
+}
 
 // VerifyAuthConfig validates auth config data against the embedded JSON schema.
 func VerifyAuthConfig(data []byte) error {
@@ -19,7 +32,7 @@ func VerifyAuthConfig(data []byte) error {
 	}
 
 	// compile the embedded schema
-	compiler := jsonschema.NewCompiler()
+	compiler := validator.NewCompiler()
 	if err := compiler.AddResource("schema.json", bytes.NewReader(embeddedSchemaData)); err != nil {
 		return fmt.Errorf("failed to add schema resource: %w", err)
 	}

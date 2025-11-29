@@ -55,3 +55,13 @@ func TestVerifyAuthConfig_InvalidYAML(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse auth config file")
 }
+
+func TestGenerateAuthSchema(t *testing.T) {
+	data, err := GenerateAuthSchema()
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"$schema"`)
+	assert.Contains(t, string(data), `"AuthConfig"`)
+	assert.Contains(t, string(data), `"users"`)
+	assert.Contains(t, string(data), `"tokens"`)
+	assert.Contains(t, string(data), `"Stash Auth Configuration"`)
+}

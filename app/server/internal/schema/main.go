@@ -1,22 +1,16 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"os"
-
-	"github.com/invopop/jsonschema"
 
 	"github.com/umputun/stash/app/server"
 )
 
 func main() {
-	schema := jsonschema.Reflect(&server.AuthConfig{})
-	schema.Title = "Stash Auth Configuration"
-
-	data, err := json.MarshalIndent(schema, "", "  ")
+	data, err := server.GenerateAuthSchema()
 	if err != nil {
-		log.Fatalf("failed to marshal schema: %v", err)
+		log.Fatalf("failed to generate schema: %v", err)
 	}
 
 	outputPath := "schema.json"
