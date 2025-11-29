@@ -54,8 +54,9 @@ var opts struct {
 	} `group:"cache" namespace:"cache" env-namespace:"STASH_CACHE"`
 
 	Auth struct {
-		File     string        `long:"file" env:"FILE" description:"path to auth config file (stash-auth.yml)"`
-		LoginTTL time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
+		File      string        `long:"file" env:"FILE" description:"path to auth config file (stash-auth.yml)"`
+		LoginTTL  time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
+		HotReload bool          `long:"hot-reload" env:"HOT_RELOAD" description:"watch auth config for changes and reload"`
 	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
 
 	ServerCmd struct {
@@ -129,6 +130,9 @@ func runServer(ctx context.Context) error {
 	}
 	if opts.Auth.File != "" {
 		log.Printf("[INFO] authentication enabled from %s", opts.Auth.File)
+		if opts.Auth.HotReload {
+			log.Printf("[INFO] auth config hot-reload enabled")
+		}
 	}
 	if opts.Git.Enabled {
 		log.Printf("[INFO] git tracking enabled, path: %s, branch: %s", opts.Git.Path, opts.Git.Branch)
@@ -177,6 +181,7 @@ func runServer(ctx context.Context) error {
 		ShutdownTimeout:  opts.Server.ShutdownTimeout,
 		Version:          revision,
 		AuthFile:         opts.Auth.File,
+		AuthHotReload:    opts.Auth.HotReload,
 		LoginTTL:         opts.Auth.LoginTTL,
 		BaseURL:          baseURL,
 		BodySizeLimit:    opts.Limits.BodySize,

@@ -1,14 +1,17 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	log "github.com/go-pkgz/lgr"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -132,11 +135,13 @@ type session struct {
 
 // Auth handles authentication and authorization.
 type Auth struct {
+	mu         sync.RWMutex        // protects users, tokens, publicACL (config data)
+	authFile   string              // path to auth config file for reloading
 	users      map[string]User     // username -> User (for web UI auth)
 	tokens     map[string]TokenACL // token string -> ACL (for API auth)
 	publicACL  *TokenACL           // public access ACL (token="*"), nil if not configured
 	sessions   map[string]session  // session token -> session
-	sessionsMu sync.Mutex
+	sessionsMu sync.Mutex          // protects sessions only; lock ordering: mu before sessionsMu
 	loginTTL   time.Duration
 }
 
@@ -171,6 +176,7 @@ func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 	}
 
 	return &Auth{
+		authFile:  authFile,
 		users:     users,
 		tokens:    tokens,
 		publicACL: publicACL,
@@ -293,7 +299,12 @@ func parsePermissionString(s string) (Permission, error) {
 
 // Enabled returns true if authentication is enabled.
 func (a *Auth) Enabled() bool {
-	return a != nil && (len(a.users) > 0 || len(a.tokens) > 0 || a.publicACL != nil)
+	if a == nil {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return len(a.users) > 0 || len(a.tokens) > 0 || a.publicACL != nil
 }
 
 // LoginTTL returns the configured login session TTL.
@@ -302,6 +313,134 @@ func (a *Auth) LoginTTL() time.Duration {
 		return 24 * time.Hour // default
 	}
 	return a.loginTTL
+}
+
+// Reload reloads the auth configuration from the file.
+// Validates new config before applying. On success, invalidates all sessions.
+// On error, keeps the existing config and returns the error.
+func (a *Auth) Reload() error {
+	if a == nil {
+		return fmt.Errorf("auth not enabled")
+	}
+	if a.authFile == "" {
+		return fmt.Errorf("auth file path not set")
+	}
+
+	// load and validate new config before acquiring any locks
+	cfg, err := LoadAuthConfig(a.authFile)
+	if err != nil {
+		return fmt.Errorf("failed to load auth config: %w", err)
+	}
+
+	users, err := parseUsers(cfg.Users)
+	if err != nil {
+		return fmt.Errorf("failed to parse users: %w", err)
+	}
+
+	tokens, publicACL, err := parseTokenConfigs(cfg.Tokens)
+	if err != nil {
+		return fmt.Errorf("failed to parse tokens: %w", err)
+	}
+
+	if len(users) == 0 && len(tokens) == 0 && publicACL == nil {
+		return fmt.Errorf("auth config must have at least one user or token")
+	}
+
+	// acquire write lock for config, then clear sessions
+	a.mu.Lock()
+	a.users = users
+	a.tokens = tokens
+	a.publicACL = publicACL
+	a.mu.Unlock()
+
+	// clear all sessions (lock ordering: mu before sessionsMu)
+	a.sessionsMu.Lock()
+	a.sessions = make(map[string]session)
+	a.sessionsMu.Unlock()
+
+	log.Printf("[INFO] auth config reloaded from %s, all sessions invalidated", a.authFile)
+	return nil
+}
+
+// StartWatcher starts watching the auth config file for changes.
+// When the file changes, it reloads the configuration automatically.
+// The watcher stops when the context is canceled.
+// Returns an error if the watcher cannot be started.
+func (a *Auth) StartWatcher(ctx context.Context) error {
+	if a == nil {
+		return fmt.Errorf("auth not enabled")
+	}
+	if a.authFile == "" {
+		return fmt.Errorf("auth file path not set")
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create file watcher: %w", err)
+	}
+
+	// watch the directory containing the auth file (not the file itself)
+	// this catches atomic renames used by editors like vim/VSCode
+	dir := filepath.Dir(a.authFile)
+	filename := filepath.Base(a.authFile)
+
+	if err := watcher.Add(dir); err != nil {
+		_ = watcher.Close()
+		return fmt.Errorf("failed to watch directory %s: %w", dir, err)
+	}
+
+	log.Printf("[INFO] watching auth config file %s for changes", a.authFile)
+
+	go func() {
+		defer watcher.Close()
+
+		var debounceTimer *time.Timer
+		const debounceDelay = 100 * time.Millisecond
+
+		for {
+			select {
+			case <-ctx.Done():
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+				log.Printf("[INFO] auth config watcher stopped")
+				return
+
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+
+				// only react to events on our auth file
+				if filepath.Base(event.Name) != filename {
+					continue
+				}
+
+				// react to write, create, rename events
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+					continue
+				}
+
+				// debounce rapid changes
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+				debounceTimer = time.AfterFunc(debounceDelay, func() {
+					if err := a.Reload(); err != nil {
+						log.Printf("[WARN] failed to reload auth config: %v", err)
+					}
+				})
+
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Printf("[WARN] auth config watcher error: %v", err)
+			}
+		}
+	}()
+
+	return nil
 }
 
 // ValidateUser checks if username/password are valid and returns the user.
@@ -316,11 +455,13 @@ func (a *Auth) ValidateUser(username, password string) *User {
 	// this is a valid bcrypt hash (cost=10) to ensure comparison takes similar time.
 	const dummyHash = "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
 
+	a.mu.RLock()
 	user, exists := a.users[username]
 	hashToCheck := dummyHash
 	if exists {
 		hashToCheck = user.PasswordHash
 	}
+	a.mu.RUnlock()
 
 	// always run bcrypt comparison to prevent timing-based username enumeration
 	if err := bcrypt.CompareHashAndPassword([]byte(hashToCheck), []byte(password)); err != nil || !exists {
@@ -340,7 +481,9 @@ func (a *Auth) GetTokenACL(token string) (TokenACL, bool) {
 	if a == nil {
 		return TokenACL{}, false
 	}
+	a.mu.RLock()
 	acl, ok := a.tokens[token]
+	a.mu.RUnlock()
 	return acl, ok
 }
 
@@ -427,7 +570,9 @@ func (a *Auth) CheckUserPermission(username, key string, needWrite bool) bool {
 	if a == nil || !a.Enabled() {
 		return true // no auth = everything allowed
 	}
+	a.mu.RLock()
 	user, exists := a.users[username]
+	a.mu.RUnlock()
 	if !exists {
 		return false
 	}
@@ -440,7 +585,9 @@ func (a *Auth) FilterUserKeys(username string, keys []string) []string {
 	if a == nil || !a.Enabled() {
 		return keys // no auth = show all keys
 	}
+	a.mu.RLock()
 	user, exists := a.users[username]
+	a.mu.RUnlock()
 	if !exists {
 		return nil
 	}
@@ -460,7 +607,9 @@ func (a *Auth) FilterTokenKeys(token string, keys []string) []string {
 	if a == nil {
 		return keys // no auth = show all keys
 	}
+	a.mu.RLock()
 	acl, ok := a.tokens[token]
+	a.mu.RUnlock()
 	if !ok {
 		return nil
 	}
@@ -477,13 +626,19 @@ func (a *Auth) FilterTokenKeys(token string, keys []string) []string {
 // FilterPublicKeys filters keys based on public ACL read permissions.
 // Returns nil if public access is not configured.
 func (a *Auth) FilterPublicKeys(keys []string) []string {
-	if a == nil || a.publicACL == nil {
+	if a == nil {
+		return nil
+	}
+	a.mu.RLock()
+	publicACL := a.publicACL
+	a.mu.RUnlock()
+	if publicACL == nil {
 		return nil
 	}
 
 	var filtered []string
 	for _, key := range keys {
-		if a.publicACL.CheckKeyPermission(key, false) {
+		if publicACL.CheckKeyPermission(key, false) {
 			filtered = append(filtered, key)
 		}
 	}
@@ -509,7 +664,9 @@ func (a *Auth) UserCanWrite(username string) bool {
 	if a == nil || !a.Enabled() {
 		return true // no auth = write allowed
 	}
+	a.mu.RLock()
 	user, exists := a.users[username]
+	a.mu.RUnlock()
 	if !exists {
 		return false
 	}
@@ -603,8 +760,11 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 
 		// check public access first (token="*" in config)
 		// for list operation, public access means pass-through (handler filters results)
-		if a.publicACL != nil {
-			if isList || a.publicACL.CheckKeyPermission(key, needWrite) {
+		a.mu.RLock()
+		publicACL := a.publicACL
+		a.mu.RUnlock()
+		if publicACL != nil {
+			if isList || publicACL.CheckKeyPermission(key, needWrite) {
 				next.ServeHTTP(w, r)
 				return
 			}

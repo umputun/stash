@@ -70,6 +70,7 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	Version         string
 	AuthFile        string        // path to auth config file (empty = auth disabled)
+	AuthHotReload   bool          // watch auth config for changes and reload
 	LoginTTL        time.Duration // session duration
 	BaseURL         string        // base URL path for reverse proxy (e.g., /stash)
 	PageSize        int           // keys per page in web UI (0 = unlimited)
@@ -127,6 +128,14 @@ func (s *Server) Run(ctx context.Context) error {
 		ReadHeaderTimeout: s.cfg.ReadTimeout,
 		WriteTimeout:      s.cfg.WriteTimeout,
 		IdleTimeout:       s.cfg.IdleTimeout,
+	}
+
+	// start auth config file watcher if enabled
+	if s.auth.Enabled() && s.cfg.AuthHotReload {
+		if err := s.auth.StartWatcher(ctx); err != nil {
+			return fmt.Errorf("failed to start auth config watcher: %w", err)
+		}
+		log.Printf("[INFO] auth config hot-reload enabled")
 	}
 
 	// graceful shutdown

@@ -31,6 +31,7 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **Database**: `github.com/jmoiron/sqlx`, `modernc.org/sqlite`, `github.com/jackc/pgx/v5`
 - **Git**: `github.com/go-git/go-git/v5`
 - **Cache**: `github.com/go-pkgz/lcw/v2`
+- **File watching**: `github.com/fsnotify/fsnotify`
 - **Testing**: `github.com/stretchr/testify`
 
 ## Build & Test
@@ -98,6 +99,8 @@ POST   /logout                   # clear session, redirect to login
 - Auth: YAML config file with users (web UI) and tokens (API), both use prefix-based ACL
 - Auth flow: username+password login creates session, session tracks username for permission checks
 - Permissions: prefix patterns (*, foo/*, exact) with access levels (r, w, rw), longest match wins
+- Auth hot-reload: fsnotify watches directory (not file) for atomic rename support, debounces 100ms
+- Auth hot-reload invalidates all sessions on config change, rejects invalid configs
 - Web handlers check permissions server-side (not just UI conditions)
 - Cache: optional loading cache wrapper, populated on reads, invalidated on writes
 - Keep it simple - no over-engineering
