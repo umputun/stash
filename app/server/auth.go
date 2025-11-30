@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -168,7 +169,7 @@ func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 	}
 
 	if len(users) == 0 && len(tokens) == 0 && publicACL == nil {
-		return nil, fmt.Errorf("auth config must have at least one user or token")
+		return nil, errors.New("auth config must have at least one user or token")
 	}
 
 	if loginTTL == 0 {
@@ -191,7 +192,7 @@ func parseUsers(configs []UserConfig) (map[string]User, error) {
 
 	for _, uc := range configs {
 		if uc.Name == "" {
-			return nil, fmt.Errorf("user name cannot be empty")
+			return nil, errors.New("user name cannot be empty")
 		}
 		if uc.Password == "" {
 			return nil, fmt.Errorf("password hash cannot be empty for user %q", uc.Name)
@@ -223,7 +224,7 @@ func parseTokenConfigs(configs []TokenConfig) (map[string]TokenACL, *TokenACL, e
 
 	for _, tc := range configs {
 		if tc.Token == "" {
-			return nil, nil, fmt.Errorf("token cannot be empty")
+			return nil, nil, errors.New("token cannot be empty")
 		}
 		if _, exists := tokens[tc.Token]; exists {
 			return nil, nil, fmt.Errorf("duplicate token %q", maskToken(tc.Token))
@@ -237,7 +238,7 @@ func parseTokenConfigs(configs []TokenConfig) (map[string]TokenACL, *TokenACL, e
 		// token "*" is treated as public access (no auth required)
 		if tc.Token == "*" {
 			if publicACL != nil {
-				return nil, nil, fmt.Errorf("duplicate public token \"*\"")
+				return nil, nil, errors.New("duplicate public token \"*\"")
 			}
 			publicACL = &acl
 			continue // don't add to regular tokens map
@@ -257,7 +258,7 @@ func parsePermissionConfigs(name string, configs []PermissionConfig) (TokenACL, 
 
 	for _, pc := range configs {
 		if pc.Prefix == "" {
-			return TokenACL{}, fmt.Errorf("prefix cannot be empty")
+			return TokenACL{}, errors.New("prefix cannot be empty")
 		}
 		if seen[pc.Prefix] {
 			return TokenACL{}, fmt.Errorf("duplicate prefix %q", pc.Prefix)
@@ -293,7 +294,7 @@ func parsePermissionString(s string) (Permission, error) {
 	case "rw", "readwrite", "read-write":
 		return PermissionReadWrite, nil
 	default:
-		return PermissionNone, fmt.Errorf("expected r/w/rw")
+		return PermissionNone, errors.New("expected r/w/rw")
 	}
 }
 
@@ -320,10 +321,10 @@ func (a *Auth) LoginTTL() time.Duration {
 // On error, keeps the existing config and returns the error.
 func (a *Auth) Reload() error {
 	if a == nil {
-		return fmt.Errorf("auth not enabled")
+		return errors.New("auth not enabled")
 	}
 	if a.authFile == "" {
-		return fmt.Errorf("auth file path not set")
+		return errors.New("auth file path not set")
 	}
 
 	// load and validate new config before acquiring any locks
@@ -343,7 +344,7 @@ func (a *Auth) Reload() error {
 	}
 
 	if len(users) == 0 && len(tokens) == 0 && publicACL == nil {
-		return fmt.Errorf("auth config must have at least one user or token")
+		return errors.New("auth config must have at least one user or token")
 	}
 
 	// acquire write lock for config, then clear sessions
@@ -368,10 +369,10 @@ func (a *Auth) Reload() error {
 // Returns an error if the watcher cannot be started.
 func (a *Auth) StartWatcher(ctx context.Context) error {
 	if a == nil {
-		return fmt.Errorf("auth not enabled")
+		return errors.New("auth not enabled")
 	}
 	if a.authFile == "" {
-		return fmt.Errorf("auth file path not set")
+		return errors.New("auth file path not set")
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -510,8 +511,7 @@ func matchPrefix(pattern, key string) bool {
 		return true
 	}
 	// remove trailing * for prefix matching
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
+	if prefix, found := strings.CutSuffix(pattern, "*"); found {
 		return strings.HasPrefix(key, prefix)
 	}
 	// exact match
@@ -521,7 +521,7 @@ func matchPrefix(pattern, key string) bool {
 // CreateSession generates a new session token for the given username.
 func (a *Auth) CreateSession(username string) (string, error) {
 	if a == nil {
-		return "", fmt.Errorf("auth not enabled")
+		return "", errors.New("auth not enabled")
 	}
 
 	token := uuid.NewString()

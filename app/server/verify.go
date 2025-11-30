@@ -4,6 +4,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/invopop/jsonschema"
@@ -28,7 +29,7 @@ func GenerateAuthSchema() ([]byte, error) {
 // VerifyAuthConfig validates auth config data against the embedded JSON schema.
 func VerifyAuthConfig(data []byte) error {
 	if len(embeddedSchemaData) == 0 {
-		return fmt.Errorf("embedded auth schema is empty")
+		return errors.New("embedded auth schema is empty")
 	}
 
 	// compile the embedded schema
@@ -43,7 +44,7 @@ func VerifyAuthConfig(data []byte) error {
 	}
 
 	// parse yaml config into generic map for schema validation
-	var cfg interface{}
+	var cfg any
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("failed to parse auth config file: %w", err)
 	}

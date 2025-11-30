@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,7 +92,7 @@ func connectSQLite(dbPath string) (*sqlx.DB, error) {
 		"PRAGMA foreign_keys=ON",
 	}
 	for _, pragma := range pragmas {
-		if _, err := db.Exec(pragma); err != nil {
+		if _, err := db.Exec(pragma); err != nil { //nolint:noctx // init-time, no context available
 			_ = db.Close()
 			return nil, fmt.Errorf("failed to set pragma %q: %w", pragma, err)
 		}
@@ -141,7 +142,7 @@ func (s *Store) createSchema() error {
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`
 	}
-	if _, err := s.db.Exec(schema); err != nil {
+	if _, err := s.db.Exec(schema); err != nil { //nolint:noctx // init-time, no context available
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
 	return nil
@@ -159,7 +160,7 @@ func (s *Store) migrate() error {
 	if !hasFormat {
 		log.Printf("[INFO] migrating database: adding format column to kv table")
 		alter := "ALTER TABLE kv ADD COLUMN format TEXT NOT NULL DEFAULT 'text'"
-		if _, err := s.db.Exec(alter); err != nil {
+		if _, err := s.db.Exec(alter); err != nil { //nolint:noctx // init-time, no context available
 			return fmt.Errorf("failed to add format column: %w", err)
 		}
 	}
@@ -286,7 +287,7 @@ func (s *Store) Set(key string, value []byte, format string) error {
 	query := s.adoptQuery(`
 		INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`)
-	if _, err := s.db.Exec(query, key, value, format, now, now); err != nil {
+	if _, err := s.db.Exec(query, key, value, format, now, now); err != nil { //nolint:noctx // store interface doesn't expose context
 		return fmt.Errorf("failed to set key %q: %w", key, err)
 	}
 	return nil
@@ -310,7 +311,7 @@ func (s *Store) SetWithVersion(key string, value []byte, format string, expected
 
 	// atomic update: only succeeds if version matches
 	query := s.adoptQuery(`UPDATE kv SET value = ?, format = ?, updated_at = ? WHERE key = ? AND updated_at = ?`)
-	result, err := s.db.Exec(query, value, format, now, key, expectedVersion)
+	result, err := s.db.Exec(query, value, format, now, key, expectedVersion) //nolint:noctx // store interface doesn't expose context
 	if err != nil {
 		return fmt.Errorf("failed to update key %q: %w", key, err)
 	}
@@ -362,7 +363,7 @@ func (s *Store) Delete(key string) error {
 	defer s.mu.Unlock()
 
 	query := s.adoptQuery("DELETE FROM kv WHERE key = ?")
-	result, err := s.db.Exec(query, key)
+	result, err := s.db.Exec(query, key) //nolint:noctx // store interface doesn't expose context
 	if err != nil {
 		return fmt.Errorf("failed to delete key %q: %w", key, err)
 	}
@@ -420,7 +421,7 @@ func (s *Store) adoptQuery(query string) string {
 			continue
 		}
 		result = append(result, '$')
-		result = append(result, fmt.Sprintf("%d", paramNum)...)
+		result = append(result, strconv.Itoa(paramNum)...)
 		paramNum++
 	}
 	return string(result)

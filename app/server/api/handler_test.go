@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -549,12 +550,7 @@ func defaultFormatValidator() FormatValidator {
 	return &mocks.FormatValidatorMock{
 		IsValidFormatFunc: func(format string) bool {
 			valid := []string{"text", "json", "yaml", "xml", "toml", "ini", "hcl", "shell"}
-			for _, f := range valid {
-				if f == format {
-					return true
-				}
-			}
-			return false
+			return slices.Contains(valid, format)
 		},
 	}
 }

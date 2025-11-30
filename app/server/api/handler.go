@@ -156,8 +156,7 @@ func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
 
 	// check Bearer token (authenticated token has priority over public)
 	authHeader := r.Header.Get("Authorization")
-	if strings.HasPrefix(authHeader, "Bearer ") {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token, found := strings.CutPrefix(authHeader, "Bearer "); found {
 		if filtered := h.auth.FilterTokenKeys(token, keys); filtered != nil {
 			return filtered
 		}

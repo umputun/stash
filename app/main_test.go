@@ -640,10 +640,7 @@ func TestRun_InvalidDB(t *testing.T) {
 	opts.Server.ReadTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err := runServer(ctx)
+	err := runServer(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to initialize store")
 }
@@ -659,10 +656,7 @@ func TestRun_InvalidAuthFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(authFile, []byte("users: []\ntokens: []\n"), 0o600))
 	opts.Auth.File = authFile
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err := runServer(ctx)
+	err := runServer(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to initialize server")
 
@@ -688,10 +682,7 @@ func TestRun_InvalidAuthFileSchema(t *testing.T) {
 	require.NoError(t, os.WriteFile(authFile, []byte(invalidConfig), 0o600))
 	opts.Auth.File = authFile
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err := runServer(ctx)
+	err := runServer(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "config validation failed")
 	assert.Contains(t, err.Error(), "value must be one of")

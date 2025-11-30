@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 	"github.com/hashicorp/hcl/v2/hclparse"
@@ -33,12 +34,7 @@ func (s *Service) SupportedFormats() []string {
 
 // IsValidFormat checks if format is in the list of supported formats.
 func (s *Service) IsValidFormat(format string) bool {
-	for _, f := range supportedFormats {
-		if f == format {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(supportedFormats, format)
 }
 
 // Validate checks if value is valid for the given format.
@@ -65,7 +61,7 @@ func (s *Service) Validate(format string, value []byte) error {
 }
 
 func (s *Service) validateJSON(value []byte) error {
-	var v interface{}
+	var v any
 	if err := json.Unmarshal(value, &v); err != nil {
 		return fmt.Errorf("invalid json: %w", err)
 	}
@@ -73,7 +69,7 @@ func (s *Service) validateJSON(value []byte) error {
 }
 
 func (s *Service) validateYAML(value []byte) error {
-	var v interface{}
+	var v any
 	if err := yaml.Unmarshal(value, &v); err != nil {
 		return fmt.Errorf("invalid yaml: %w", err)
 	}
@@ -96,13 +92,13 @@ func (s *Service) validateXML(value []byte) error {
 		}
 	}
 	if !hasElement {
-		return fmt.Errorf("invalid xml: no root element found")
+		return errors.New("invalid xml: no root element found")
 	}
 	return nil
 }
 
 func (s *Service) validateTOML(value []byte) error {
-	var v interface{}
+	var v any
 	if err := toml.Unmarshal(value, &v); err != nil {
 		return fmt.Errorf("invalid toml: %w", err)
 	}

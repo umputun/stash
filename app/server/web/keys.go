@@ -77,12 +77,8 @@ func (h *Handler) calculateModalDimensions(value string) (width, textareaHeight 
 
 	// calculate width with constraints
 	width = maxLen*charWidth + padding
-	if width < minWidth {
-		width = minWidth
-	}
-	if width > maxWidth {
-		width = maxWidth
-	}
+	width = max(width, minWidth)
+	width = min(width, maxWidth)
 
 	// calculate textarea height based on line count (min 4, max 18 lines)
 	if lineCount < minLines {
@@ -190,7 +186,7 @@ func (h *Handler) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 
 	data := templateData{
 		IsNew:    true,
-		Format:   "text",
+		Format:   formatText,
 		Formats:  h.validator.SupportedFormats(),
 		Theme:    h.getTheme(r),
 		BaseURL:  h.baseURL,
@@ -314,7 +310,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
 	if !h.validator.IsValidFormat(format) {
-		format = "text"
+		format = formatText
 	}
 
 	if key == "" {
@@ -435,7 +431,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
 	if !h.validator.IsValidFormat(format) {
-		format = "text"
+		format = formatText
 	}
 
 	// check write permission

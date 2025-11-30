@@ -11,15 +11,27 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 )
 
+// format constants for value types.
+const (
+	formatText  = "text"
+	formatJSON  = "json"
+	formatYAML  = "yaml"
+	formatXML   = "xml"
+	formatTOML  = "toml"
+	formatINI   = "ini"
+	formatHCL   = "hcl"
+	formatShell = "shell"
+)
+
 // formatToLexer maps format names to Chroma lexer names.
 var formatToLexer = map[string]string{
-	"json":  "JSON",
-	"yaml":  "YAML",
-	"xml":   "XML",
-	"toml":  "TOML",
-	"ini":   "INI",
-	"hcl":   "HCL",
-	"shell": "Bash",
+	formatJSON:  "JSON",
+	formatYAML:  "YAML",
+	formatXML:   "XML",
+	formatTOML:  "TOML",
+	formatINI:   "INI",
+	formatHCL:   "HCL",
+	formatShell: "Bash",
 }
 
 // Highlighter provides syntax highlighting for code.
@@ -33,7 +45,7 @@ func NewHighlighter() *Highlighter {
 // Code applies syntax highlighting to code based on format.
 // returns HTML-safe highlighted code or plain escaped text if format is "text" or highlighting fails.
 func (h *Highlighter) Code(code, format string) template.HTML {
-	if format == "" || format == "text" {
+	if format == "" || format == formatText {
 		return template.HTML("<pre>" + html.EscapeString(code) + "</pre>") //nolint:gosec // escaped
 	}
 

@@ -275,7 +275,7 @@ func validateBaseURL(baseURL string) (string, error) {
 		return "", nil
 	}
 	if !strings.HasPrefix(baseURL, "/") {
-		return "", fmt.Errorf("base URL must start with /")
+		return "", errors.New("base URL must start with /")
 	}
 	return strings.TrimSuffix(baseURL, "/"), nil
 }

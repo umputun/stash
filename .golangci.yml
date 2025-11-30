@@ -4,32 +4,50 @@ run:
 linters:
   default: none
   enable:
+    - bodyclose
+    - copyloopvar
+    - dupl
+    - errcheck
+    - errorlint
+    - exhaustive
+    - fatcontext
     - gochecknoinits
+    - goconst
     - gocritic
+    - gocyclo
+    - godoclint
     - gosec
     - govet
     - ineffassign
+    - intrange
+    - makezero
     - misspell
+    - modernize
     - nakedret
+    - nestif
+    - nilerr
+    - noctx
+    - perfsprint
     - prealloc
     - revive
+    - sqlclosecheck
     - staticcheck
+    - testifylint
     - unconvert
     - unparam
     - unused
-    - nestif
-    - testifylint
+    - usestdlibvars
+    - wastedassign
     - wrapcheck
-    - errorlint
-    - bodyclose
-    - godoclint
-    - intrange
+
   settings:
+    exhaustive:
+      default-signifies-exhaustive: true
     dupl:
       threshold: 100
     goconst:
       min-len: 2
-      min-occurrences: 2
+      min-occurrences: 7
     gocritic:
       disabled-checks:
         - wrapperFunc
@@ -40,7 +58,7 @@ linters:
         - style
         - experimental
     gocyclo:
-      min-complexity: 15
+      min-complexity: 20
     govet:
       enable:
         - shadow
@@ -87,6 +105,15 @@ linters:
           - unused
         path: _test\.go$
         text: unused-parameter
+      - linters:
+          - dupl
+          - goconst
+          - noctx
+          - usestdlibvars
+        path: _test\.go$
+      - linters:
+          - errcheck
+        text: "Error return value of .*.Close.*is not checked"
     paths:
       - vendor
       - third_party$

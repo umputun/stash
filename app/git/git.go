@@ -62,7 +62,7 @@ type Store struct {
 // New creates a new git store, initializing or opening the repository
 func New(cfg Config) (*Store, error) {
 	if cfg.Path == "" {
-		return nil, fmt.Errorf("git path is required")
+		return nil, errors.New("git path is required")
 	}
 	if cfg.Branch == "" {
 		cfg.Branch = "master"
@@ -454,9 +454,9 @@ func (s *Store) getFileFormat(filePath string) string {
 // parseFormatFromCommit extracts format value from commit message metadata.
 // looks for "format: <value>" line in commit message, returns "text" if not found.
 func parseFormatFromCommit(message string) string {
-	for _, line := range strings.Split(message, "\n") {
-		if strings.HasPrefix(line, "format: ") {
-			return strings.TrimPrefix(line, "format: ")
+	for line := range strings.SplitSeq(message, "\n") {
+		if format, found := strings.CutPrefix(line, "format: "); found {
+			return format
 		}
 	}
 	return "text"
@@ -473,32 +473,32 @@ func keyToPath(key string) string {
 func (s *Store) validateKey(key string) error {
 	// reject empty keys
 	if key == "" {
-		return fmt.Errorf("invalid key: empty key not allowed")
+		return errors.New("invalid key: empty key not allowed")
 	}
 
 	// reject absolute paths
 	if strings.HasPrefix(key, "/") {
-		return fmt.Errorf("invalid key: absolute path not allowed")
+		return errors.New("invalid key: absolute path not allowed")
 	}
 
 	// reject path traversal sequences
 	if strings.Contains(key, "..") {
-		return fmt.Errorf("invalid key: path traversal not allowed")
+		return errors.New("invalid key: path traversal not allowed")
 	}
 
 	// double-check: resolved path must be within repo
 	filePath := filepath.Join(s.cfg.Path, keyToPath(key))
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return fmt.Errorf("invalid key: failed to resolve path")
+		return errors.New("invalid key: failed to resolve path")
 	}
 	absBase, err := filepath.Abs(s.cfg.Path)
 	if err != nil {
-		return fmt.Errorf("invalid key: failed to resolve base path")
+		return errors.New("invalid key: failed to resolve base path")
 	}
 
 	if !strings.HasPrefix(absPath, absBase+string(filepath.Separator)) {
-		return fmt.Errorf("invalid key: path escapes repository")
+		return errors.New("invalid key: path escapes repository")
 	}
 
 	return nil

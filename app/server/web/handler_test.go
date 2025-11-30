@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -471,12 +472,7 @@ func defaultValidatorMock() *mocks.ValidatorMock {
 		ValidateFunc:         func(format string, value []byte) error { return nil },
 		SupportedFormatsFunc: func() []string { return formats },
 		IsValidFormatFunc: func(format string) bool {
-			for _, f := range formats {
-				if f == format {
-					return true
-				}
-			}
-			return false
+			return slices.Contains(formats, format)
 		},
 	}
 }

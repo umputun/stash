@@ -1308,10 +1308,7 @@ tokens:
 	auth, err := NewAuth(f, time.Hour)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err = auth.StartWatcher(ctx)
+	err = auth.StartWatcher(t.Context())
 	require.NoError(t, err)
 
 	// verify initial config
@@ -1361,10 +1358,7 @@ users:
 	auth, err := NewAuth(authFile, time.Hour)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err = auth.StartWatcher(ctx)
+	err = auth.StartWatcher(t.Context())
 	require.NoError(t, err)
 
 	// verify initial config
