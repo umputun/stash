@@ -596,7 +596,6 @@ func TestStore_Head(t *testing.T) {
 
 		assert.NotEqual(t, hash1, hash2, "hash should change after new commit")
 	})
-
 }
 
 func TestParseFormatFromCommit(t *testing.T) {

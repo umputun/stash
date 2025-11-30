@@ -150,7 +150,7 @@ type Auth struct {
 // Returns nil if authFile is empty (authentication disabled).
 func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 	if authFile == "" {
-		return nil, nil // auth disabled
+		return nil, nil //nolint:nilnil // nil auth means disabled, not an error
 	}
 
 	cfg, err := LoadAuthConfig(authFile)

@@ -4,10 +4,14 @@ run:
 linters:
   default: none
   enable:
+    - asciicheck
+    - bidichk
     - bodyclose
     - copyloopvar
     - dupl
+    - durationcheck
     - errcheck
+    - errname
     - errorlint
     - exhaustive
     - fatcontext
@@ -26,23 +30,32 @@ linters:
     - nakedret
     - nestif
     - nilerr
+    - nilnil
     - noctx
+    - nolintlint
     - perfsprint
+    - predeclared
     - prealloc
+    - reassign
     - revive
     - sqlclosecheck
     - staticcheck
     - testifylint
+    - tparallel
     - unconvert
     - unparam
     - unused
     - usestdlibvars
     - wastedassign
+    - whitespace
     - wrapcheck
 
   settings:
     exhaustive:
       default-signifies-exhaustive: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
     dupl:
       threshold: 100
     goconst:
