@@ -12,6 +12,7 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
 )
@@ -186,7 +187,7 @@ func (h *Handler) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 
 	data := templateData{
 		IsNew:    true,
-		Format:   formatText,
+		Format:   enum.FormatText.String(),
 		Formats:  h.validator.SupportedFormats(),
 		Theme:    h.getTheme(r),
 		BaseURL:  h.baseURL,
@@ -310,7 +311,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
 	if !h.validator.IsValidFormat(format) {
-		format = formatText
+		format = enum.FormatText.String()
 	}
 
 	if key == "" {
@@ -431,7 +432,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
 	if !h.validator.IsValidFormat(format) {
-		format = formatText
+		format = enum.FormatText.String()
 	}
 
 	// check write permission

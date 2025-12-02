@@ -43,10 +43,10 @@ func TestHandler_GetTheme(t *testing.T) {
 		cookie   string
 		expected string
 	}{
-		{name: "no cookie", cookie: "", expected: ""},
+		{name: "no cookie", cookie: "", expected: "system"},
 		{name: "light theme", cookie: "light", expected: "light"},
 		{name: "dark theme", cookie: "dark", expected: "dark"},
-		{name: "invalid theme", cookie: "invalid", expected: ""},
+		{name: "invalid theme", cookie: "invalid", expected: "system"},
 	}
 
 	for _, tc := range tests {

@@ -11,17 +11,19 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 func TestPermission_CanRead(t *testing.T) {
 	tests := []struct {
-		perm Permission
+		perm enum.Permission
 		want bool
 	}{
-		{PermissionNone, false},
-		{PermissionRead, true},
-		{PermissionWrite, false},
-		{PermissionReadWrite, true},
+		{enum.PermissionNone, false},
+		{enum.PermissionRead, true},
+		{enum.PermissionWrite, false},
+		{enum.PermissionReadWrite, true},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, tt.perm.CanRead(), "permission %v", tt.perm)
@@ -30,13 +32,13 @@ func TestPermission_CanRead(t *testing.T) {
 
 func TestPermission_CanWrite(t *testing.T) {
 	tests := []struct {
-		perm Permission
+		perm enum.Permission
 		want bool
 	}{
-		{PermissionNone, false},
-		{PermissionRead, false},
-		{PermissionWrite, true},
-		{PermissionReadWrite, true},
+		{enum.PermissionNone, false},
+		{enum.PermissionRead, false},
+		{enum.PermissionWrite, true},
+		{enum.PermissionReadWrite, true},
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, tt.perm.CanWrite(), "permission %v", tt.perm)
@@ -45,14 +47,13 @@ func TestPermission_CanWrite(t *testing.T) {
 
 func TestPermission_String(t *testing.T) {
 	tests := []struct {
-		perm Permission
+		perm enum.Permission
 		want string
 	}{
-		{PermissionNone, "none"},
-		{PermissionRead, "r"},
-		{PermissionWrite, "w"},
-		{PermissionReadWrite, "rw"},
-		{Permission(99), "none"},
+		{enum.PermissionNone, "none"},
+		{enum.PermissionRead, "read"},
+		{enum.PermissionWrite, "write"},
+		{enum.PermissionReadWrite, "readwrite"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
@@ -287,8 +288,8 @@ func TestTokenACL_CheckKeyPermission(t *testing.T) {
 	acl := TokenACL{
 		Token: "test",
 		prefixes: []prefixPerm{
-			{prefix: "app/*", permission: PermissionReadWrite},
-			{prefix: "*", permission: PermissionRead},
+			{prefix: "app/*", permission: enum.PermissionReadWrite},
+			{prefix: "*", permission: enum.PermissionRead},
 		},
 	}
 
@@ -787,20 +788,20 @@ func TestAuth_GetTokenACL_NilAuth(t *testing.T) {
 func TestParsePermissionString(t *testing.T) {
 	tests := []struct {
 		input   string
-		want    Permission
+		want    enum.Permission
 		wantErr bool
 	}{
-		{"r", PermissionRead, false},
-		{"R", PermissionRead, false},
-		{"read", PermissionRead, false},
-		{"w", PermissionWrite, false},
-		{"write", PermissionWrite, false},
-		{"rw", PermissionReadWrite, false},
-		{"RW", PermissionReadWrite, false},
-		{"readwrite", PermissionReadWrite, false},
-		{"read-write", PermissionReadWrite, false},
-		{"invalid", PermissionNone, true},
-		{"", PermissionNone, true},
+		{"r", enum.PermissionRead, false},
+		{"R", enum.PermissionRead, false},
+		{"read", enum.PermissionRead, false},
+		{"w", enum.PermissionWrite, false},
+		{"write", enum.PermissionWrite, false},
+		{"rw", enum.PermissionReadWrite, false},
+		{"RW", enum.PermissionReadWrite, false},
+		{"readwrite", enum.PermissionReadWrite, false},
+		{"read-write", enum.PermissionReadWrite, false},
+		{"invalid", enum.PermissionNone, true},
+		{"", enum.PermissionNone, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {

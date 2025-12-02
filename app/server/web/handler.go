@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-pkgz/routegroup"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
 )
@@ -265,11 +266,11 @@ type templateData struct {
 // sortModeLabel returns a human-readable label for the sort mode.
 func sortModeLabel(mode string) string {
 	switch mode {
-	case "key":
+	case enum.SortModeKey.String():
 		return "Key"
-	case "size":
+	case enum.SortModeSize.String():
 		return "Size"
-	case "created":
+	case enum.SortModeCreated.String():
 		return "Created"
 	default:
 		return "Updated"
@@ -280,33 +281,32 @@ func sortModeLabel(mode string) string {
 func (h *Handler) getTheme(r *http.Request) string {
 	cookie, err := r.Cookie("theme")
 	if err != nil || cookie.Value == "" {
-		return "" // use system preference
+		return enum.ThemeSystem.String() // use system preference
 	}
-	if cookie.Value == "dark" || cookie.Value == "light" {
+	if cookie.Value == enum.ThemeDark.String() || cookie.Value == enum.ThemeLight.String() {
 		return cookie.Value
 	}
-	return ""
+	return enum.ThemeSystem.String()
 }
 
 // getViewMode returns the current view mode from cookie, defaulting to "grid".
 func (h *Handler) getViewMode(r *http.Request) string {
 	if cookie, err := r.Cookie("view_mode"); err == nil {
-		if cookie.Value == "cards" || cookie.Value == "grid" {
+		if cookie.Value == enum.ViewModeCards.String() || cookie.Value == enum.ViewModeGrid.String() {
 			return cookie.Value
 		}
 	}
-	return "grid"
+	return enum.ViewModeGrid.String()
 }
 
 // getSortMode returns the current sort mode from cookie, defaulting to "updated".
 func (h *Handler) getSortMode(r *http.Request) string {
 	if cookie, err := r.Cookie("sort_mode"); err == nil {
-		switch cookie.Value {
-		case "key", "size", "created", "updated":
+		if _, err := enum.ParseSortMode(cookie.Value); err == nil {
 			return cookie.Value
 		}
 	}
-	return "updated"
+	return enum.SortModeUpdated.String()
 }
 
 // url returns a URL path with the base URL prefix.

@@ -5,6 +5,8 @@ import (
 	"strconv"
 
 	log "github.com/go-pkgz/lgr"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 // handleIndex renders the main page.
@@ -56,9 +58,9 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 // handleThemeToggle toggles the theme between light and dark.
 func (h *Handler) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 	currentTheme := h.getTheme(r)
-	newTheme := "dark"
-	if currentTheme == "dark" {
-		newTheme = "light"
+	newTheme := enum.ThemeDark.String()
+	if currentTheme == enum.ThemeDark.String() {
+		newTheme = enum.ThemeLight.String()
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -78,9 +80,9 @@ func (h *Handler) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 // handleViewModeToggle toggles the view mode between grid and cards.
 func (h *Handler) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 	currentMode := h.getViewMode(r)
-	newMode := "cards"
-	if currentMode == "cards" {
-		newMode = "grid"
+	newMode := enum.ViewModeCards.String()
+	if currentMode == enum.ViewModeCards.String() {
+		newMode = enum.ViewModeGrid.String()
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -101,14 +103,14 @@ func (h *Handler) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	currentMode := h.getSortMode(r)
 	var newMode string
 	switch currentMode {
-	case "updated":
-		newMode = "key"
-	case "key":
-		newMode = "size"
-	case "size":
-		newMode = "created"
+	case enum.SortModeUpdated.String():
+		newMode = enum.SortModeKey.String()
+	case enum.SortModeKey.String():
+		newMode = enum.SortModeSize.String()
+	case enum.SortModeSize.String():
+		newMode = enum.SortModeCreated.String()
 	default:
-		newMode = "updated"
+		newMode = enum.SortModeUpdated.String()
 	}
 
 	http.SetCookie(w, &http.Cookie{
