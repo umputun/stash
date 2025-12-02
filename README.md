@@ -467,7 +467,7 @@ Access the web interface at `http://localhost:8080/`. Features:
 
 ![Dashboard Dark](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/dashboard-dark-desktop.png)
 
-<details>
+<details markdown>
   <summary>More screenshots</summary>
 
 ### Dashboard - Dark Theme (Table View)
