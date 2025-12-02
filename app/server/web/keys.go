@@ -128,13 +128,13 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	for _, c := range w.Header()["Set-Cookie"] {
 		switch {
 		case strings.Contains(c, "sort_mode=key"):
-			sortMode = "key"
+			sortMode = enum.SortModeKey
 		case strings.Contains(c, "sort_mode=size"):
-			sortMode = "size"
+			sortMode = enum.SortModeSize
 		case strings.Contains(c, "sort_mode=created"):
-			sortMode = "created"
+			sortMode = enum.SortModeCreated
 		case strings.Contains(c, "sort_mode=updated"):
-			sortMode = "updated"
+			sortMode = enum.SortModeUpdated
 		}
 	}
 	h.sortByMode(filteredKeys, sortMode)

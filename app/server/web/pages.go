@@ -100,22 +100,10 @@ func (h *Handler) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleSortToggle cycles through sort modes: updated -> key -> size -> created -> updated.
 func (h *Handler) handleSortToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := h.getSortMode(r)
-	var newMode string
-	switch currentMode {
-	case enum.SortModeUpdated.String():
-		newMode = enum.SortModeKey.String()
-	case enum.SortModeKey.String():
-		newMode = enum.SortModeSize.String()
-	case enum.SortModeSize.String():
-		newMode = enum.SortModeCreated.String()
-	default:
-		newMode = enum.SortModeUpdated.String()
-	}
-
+	newMode := h.getSortMode(r).Next()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort_mode",
-		Value:    newMode,
+		Value:    newMode.String(),
 		Path:     h.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,

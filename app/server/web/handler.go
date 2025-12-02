@@ -237,7 +237,7 @@ type templateData struct {
 	IsNew          bool
 	Theme          string
 	ViewMode       string
-	SortMode       string
+	SortMode       enum.SortMode
 	Search         string
 	Error          string
 	CanForce       bool // allow force submit despite error (for validation errors, not conflicts)
@@ -264,17 +264,9 @@ type templateData struct {
 }
 
 // sortModeLabel returns a human-readable label for the sort mode.
-func sortModeLabel(mode string) string {
-	switch mode {
-	case enum.SortModeKey.String():
-		return "Key"
-	case enum.SortModeSize.String():
-		return "Size"
-	case enum.SortModeCreated.String():
-		return "Created"
-	default:
-		return "Updated"
-	}
+func sortModeLabel(mode enum.SortMode) string {
+	s := mode.String()
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // getTheme returns the current theme from cookie.
@@ -299,14 +291,14 @@ func (h *Handler) getViewMode(r *http.Request) string {
 	return enum.ViewModeGrid.String()
 }
 
-// getSortMode returns the current sort mode from cookie, defaulting to "updated".
-func (h *Handler) getSortMode(r *http.Request) string {
+// getSortMode returns the current sort mode from cookie, defaulting to updated.
+func (h *Handler) getSortMode(r *http.Request) enum.SortMode {
 	if cookie, err := r.Cookie("sort_mode"); err == nil {
-		if _, err := enum.ParseSortMode(cookie.Value); err == nil {
-			return cookie.Value
+		if mode, err := enum.ParseSortMode(cookie.Value); err == nil {
+			return mode
 		}
 	}
-	return enum.SortModeUpdated.String()
+	return enum.SortModeUpdated
 }
 
 // url returns a URL path with the base URL prefix.
@@ -343,21 +335,21 @@ func (h *Handler) getAuthor(username string) git.Author {
 }
 
 // sortByMode sorts a slice by the given mode using a key accessor.
-func (h *Handler) sortByMode(keys []keyWithPermission, mode string) {
+func (h *Handler) sortByMode(keys []keyWithPermission, mode enum.SortMode) {
 	switch mode {
-	case "key":
+	case enum.SortModeKey:
 		sort.Slice(keys, func(i, j int) bool {
 			return strings.ToLower(keys[i].Key) < strings.ToLower(keys[j].Key)
 		})
-	case "size":
+	case enum.SortModeSize:
 		sort.Slice(keys, func(i, j int) bool {
 			return keys[i].Size > keys[j].Size // largest first
 		})
-	case "created":
+	case enum.SortModeCreated:
 		sort.Slice(keys, func(i, j int) bool {
 			return keys[i].CreatedAt.After(keys[j].CreatedAt) // newest first
 		})
-	default: // "updated"
+	default: // updated
 		sort.Slice(keys, func(i, j int) bool {
 			return keys[i].UpdatedAt.After(keys[j].UpdatedAt) // newest first
 		})
