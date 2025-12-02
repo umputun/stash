@@ -173,7 +173,7 @@ func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 	}
 
 	if loginTTL == 0 {
-		loginTTL = 24 * time.Hour
+		loginTTL = 30 * 24 * time.Hour // 30 days
 	}
 
 	return &Auth{
@@ -311,7 +311,7 @@ func (a *Auth) Enabled() bool {
 // LoginTTL returns the configured login session TTL.
 func (a *Auth) LoginTTL() time.Duration {
 	if a == nil {
-		return 24 * time.Hour // default
+		return 30 * 24 * time.Hour // 30 days default
 	}
 	return a.loginTTL
 }

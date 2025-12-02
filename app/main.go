@@ -55,7 +55,7 @@ var opts struct {
 
 	Auth struct {
 		File      string        `long:"file" env:"FILE" description:"path to auth config file (stash-auth.yml)"`
-		LoginTTL  time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"24h" description:"login session TTL"`
+		LoginTTL  time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"720h" description:"login session TTL"`
 		HotReload bool          `long:"hot-reload" env:"HOT_RELOAD" description:"watch auth config for changes and reload"`
 	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
 

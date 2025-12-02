@@ -551,9 +551,9 @@ users:
 }
 
 func TestAuth_LoginTTL(t *testing.T) {
-	t.Run("nil auth returns default 24h", func(t *testing.T) {
+	t.Run("nil auth returns default 30 days", func(t *testing.T) {
 		var auth *Auth
-		assert.Equal(t, 24*time.Hour, auth.LoginTTL())
+		assert.Equal(t, 30*24*time.Hour, auth.LoginTTL())
 	})
 
 	t.Run("returns configured value", func(t *testing.T) {
