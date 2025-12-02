@@ -5,8 +5,6 @@ import (
 	"strconv"
 
 	log "github.com/go-pkgz/lgr"
-
-	"github.com/umputun/stash/app/enum"
 )
 
 // handleIndex renders the main page.
@@ -57,15 +55,10 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // handleThemeToggle toggles the theme between light and dark.
 func (h *Handler) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
-	currentTheme := h.getTheme(r)
-	newTheme := enum.ThemeDark.String()
-	if currentTheme == enum.ThemeDark.String() {
-		newTheme = enum.ThemeLight.String()
-	}
-
+	newTheme := h.getTheme(r).Toggle()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "theme",
-		Value:    newTheme,
+		Value:    newTheme.String(),
 		Path:     h.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
@@ -79,15 +72,10 @@ func (h *Handler) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleViewModeToggle toggles the view mode between grid and cards.
 func (h *Handler) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := h.getViewMode(r)
-	newMode := enum.ViewModeCards.String()
-	if currentMode == enum.ViewModeCards.String() {
-		newMode = enum.ViewModeGrid.String()
-	}
-
+	newMode := h.getViewMode(r).Toggle()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "view_mode",
-		Value:    newMode,
+		Value:    newMode.String(),
 		Path:     h.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,

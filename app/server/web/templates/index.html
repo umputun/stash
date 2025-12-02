@@ -35,7 +35,7 @@
                 hx-swap="innerHTML"
                 hx-include="[name='search'], [name='page']"
                 title="Toggle view mode">
-            {{if eq .ViewMode "cards"}}
+            {{if eq .ViewMode.String "cards"}}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
             {{else}}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -43,7 +43,7 @@
         </button>
         <form hx-post="{{.BaseURL}}/web/theme" hx-swap="none">
             <button type="submit" class="btn-icon" title="Toggle theme">
-                {{if eq .Theme "dark"}}
+                {{if eq .Theme.String "dark"}}
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
                 {{else}}
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>

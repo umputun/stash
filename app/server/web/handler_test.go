@@ -40,12 +40,12 @@ func TestHandler_GetTheme(t *testing.T) {
 	tests := []struct {
 		name     string
 		cookie   string
-		expected string
+		expected enum.Theme
 	}{
-		{name: "no cookie", cookie: "", expected: "system"},
-		{name: "light theme", cookie: "light", expected: "light"},
-		{name: "dark theme", cookie: "dark", expected: "dark"},
-		{name: "invalid theme", cookie: "invalid", expected: "system"},
+		{name: "no cookie", cookie: "", expected: enum.ThemeSystem},
+		{name: "light theme", cookie: "light", expected: enum.ThemeLight},
+		{name: "dark theme", cookie: "dark", expected: enum.ThemeDark},
+		{name: "invalid theme", cookie: "invalid", expected: enum.ThemeSystem},
 	}
 
 	for _, tc := range tests {
@@ -66,12 +66,12 @@ func TestHandler_GetViewMode(t *testing.T) {
 	tests := []struct {
 		name     string
 		cookie   string
-		expected string
+		expected enum.ViewMode
 	}{
-		{name: "no cookie returns grid", cookie: "", expected: "grid"},
-		{name: "grid", cookie: "grid", expected: "grid"},
-		{name: "cards", cookie: "cards", expected: "cards"},
-		{name: "invalid returns grid", cookie: "invalid", expected: "grid"},
+		{name: "no cookie returns grid", cookie: "", expected: enum.ViewModeGrid},
+		{name: "grid", cookie: "grid", expected: enum.ViewModeGrid},
+		{name: "cards", cookie: "cards", expected: enum.ViewModeCards},
+		{name: "invalid returns grid", cookie: "invalid", expected: enum.ViewModeGrid},
 	}
 
 	for _, tc := range tests {

@@ -235,8 +235,8 @@ type templateData struct {
 	Formats        []string      // available format options
 	IsBinary       bool
 	IsNew          bool
-	Theme          string
-	ViewMode       string
+	Theme          enum.Theme
+	ViewMode       enum.ViewMode
 	SortMode       enum.SortMode
 	Search         string
 	Error          string
@@ -269,26 +269,24 @@ func sortModeLabel(mode enum.SortMode) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// getTheme returns the current theme from cookie.
-func (h *Handler) getTheme(r *http.Request) string {
-	cookie, err := r.Cookie("theme")
-	if err != nil || cookie.Value == "" {
-		return enum.ThemeSystem.String() // use system preference
-	}
-	if cookie.Value == enum.ThemeDark.String() || cookie.Value == enum.ThemeLight.String() {
-		return cookie.Value
-	}
-	return enum.ThemeSystem.String()
-}
-
-// getViewMode returns the current view mode from cookie, defaulting to "grid".
-func (h *Handler) getViewMode(r *http.Request) string {
-	if cookie, err := r.Cookie("view_mode"); err == nil {
-		if cookie.Value == enum.ViewModeCards.String() || cookie.Value == enum.ViewModeGrid.String() {
-			return cookie.Value
+// getTheme returns the current theme from cookie, defaulting to system.
+func (h *Handler) getTheme(r *http.Request) enum.Theme {
+	if cookie, err := r.Cookie("theme"); err == nil {
+		if theme, err := enum.ParseTheme(cookie.Value); err == nil {
+			return theme
 		}
 	}
-	return enum.ViewModeGrid.String()
+	return enum.ThemeSystem
+}
+
+// getViewMode returns the current view mode from cookie, defaulting to grid.
+func (h *Handler) getViewMode(r *http.Request) enum.ViewMode {
+	if cookie, err := r.Cookie("view_mode"); err == nil {
+		if mode, err := enum.ParseViewMode(cookie.Value); err == nil {
+			return mode
+		}
+	}
+	return enum.ViewModeGrid
 }
 
 // getSortMode returns the current sort mode from cookie, defaulting to updated.

@@ -117,9 +117,9 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	for _, c := range w.Header()["Set-Cookie"] {
 		switch {
 		case strings.Contains(c, "view_mode=cards"):
-			viewMode = "cards"
+			viewMode = enum.ViewModeCards
 		case strings.Contains(c, "view_mode=grid"):
-			viewMode = "grid"
+			viewMode = enum.ViewModeGrid
 		}
 	}
 
