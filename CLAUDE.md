@@ -23,6 +23,19 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
   - `git_test.go` - Unit tests
 
+## Enum Types
+
+The project uses `github.com/go-pkgz/enum` for type-safe enums defined in `app/enum/enum.go`:
+
+- **Format**: text, json, yaml, xml, toml, ini, hcl, shell (for syntax highlighting)
+- **ViewMode**: grid, cards (UI display modes)
+- **SortMode**: updated, key, size, created
+- **Theme**: system, light, dark
+- **Permission**: none, r, w, rw
+- **DbType**: sqlite, postgres
+
+Enums are generated with `//go:generate` and support String(), MarshalText/UnmarshalText.
+
 ## Key Dependencies
 
 - **CLI**: `github.com/jessevdk/go-flags`
@@ -33,6 +46,7 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **Cache**: `github.com/go-pkgz/lcw/v2`
 - **File watching**: `github.com/fsnotify/fsnotify`
 - **Testing**: `github.com/stretchr/testify`
+- **Enums**: `github.com/go-pkgz/enum`
 
 ## Build & Test
 
@@ -71,7 +85,18 @@ POST   /web/keys                 # create new key
 PUT    /web/keys/{key...}        # update key value
 DELETE /web/keys/{key...}        # delete key
 POST   /web/theme                # toggle theme (light/dark)
+POST   /web/view-mode            # toggle view mode (grid/cards)
+POST   /web/sort                 # cycle sort order
 ```
+
+## Web UI Structure
+
+- Templates in `app/server/web/templates/` with partials in `partials/` subdirectory
+- Form has format selector dropdown (`select[name="format"]`)
+- View modal shows format badge (`.format-badge`) except for text format
+- Syntax highlighting uses Chroma (`.highlighted-code` class)
+- Modals: `#main-modal` for view/edit/create, `#confirm-modal` for delete confirmation
+- Modal close: Escape key or clicking backdrop
 
 ## Auth Routes (when enabled)
 
@@ -104,3 +129,31 @@ POST   /logout                   # clear session, redirect to login
 - Web handlers check permissions server-side (not just UI conditions)
 - Cache: optional loading cache wrapper, populated on reads, invalidated on writes
 - Keep it simple - no over-engineering
+
+## Testing Selectors (Playwright)
+
+**Table View:**
+- `td.key-cell` - key names in rows
+- `button.btn-edit`, `button.btn-danger` - action buttons per row
+- `tr:has-text("key-name")` - target specific row
+
+**Card View:**
+- `.key-card` - individual cards
+- `.cards-container` - card container (presence indicates card mode)
+
+**Modals:**
+- `#main-modal` - view/edit/create modal backdrop
+- `#modal-content` - modal content container
+- `#confirm-modal` - delete confirmation modal
+- `#confirm-delete-btn` - confirm delete button
+
+**Forms:**
+- `input[name="key"]`, `textarea[name="value"]` - key/value inputs
+- `select[name="format"]` - format dropdown
+- `#modal-content button[type="submit"]` - submit button
+
+**Header Controls:**
+- `form[hx-post="/web/theme"] button` - theme toggle
+- `button[hx-post="/web/view-mode"]` - view mode toggle
+- `.sort-button` - sort toggle
+- `input[name="search"]` - search input (300ms debounce)
