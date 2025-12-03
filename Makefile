@@ -4,7 +4,7 @@ build:
 	go build -o stash -ldflags "-X main.revision=$(shell git describe --tags --always)" ./app
 
 test:
-	go test -race -coverprofile=coverage.out ./...
+	go test -race -coverprofile=coverage.out -coverpkg=$$(go list ./... | grep -v /enum | tr '\n' ',' | sed 's/,$$//') ./...
 
 lint:
 	golangci-lint run

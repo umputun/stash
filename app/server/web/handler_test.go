@@ -10,25 +10,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/server/web/mocks"
 	"github.com/umputun/stash/app/store"
 )
 
 func TestSortModeLabel(t *testing.T) {
 	tests := []struct {
-		mode     string
+		mode     enum.SortMode
 		expected string
 	}{
-		{mode: "updated", expected: "Updated"},
-		{mode: "key", expected: "Key"},
-		{mode: "size", expected: "Size"},
-		{mode: "created", expected: "Created"},
-		{mode: "invalid", expected: "Updated"},
-		{mode: "", expected: "Updated"},
+		{mode: enum.SortModeUpdated, expected: "Updated"},
+		{mode: enum.SortModeKey, expected: "Key"},
+		{mode: enum.SortModeSize, expected: "Size"},
+		{mode: enum.SortModeCreated, expected: "Created"},
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.mode, func(t *testing.T) {
+		t.Run(tc.mode.String(), func(t *testing.T) {
 			result := sortModeLabel(tc.mode)
 			assert.Equal(t, tc.expected, result)
 		})
@@ -41,12 +40,12 @@ func TestHandler_GetTheme(t *testing.T) {
 	tests := []struct {
 		name     string
 		cookie   string
-		expected string
+		expected enum.Theme
 	}{
-		{name: "no cookie", cookie: "", expected: ""},
-		{name: "light theme", cookie: "light", expected: "light"},
-		{name: "dark theme", cookie: "dark", expected: "dark"},
-		{name: "invalid theme", cookie: "invalid", expected: ""},
+		{name: "no cookie", cookie: "", expected: enum.ThemeSystem},
+		{name: "light theme", cookie: "light", expected: enum.ThemeLight},
+		{name: "dark theme", cookie: "dark", expected: enum.ThemeDark},
+		{name: "invalid theme", cookie: "invalid", expected: enum.ThemeSystem},
 	}
 
 	for _, tc := range tests {
@@ -67,12 +66,12 @@ func TestHandler_GetViewMode(t *testing.T) {
 	tests := []struct {
 		name     string
 		cookie   string
-		expected string
+		expected enum.ViewMode
 	}{
-		{name: "no cookie returns grid", cookie: "", expected: "grid"},
-		{name: "grid", cookie: "grid", expected: "grid"},
-		{name: "cards", cookie: "cards", expected: "cards"},
-		{name: "invalid returns grid", cookie: "invalid", expected: "grid"},
+		{name: "no cookie returns grid", cookie: "", expected: enum.ViewModeGrid},
+		{name: "grid", cookie: "grid", expected: enum.ViewModeGrid},
+		{name: "cards", cookie: "cards", expected: enum.ViewModeCards},
+		{name: "invalid returns grid", cookie: "invalid", expected: enum.ViewModeGrid},
 	}
 
 	for _, tc := range tests {
@@ -93,14 +92,14 @@ func TestHandler_GetSortMode(t *testing.T) {
 	tests := []struct {
 		name     string
 		cookie   string
-		expected string
+		expected enum.SortMode
 	}{
-		{name: "no cookie returns default", cookie: "", expected: "updated"},
-		{name: "updated cookie", cookie: "updated", expected: "updated"},
-		{name: "key cookie", cookie: "key", expected: "key"},
-		{name: "size cookie", cookie: "size", expected: "size"},
-		{name: "created cookie", cookie: "created", expected: "created"},
-		{name: "invalid cookie returns default", cookie: "invalid", expected: "updated"},
+		{name: "no cookie returns default", cookie: "", expected: enum.SortModeUpdated},
+		{name: "updated cookie", cookie: "updated", expected: enum.SortModeUpdated},
+		{name: "key cookie", cookie: "key", expected: enum.SortModeKey},
+		{name: "size cookie", cookie: "size", expected: enum.SortModeSize},
+		{name: "created cookie", cookie: "created", expected: enum.SortModeCreated},
+		{name: "invalid cookie returns default", cookie: "invalid", expected: enum.SortModeUpdated},
 	}
 
 	for _, tc := range tests {
@@ -165,7 +164,7 @@ func TestHandler_SortByMode(t *testing.T) {
 			{KeyInfo: store.KeyInfo{Key: "a", UpdatedAt: now}},
 			{KeyInfo: store.KeyInfo{Key: "c", UpdatedAt: now.Add(-1 * time.Hour)}},
 		}
-		h.sortByMode(keys, "updated")
+		h.sortByMode(keys, enum.SortModeUpdated)
 		assert.Equal(t, "a", keys[0].Key)
 		assert.Equal(t, "c", keys[1].Key)
 		assert.Equal(t, "b", keys[2].Key)
@@ -177,7 +176,7 @@ func TestHandler_SortByMode(t *testing.T) {
 			{KeyInfo: store.KeyInfo{Key: "alpha"}},
 			{KeyInfo: store.KeyInfo{Key: "Beta"}},
 		}
-		h.sortByMode(keys, "key")
+		h.sortByMode(keys, enum.SortModeKey)
 		assert.Equal(t, "alpha", keys[0].Key)
 		assert.Equal(t, "Beta", keys[1].Key)
 		assert.Equal(t, "Zulu", keys[2].Key)
@@ -189,7 +188,7 @@ func TestHandler_SortByMode(t *testing.T) {
 			{KeyInfo: store.KeyInfo{Key: "large", Size: 1000}},
 			{KeyInfo: store.KeyInfo{Key: "medium", Size: 100}},
 		}
-		h.sortByMode(keys, "size")
+		h.sortByMode(keys, enum.SortModeSize)
 		assert.Equal(t, "large", keys[0].Key)
 		assert.Equal(t, "medium", keys[1].Key)
 		assert.Equal(t, "small", keys[2].Key)
@@ -201,7 +200,7 @@ func TestHandler_SortByMode(t *testing.T) {
 			{KeyInfo: store.KeyInfo{Key: "new", CreatedAt: now}},
 			{KeyInfo: store.KeyInfo{Key: "mid", CreatedAt: now.Add(-1 * time.Hour)}},
 		}
-		h.sortByMode(keys, "created")
+		h.sortByMode(keys, enum.SortModeCreated)
 		assert.Equal(t, "new", keys[0].Key)
 		assert.Equal(t, "mid", keys[1].Key)
 		assert.Equal(t, "old", keys[2].Key)

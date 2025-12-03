@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -27,41 +28,6 @@ import (
 // __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
 // fallback cookie name works on HTTP for development.
 var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
-
-// Permission represents read/write access level.
-type Permission int
-
-// Permission constants define access levels.
-const (
-	PermissionNone      Permission = iota // no access
-	PermissionRead                        // read-only access
-	PermissionWrite                       // write-only access
-	PermissionReadWrite                   // full read-write access
-)
-
-// String returns a string representation of the permission.
-func (p Permission) String() string {
-	switch p {
-	case PermissionRead:
-		return "r"
-	case PermissionWrite:
-		return "w"
-	case PermissionReadWrite:
-		return "rw"
-	default:
-		return "none"
-	}
-}
-
-// CanRead returns true if the permission allows reading.
-func (p Permission) CanRead() bool {
-	return p == PermissionRead || p == PermissionReadWrite
-}
-
-// CanWrite returns true if the permission allows writing.
-func (p Permission) CanWrite() bool {
-	return p == PermissionWrite || p == PermissionReadWrite
-}
 
 // AuthConfig represents the auth configuration file (stash-auth.yml).
 type AuthConfig struct {
@@ -118,7 +84,7 @@ func LoadAuthConfig(path string) (*AuthConfig, error) {
 // prefixPerm represents a single prefix-permission pair, used for ordered matching.
 type prefixPerm struct {
 	prefix     string
-	permission Permission
+	permission enum.Permission
 }
 
 // TokenACL defines access control for an API token.
@@ -284,18 +250,13 @@ func parsePermissionConfigs(name string, configs []PermissionConfig) (TokenACL, 
 	return acl, nil
 }
 
-// parsePermissionString converts a permission string to Permission type.
-func parsePermissionString(s string) (Permission, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "r", "read":
-		return PermissionRead, nil
-	case "w", "write":
-		return PermissionWrite, nil
-	case "rw", "readwrite", "read-write":
-		return PermissionReadWrite, nil
-	default:
-		return PermissionNone, errors.New("expected r/w/rw")
+// parsePermissionString converts a permission string to enum.Permission type.
+func parsePermissionString(s string) (enum.Permission, error) {
+	perm, err := enum.ParsePermission(strings.TrimSpace(s))
+	if err != nil {
+		return enum.PermissionNone, errors.New("expected r/w/rw")
 	}
+	return perm, nil
 }
 
 // Enabled returns true if authentication is enabled.

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 // ErrNotFound is returned when a key is not found in the store.
@@ -58,13 +60,13 @@ type KeyInfo struct {
 	UpdatedAt time.Time `db:"updated_at"`
 }
 
-// DBType represents the database type.
-type DBType int
+// DBType is an alias for enum.DbType for compatibility.
+type DBType = enum.DbType
 
-// Database type constants.
-const (
-	DBTypeSQLite DBType = iota
-	DBTypePostgres
+// Database type constants for convenience.
+var (
+	DBTypeSQLite   = enum.DbTypeSQLite
+	DBTypePostgres = enum.DbTypePostgres
 )
 
 // RWLocker is an interface for read-write locking.

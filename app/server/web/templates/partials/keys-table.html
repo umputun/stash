@@ -1,6 +1,6 @@
 {{define "keys-table"}}
 {{if .Keys}}
-{{if eq .ViewMode "cards"}}
+{{if eq .ViewMode.String "cards"}}
 <div class="cards-container">
     {{range .Keys}}
     <div class="key-card"

@@ -11,6 +11,7 @@ import (
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/routegroup"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
 )
@@ -200,22 +201,10 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 
 // formatToContentType maps storage format to HTTP Content-Type.
 func (h *Handler) formatToContentType(format string) string {
-	switch format {
-	case "json":
-		return "application/json"
-	case "yaml":
-		return "application/yaml"
-	case "xml":
-		return "application/xml"
-	case "toml":
-		return "application/toml"
-	case "hcl", "ini", "text":
-		return "text/plain"
-	case "shell":
-		return "text/x-shellscript"
-	default:
-		return "application/octet-stream"
+	if f, err := enum.ParseFormat(format); err == nil {
+		return f.ContentType()
 	}
+	return "application/octet-stream"
 }
 
 // handleSet stores a value for a key.

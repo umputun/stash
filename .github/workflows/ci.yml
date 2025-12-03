@@ -30,7 +30,7 @@ jobs:
       - name: build and test
         run: |
           go test -timeout=3m -covermode=count -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp ./...
-          cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v "mocks" > $GITHUB_WORKSPACE/profile.cov
+          cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v -E "mocks|/enum/" > $GITHUB_WORKSPACE/profile.cov
         working-directory: app
         env:
           TZ: "America/Chicago"

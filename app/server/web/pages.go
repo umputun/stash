@@ -55,15 +55,10 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 // handleThemeToggle toggles the theme between light and dark.
 func (h *Handler) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
-	currentTheme := h.getTheme(r)
-	newTheme := "dark"
-	if currentTheme == "dark" {
-		newTheme = "light"
-	}
-
+	newTheme := h.getTheme(r).Toggle()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "theme",
-		Value:    newTheme,
+		Value:    newTheme.String(),
 		Path:     h.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
@@ -77,15 +72,10 @@ func (h *Handler) handleThemeToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleViewModeToggle toggles the view mode between grid and cards.
 func (h *Handler) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := h.getViewMode(r)
-	newMode := "cards"
-	if currentMode == "cards" {
-		newMode = "grid"
-	}
-
+	newMode := h.getViewMode(r).Toggle()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "view_mode",
-		Value:    newMode,
+		Value:    newMode.String(),
 		Path:     h.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
@@ -98,22 +88,10 @@ func (h *Handler) handleViewModeToggle(w http.ResponseWriter, r *http.Request) {
 
 // handleSortToggle cycles through sort modes: updated -> key -> size -> created -> updated.
 func (h *Handler) handleSortToggle(w http.ResponseWriter, r *http.Request) {
-	currentMode := h.getSortMode(r)
-	var newMode string
-	switch currentMode {
-	case "updated":
-		newMode = "key"
-	case "key":
-		newMode = "size"
-	case "size":
-		newMode = "created"
-	default:
-		newMode = "updated"
-	}
-
+	newMode := h.getSortMode(r).Next()
 	http.SetCookie(w, &http.Cookie{
 		Name:     "sort_mode",
-		Value:    newMode,
+		Value:    newMode.String(),
 		Path:     h.cookiePath(),
 		MaxAge:   365 * 24 * 60 * 60, // 1 year
 		HttpOnly: true,
