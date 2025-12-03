@@ -153,10 +153,10 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 			page = parsed
 		}
 	}
-	pagedKeys, page, totalPages, hasPrev, hasNext := h.paginate(filteredKeys, page, h.pageSize)
+	pr := h.paginate(filteredKeys, page, h.pageSize)
 
 	data := templateData{
-		Keys:       pagedKeys,
+		Keys:       pr.keys,
 		Search:     search,
 		Theme:      h.getTheme(r),
 		ViewMode:   viewMode,
@@ -164,11 +164,11 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		BaseURL:    h.baseURL,
 		CanWrite:   h.auth.UserCanWrite(username),
 		Username:   username,
-		Page:       page,
-		TotalPages: totalPages,
+		Page:       pr.page,
+		TotalPages: pr.totalPages,
 		TotalKeys:  totalKeys,
-		HasPrev:    hasPrev,
-		HasNext:    hasNext,
+		HasPrev:    pr.hasPrev,
+		HasNext:    pr.hasNext,
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "keys-table", data); err != nil {

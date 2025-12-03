@@ -317,12 +317,12 @@ func TestHandler_Paginate(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, page, totalPages, hasPrev, hasNext := h.paginate(tc.keys, tc.page, tc.pageSize)
-			assert.Len(t, result, tc.wantLen, "result length")
-			assert.Equal(t, tc.wantPage, page, "page")
-			assert.Equal(t, tc.wantTotal, totalPages, "totalPages")
-			assert.Equal(t, tc.wantPrev, hasPrev, "hasPrev")
-			assert.Equal(t, tc.wantNext, hasNext, "hasNext")
+			pr := h.paginate(tc.keys, tc.page, tc.pageSize)
+			assert.Len(t, pr.keys, tc.wantLen, "result length")
+			assert.Equal(t, tc.wantPage, pr.page, "page")
+			assert.Equal(t, tc.wantTotal, pr.totalPages, "totalPages")
+			assert.Equal(t, tc.wantPrev, pr.hasPrev, "hasPrev")
+			assert.Equal(t, tc.wantNext, pr.hasNext, "hasNext")
 		})
 	}
 }

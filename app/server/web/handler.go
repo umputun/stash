@@ -389,12 +389,21 @@ func (h *Handler) filterBySearch(keys []keyWithPermission, search string) []keyW
 	return filtered
 }
 
+// paginateResult holds the result of pagination.
+type paginateResult struct {
+	keys       []keyWithPermission
+	page       int
+	totalPages int
+	hasPrev    bool
+	hasNext    bool
+}
+
 // paginate applies pagination to a slice of keys and returns pagination info.
 // page is 1-based, pageSize is the max keys per page.
-func (h *Handler) paginate(keys []keyWithPermission, page, pageSize int) ([]keyWithPermission, int, int, bool, bool) {
+func (h *Handler) paginate(keys []keyWithPermission, page, pageSize int) paginateResult {
 	total := len(keys)
 	if pageSize <= 0 {
-		return keys, 1, 1, false, false
+		return paginateResult{keys: keys, page: 1, totalPages: 1}
 	}
 
 	totalPages := (total + pageSize - 1) / pageSize
@@ -411,12 +420,12 @@ func (h *Handler) paginate(keys []keyWithPermission, page, pageSize int) ([]keyW
 	start := (page - 1) * pageSize
 	end := start + pageSize
 	if start >= total {
-		return nil, page, totalPages, page > 1, false
+		return paginateResult{page: page, totalPages: totalPages, hasPrev: page > 1}
 	}
 	if end > total {
 		end = total
 	}
-	return keys[start:end], page, totalPages, page > 1, page < totalPages
+	return paginateResult{keys: keys[start:end], page: page, totalPages: totalPages, hasPrev: page > 1, hasNext: page < totalPages}
 }
 
 // filterKeysByPermission filters keys based on user permissions and wraps with write permission info.

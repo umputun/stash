@@ -30,10 +30,10 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			page = parsed
 		}
 	}
-	pagedKeys, page, totalPages, hasPrev, hasNext := h.paginate(filteredKeys, page, h.pageSize)
+	pr := h.paginate(filteredKeys, page, h.pageSize)
 
 	data := templateData{
-		Keys:        pagedKeys,
+		Keys:        pr.keys,
 		Theme:       h.getTheme(r),
 		ViewMode:    h.getViewMode(r),
 		SortMode:    sortMode,
@@ -41,11 +41,11 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		BaseURL:     h.baseURL,
 		CanWrite:    h.auth.UserCanWrite(username),
 		Username:    username,
-		Page:        page,
-		TotalPages:  totalPages,
+		Page:        pr.page,
+		TotalPages:  pr.totalPages,
 		TotalKeys:   totalKeys,
-		HasPrev:     hasPrev,
-		HasNext:     hasNext,
+		HasPrev:     pr.hasPrev,
+		HasNext:     pr.hasNext,
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {
