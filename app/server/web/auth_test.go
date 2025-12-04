@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,7 +28,7 @@ func TestHandler_HandleLogin(t *testing.T) {
 	t.Run("valid credentials redirects", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
 			IsValidUserFunc:   func(username, password string) bool { return username == "admin" && password == "testpass" },
-			CreateSessionFunc: func(username string) (string, error) { return "session-token", nil },
+			CreateSessionFunc: func(_ context.Context, username string) (string, error) { return "session-token", nil },
 			LoginTTLFunc:      func() time.Duration { return 24 * time.Hour },
 		}
 		h := newTestHandlerWithAuth(t, auth)
@@ -83,7 +84,7 @@ func TestHandler_HandleLogin(t *testing.T) {
 	t.Run("session creation error returns 500", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
 			IsValidUserFunc:   func(username, password string) bool { return true },
-			CreateSessionFunc: func(username string) (string, error) { return "", assert.AnError },
+			CreateSessionFunc: func(_ context.Context, username string) (string, error) { return "", assert.AnError },
 		}
 		h := newTestHandlerWithAuth(t, auth)
 
@@ -99,7 +100,7 @@ func TestHandler_HandleLogin(t *testing.T) {
 	t.Run("HTTPS sets secure cookie with host prefix", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
 			IsValidUserFunc:   func(username, password string) bool { return true },
-			CreateSessionFunc: func(username string) (string, error) { return "token", nil },
+			CreateSessionFunc: func(_ context.Context, username string) (string, error) { return "token", nil },
 			LoginTTLFunc:      func() time.Duration { return time.Hour },
 		}
 		h := newTestHandlerWithAuth(t, auth)
@@ -125,9 +126,8 @@ func TestHandler_HandleLogin(t *testing.T) {
 }
 
 func TestHandler_HandleLogout(t *testing.T) {
-	invalidateCalled := false
 	auth := &mocks.AuthProviderMock{
-		InvalidateSessionFunc: func(token string) { invalidateCalled = true },
+		InvalidateSessionFunc: func(_ context.Context, token string) {},
 	}
 	h := newTestHandlerWithAuth(t, auth)
 
@@ -138,7 +138,7 @@ func TestHandler_HandleLogout(t *testing.T) {
 
 	assert.Equal(t, http.StatusSeeOther, rec.Code)
 	assert.Equal(t, "/login", rec.Header().Get("Location"))
-	assert.True(t, invalidateCalled)
+	assert.Len(t, auth.InvalidateSessionCalls(), 1)
 	// should clear cookie
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == "stash-auth" {
@@ -163,7 +163,7 @@ func newTestHandlerWithStore(t *testing.T, st KVStore) *Handler {
 	t.Helper()
 	auth := &mocks.AuthProviderMock{
 		EnabledFunc:             func() bool { return false },
-		GetSessionUserFunc:      func(token string) (string, bool) { return "", false },
+		GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "", false },
 		FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 		UserCanWriteFunc:        func(username string) bool { return true },

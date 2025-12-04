@@ -9,7 +9,7 @@ import (
 
 // handleIndex renders the main page.
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List()
+	keys, err := h.store.List(r.Context())
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

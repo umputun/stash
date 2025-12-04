@@ -38,7 +38,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// create session
-	token, err := h.auth.CreateSession(username)
+	token, err := h.auth.CreateSession(r.Context(), username)
 	if err != nil {
 		log.Printf("[ERROR] failed to create session: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -71,7 +71,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// invalidate session
 	for _, cookieName := range sessionCookieNames {
 		if cookie, err := r.Cookie(cookieName); err == nil {
-			h.auth.InvalidateSession(cookie.Value)
+			h.auth.InvalidateSession(r.Context(), cookie.Value)
 		}
 	}
 

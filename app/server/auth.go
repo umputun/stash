@@ -23,6 +23,10 @@ import (
 )
 
 //go:generate go run internal/schema/main.go schema.json
+//go:generate moq -out mocks/sessionstore.go -pkg mocks -skip-ensure -fmt goimports . SessionStore
+
+// defaultSessionCleanupInterval is the default interval for background cleanup of expired sessions.
+const defaultSessionCleanupInterval = 1 * time.Hour
 
 // sessionCookieNames defines cookie names for session authentication.
 // __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
@@ -93,30 +97,38 @@ type TokenACL struct {
 	prefixes []prefixPerm // sorted by prefix length descending for longest-match-first
 }
 
-// session represents an active login session.
-type session struct {
-	token     string
-	username  string // logged-in username (empty for legacy single-password mode)
-	createdAt time.Time
+// SessionStore is the interface for persistent session storage.
+// Defined consumer-side per Go idiom.
+type SessionStore interface {
+	CreateSession(ctx context.Context, token, username string, expiresAt time.Time) error
+	GetSession(ctx context.Context, token string) (username string, expiresAt time.Time, err error)
+	DeleteSession(ctx context.Context, token string) error
+	DeleteAllSessions(ctx context.Context) error
+	DeleteExpiredSessions(ctx context.Context) (int64, error)
 }
 
 // Auth handles authentication and authorization.
 type Auth struct {
-	mu         sync.RWMutex        // protects users, tokens, publicACL (config data)
-	authFile   string              // path to auth config file for reloading
-	users      map[string]User     // username -> User (for web UI auth)
-	tokens     map[string]TokenACL // token string -> ACL (for API auth)
-	publicACL  *TokenACL           // public access ACL (token="*"), nil if not configured
-	sessions   map[string]session  // session token -> session
-	sessionsMu sync.Mutex          // protects sessions only; lock ordering: mu before sessionsMu
-	loginTTL   time.Duration
+	mu              sync.RWMutex        // protects users, tokens, publicACL (config data)
+	authFile        string              // path to auth config file for reloading
+	users           map[string]User     // username -> User (for web UI auth)
+	tokens          map[string]TokenACL // token string -> ACL (for API auth)
+	publicACL       *TokenACL           // public access ACL (token="*"), nil if not configured
+	sessionStore    SessionStore        // persistent session storage
+	loginTTL        time.Duration
+	cleanupInterval time.Duration // interval for session cleanup, defaults to 1h
 }
 
 // NewAuth creates a new Auth instance from configuration file.
 // Returns nil if authFile is empty (authentication disabled).
-func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
+// sessionStore is required for persistent session storage.
+func NewAuth(authFile string, loginTTL time.Duration, sessionStore SessionStore) (*Auth, error) {
 	if authFile == "" {
 		return nil, nil //nolint:nilnil // nil auth means disabled, not an error
+	}
+
+	if sessionStore == nil {
+		return nil, errors.New("session store is required")
 	}
 
 	cfg, err := LoadAuthConfig(authFile)
@@ -143,12 +155,13 @@ func NewAuth(authFile string, loginTTL time.Duration) (*Auth, error) {
 	}
 
 	return &Auth{
-		authFile:  authFile,
-		users:     users,
-		tokens:    tokens,
-		publicACL: publicACL,
-		sessions:  make(map[string]session),
-		loginTTL:  loginTTL,
+		authFile:        authFile,
+		users:           users,
+		tokens:          tokens,
+		publicACL:       publicACL,
+		sessionStore:    sessionStore,
+		loginTTL:        loginTTL,
+		cleanupInterval: defaultSessionCleanupInterval,
 	}, nil
 }
 
@@ -280,7 +293,7 @@ func (a *Auth) LoginTTL() time.Duration {
 // Reload reloads the auth configuration from the file.
 // Validates new config before applying. On success, invalidates all sessions.
 // On error, keeps the existing config and returns the error.
-func (a *Auth) Reload() error {
+func (a *Auth) Reload(ctx context.Context) error {
 	if a == nil {
 		return errors.New("auth not enabled")
 	}
@@ -308,17 +321,17 @@ func (a *Auth) Reload() error {
 		return errors.New("auth config must have at least one user or token")
 	}
 
-	// acquire write lock for config, then clear sessions
+	// acquire write lock for config
 	a.mu.Lock()
 	a.users = users
 	a.tokens = tokens
 	a.publicACL = publicACL
 	a.mu.Unlock()
 
-	// clear all sessions (lock ordering: mu before sessionsMu)
-	a.sessionsMu.Lock()
-	a.sessions = make(map[string]session)
-	a.sessionsMu.Unlock()
+	// clear all sessions from persistent storage
+	if err := a.sessionStore.DeleteAllSessions(ctx); err != nil {
+		log.Printf("[WARN] failed to clear sessions: %v", err)
+	}
 
 	log.Printf("[INFO] auth config reloaded from %s, all sessions invalidated", a.authFile)
 	return nil
@@ -388,7 +401,7 @@ func (a *Auth) StartWatcher(ctx context.Context) error {
 					debounceTimer.Stop()
 				}
 				debounceTimer = time.AfterFunc(debounceDelay, func() {
-					if err := a.Reload(); err != nil {
+					if err := a.Reload(ctx); err != nil {
 						log.Printf("[WARN] failed to reload auth config: %v", err)
 					}
 				})
@@ -480,49 +493,33 @@ func matchPrefix(pattern, key string) bool {
 }
 
 // CreateSession generates a new session token for the given username.
-func (a *Auth) CreateSession(username string) (string, error) {
+func (a *Auth) CreateSession(ctx context.Context, username string) (string, error) {
 	if a == nil {
 		return "", errors.New("auth not enabled")
 	}
 
 	token := uuid.NewString()
+	expiresAt := time.Now().Add(a.loginTTL)
 
-	a.sessionsMu.Lock()
-	defer a.sessionsMu.Unlock()
-
-	a.sessions[token] = session{
-		token:     token,
-		username:  username,
-		createdAt: time.Now(),
+	if err := a.sessionStore.CreateSession(ctx, token, username, expiresAt); err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
 	}
-
-	// cleanup expired sessions
-	a.cleanupExpiredSessions()
-
 	return token, nil
 }
 
 // GetSessionUser returns the username for a valid session.
 // Returns empty string and false if session is invalid or expired.
-func (a *Auth) GetSessionUser(token string) (string, bool) {
+// Note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
+func (a *Auth) GetSessionUser(ctx context.Context, token string) (string, bool) {
 	if a == nil {
 		return "", false
 	}
 
-	a.sessionsMu.Lock()
-	defer a.sessionsMu.Unlock()
-
-	sess, exists := a.sessions[token]
-	if !exists {
+	username, _, err := a.sessionStore.GetSession(ctx, token)
+	if err != nil {
 		return "", false
 	}
-
-	if time.Since(sess.createdAt) > a.loginTTL {
-		delete(a.sessions, token)
-		return "", false
-	}
-
-	return sess.username, true
+	return username, true
 }
 
 // CheckUserPermission checks if a user has the required permission for a key.
@@ -640,46 +637,59 @@ func (a *Auth) UserCanWrite(username string) bool {
 }
 
 // ValidateSession checks if a session token is valid and not expired.
-func (a *Auth) ValidateSession(token string) bool {
+// Note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
+func (a *Auth) ValidateSession(ctx context.Context, token string) bool {
 	if a == nil {
 		return false
 	}
 
-	a.sessionsMu.Lock()
-	defer a.sessionsMu.Unlock()
-
-	sess, exists := a.sessions[token]
-	if !exists {
-		return false
-	}
-
-	if time.Since(sess.createdAt) > a.loginTTL {
-		delete(a.sessions, token)
-		return false
-	}
-
-	return true
+	_, _, err := a.sessionStore.GetSession(ctx, token)
+	return err == nil
 }
 
 // InvalidateSession removes a session.
-func (a *Auth) InvalidateSession(token string) {
+func (a *Auth) InvalidateSession(ctx context.Context, token string) {
+	if a == nil {
+		return
+	}
+	_ = a.sessionStore.DeleteSession(ctx, token)
+}
+
+// StartCleanup starts background cleanup of expired sessions.
+// Runs periodically until context is canceled. Default interval is 1 hour.
+func (a *Auth) StartCleanup(ctx context.Context) {
 	if a == nil {
 		return
 	}
 
-	a.sessionsMu.Lock()
-	defer a.sessionsMu.Unlock()
-	delete(a.sessions, token)
-}
-
-// cleanupExpiredSessions removes expired sessions. Must be called with lock held.
-func (a *Auth) cleanupExpiredSessions() {
-	now := time.Now()
-	for token, sess := range a.sessions {
-		if now.Sub(sess.createdAt) > a.loginTTL {
-			delete(a.sessions, token)
-		}
+	interval := a.cleanupInterval
+	if interval == 0 {
+		interval = defaultSessionCleanupInterval
 	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("[INFO] session cleanup stopped")
+				return
+			case <-ticker.C:
+				deleted, err := a.sessionStore.DeleteExpiredSessions(ctx)
+				if err != nil {
+					log.Printf("[WARN] failed to cleanup expired sessions: %v", err)
+					continue
+				}
+				if deleted > 0 {
+					log.Printf("[INFO] cleaned up %d expired sessions", deleted)
+				}
+			}
+		}
+	}()
+
+	log.Printf("[INFO] session cleanup started (interval: %s)", interval)
 }
 
 // SessionAuth returns middleware that requires a valid session cookie.
@@ -690,7 +700,7 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
 			for _, cookieName := range sessionCookieNames {
-				if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(cookie.Value) {
+				if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(r.Context(), cookie.Value) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -737,7 +747,7 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 			if err != nil {
 				continue
 			}
-			username, valid := a.GetSessionUser(cookie.Value)
+			username, valid := a.GetSessionUser(r.Context(), cookie.Value)
 			if !valid {
 				continue
 			}

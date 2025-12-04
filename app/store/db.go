@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -119,12 +120,12 @@ func connectPostgres(dbURL string) (*sqlx.DB, error) {
 	return db, nil
 }
 
-// createSchema creates the kv table if it doesn't exist.
+// createSchema creates the kv and sessions tables if they don't exist.
 func (s *Store) createSchema() error {
-	var schema string
+	var kvSchema, sessionsSchema string
 	switch s.dbType {
 	case DBTypePostgres:
-		schema = `
+		kvSchema = `
 			CREATE TABLE IF NOT EXISTS kv (
 				key TEXT PRIMARY KEY,
 				value BYTEA NOT NULL,
@@ -132,8 +133,15 @@ func (s *Store) createSchema() error {
 				created_at TIMESTAMP DEFAULT NOW(),
 				updated_at TIMESTAMP DEFAULT NOW()
 			)`
+		sessionsSchema = `
+			CREATE TABLE IF NOT EXISTS sessions (
+				token TEXT PRIMARY KEY,
+				username TEXT NOT NULL,
+				expires_at TIMESTAMPTZ NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`
 	default:
-		schema = `
+		kvSchema = `
 			CREATE TABLE IF NOT EXISTS kv (
 				key TEXT PRIMARY KEY,
 				value BLOB NOT NULL,
@@ -141,9 +149,20 @@ func (s *Store) createSchema() error {
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 			)`
+		sessionsSchema = `
+			CREATE TABLE IF NOT EXISTS sessions (
+				token TEXT PRIMARY KEY,
+				username TEXT NOT NULL,
+				expires_at DATETIME NOT NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`
 	}
-	if _, err := s.db.Exec(schema); err != nil { //nolint:noctx // init-time, no context available
-		return fmt.Errorf("failed to execute schema: %w", err)
+
+	if _, err := s.db.Exec(kvSchema); err != nil { //nolint:noctx // init-time, no context available
+		return fmt.Errorf("failed to create kv table: %w", err)
+	}
+	if _, err := s.db.Exec(sessionsSchema); err != nil { //nolint:noctx // init-time, no context available
+		return fmt.Errorf("failed to create sessions table: %w", err)
 	}
 	return nil
 }
@@ -217,13 +236,13 @@ func (s *Store) dbTypeName() string {
 
 // Get retrieves the value for the given key.
 // Returns ErrNotFound if the key does not exist.
-func (s *Store) Get(key string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var value []byte
 	query := s.adoptQuery("SELECT value FROM kv WHERE key = ?")
-	err := s.db.Get(&value, query, key)
+	err := s.db.GetContext(ctx, &value, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -235,7 +254,7 @@ func (s *Store) Get(key string) ([]byte, error) {
 
 // GetWithFormat retrieves the value and format for the given key.
 // Returns ErrNotFound if the key does not exist.
-func (s *Store) GetWithFormat(key string) ([]byte, string, error) {
+func (s *Store) GetWithFormat(ctx context.Context, key string) ([]byte, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -244,7 +263,7 @@ func (s *Store) GetWithFormat(key string) ([]byte, string, error) {
 		Format string `db:"format"`
 	}
 	query := s.adoptQuery("SELECT value, format FROM kv WHERE key = ?")
-	err := s.db.Get(&result, query, key)
+	err := s.db.GetContext(ctx, &result, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}
@@ -256,13 +275,13 @@ func (s *Store) GetWithFormat(key string) ([]byte, string, error) {
 
 // GetInfo retrieves metadata for the given key without loading the value.
 // Returns ErrNotFound if the key does not exist.
-func (s *Store) GetInfo(key string) (KeyInfo, error) {
+func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var info KeyInfo
 	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv WHERE key = ?`)
-	err := s.db.Get(&info, query, key)
+	err := s.db.GetContext(ctx, &info, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return KeyInfo{}, ErrNotFound
 	}
@@ -275,7 +294,7 @@ func (s *Store) GetInfo(key string) (KeyInfo, error) {
 // Set stores the value for the given key with the specified format.
 // Creates a new key or updates an existing one.
 // If format is empty, defaults to "text".
-func (s *Store) Set(key string, value []byte, format string) error {
+func (s *Store) Set(ctx context.Context, key string, value []byte, format string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -287,7 +306,7 @@ func (s *Store) Set(key string, value []byte, format string) error {
 	query := s.adoptQuery(`
 		INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`)
-	if _, err := s.db.Exec(query, key, value, format, now, now); err != nil { //nolint:noctx // store interface doesn't expose context
+	if _, err := s.db.ExecContext(ctx, query, key, value, format, now, now); err != nil {
 		return fmt.Errorf("failed to set key %q: %w", key, err)
 	}
 	return nil
@@ -296,9 +315,9 @@ func (s *Store) Set(key string, value []byte, format string) error {
 // SetWithVersion stores the value only if the key's updated_at matches expectedVersion.
 // Returns *ConflictError with current state if the key was modified since expectedVersion.
 // If expectedVersion is zero, behaves like regular Set (no version check).
-func (s *Store) SetWithVersion(key string, value []byte, format string, expectedVersion time.Time) error {
+func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
 	if expectedVersion.IsZero() {
-		return s.Set(key, value, format)
+		return s.Set(ctx, key, value, format)
 	}
 
 	s.mu.Lock()
@@ -311,7 +330,7 @@ func (s *Store) SetWithVersion(key string, value []byte, format string, expected
 
 	// atomic update: only succeeds if version matches
 	query := s.adoptQuery(`UPDATE kv SET value = ?, format = ?, updated_at = ? WHERE key = ? AND updated_at = ?`)
-	result, err := s.db.Exec(query, value, format, now, key, expectedVersion) //nolint:noctx // store interface doesn't expose context
+	result, err := s.db.ExecContext(ctx, query, value, format, now, key, expectedVersion)
 	if err != nil {
 		return fmt.Errorf("failed to update key %q: %w", key, err)
 	}
@@ -323,7 +342,7 @@ func (s *Store) SetWithVersion(key string, value []byte, format string, expected
 
 	if rows == 0 {
 		// either key doesn't exist or version mismatch - fetch current state
-		return s.buildConflictError(key, expectedVersion)
+		return s.buildConflictError(ctx, key, expectedVersion)
 	}
 
 	return nil
@@ -331,14 +350,14 @@ func (s *Store) SetWithVersion(key string, value []byte, format string, expected
 
 // buildConflictError fetches current state and builds a ConflictError.
 // must be called with lock held.
-func (s *Store) buildConflictError(key string, attemptedVersion time.Time) error {
+func (s *Store) buildConflictError(ctx context.Context, key string, attemptedVersion time.Time) error {
 	var result struct {
 		Value     []byte    `db:"value"`
 		Format    string    `db:"format"`
 		UpdatedAt time.Time `db:"updated_at"`
 	}
 	query := s.adoptQuery("SELECT value, format, updated_at FROM kv WHERE key = ?")
-	err := s.db.Get(&result, query, key)
+	err := s.db.GetContext(ctx, &result, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound // key was deleted
 	}
@@ -358,12 +377,12 @@ func (s *Store) buildConflictError(key string, attemptedVersion time.Time) error
 
 // Delete removes the key from the store.
 // Returns ErrNotFound if the key does not exist.
-func (s *Store) Delete(key string) error {
+func (s *Store) Delete(ctx context.Context, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	query := s.adoptQuery("DELETE FROM kv WHERE key = ?")
-	result, err := s.db.Exec(query, key) //nolint:noctx // store interface doesn't expose context
+	result, err := s.db.ExecContext(ctx, query, key)
 	if err != nil {
 		return fmt.Errorf("failed to delete key %q: %w", key, err)
 	}
@@ -379,13 +398,13 @@ func (s *Store) Delete(key string) error {
 }
 
 // List returns metadata for all keys, ordered by updated_at descending.
-func (s *Store) List() ([]KeyInfo, error) {
+func (s *Store) List(ctx context.Context) ([]KeyInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var keys []KeyInfo
 	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`)
-	if err := s.db.Select(&keys, query); err != nil {
+	if err := s.db.SelectContext(ctx, &keys, query); err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 	return keys, nil
@@ -425,4 +444,87 @@ func (s *Store) adoptQuery(query string) string {
 		paramNum++
 	}
 	return string(result)
+}
+
+// CreateSession stores a new session in the database.
+func (s *Store) CreateSession(ctx context.Context, token, username string, expiresAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := s.adoptQuery(`INSERT INTO sessions (token, username, expires_at) VALUES (?, ?, ?)
+		ON CONFLICT(token) DO UPDATE SET username = excluded.username, expires_at = excluded.expires_at`)
+	if _, err := s.db.ExecContext(ctx, query, token, username, expiresAt.UTC()); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+	return nil
+}
+
+// GetSession retrieves session data by token.
+// Returns ErrNotFound if the session doesn't exist or is expired.
+func (s *Store) GetSession(ctx context.Context, token string) (username string, expiresAt time.Time, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result struct {
+		Username  string    `db:"username"`
+		ExpiresAt time.Time `db:"expires_at"`
+	}
+	query := s.adoptQuery("SELECT username, expires_at FROM sessions WHERE token = ?")
+	if err := s.db.GetContext(ctx, &result, query, token); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, ErrNotFound
+		}
+		return "", time.Time{}, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// check expiration and normalize to UTC for consistency
+	expiresUTC := result.ExpiresAt.UTC()
+	if time.Now().UTC().After(expiresUTC) {
+		return "", time.Time{}, ErrNotFound
+	}
+
+	return result.Username, expiresUTC, nil
+}
+
+// DeleteSession removes a session by token.
+// Returns nil even if the session doesn't exist (idempotent).
+func (s *Store) DeleteSession(ctx context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := s.adoptQuery("DELETE FROM sessions WHERE token = ?")
+	if _, err := s.db.ExecContext(ctx, query, token); err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	return nil
+}
+
+// DeleteAllSessions removes all sessions from the database.
+func (s *Store) DeleteAllSessions(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+		return fmt.Errorf("failed to delete all sessions: %w", err)
+	}
+	return nil
+}
+
+// DeleteExpiredSessions removes all expired sessions.
+// Returns the number of sessions deleted.
+func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := s.adoptQuery("DELETE FROM sessions WHERE expires_at < ?")
+	result, err := s.db.ExecContext(ctx, query, time.Now().UTC())
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete expired sessions: %w", err)
+	}
+
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get affected rows: %w", err)
+	}
+	return count, nil
 }

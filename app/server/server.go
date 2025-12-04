@@ -38,13 +38,13 @@ type Server struct {
 // KVStore defines the interface for key-value storage operations.
 // Defined here (consumer side) to allow different store implementations.
 type KVStore interface {
-	Get(key string) ([]byte, error)
-	GetWithFormat(key string) ([]byte, string, error)
-	GetInfo(key string) (store.KeyInfo, error)
-	Set(key string, value []byte, format string) error
-	SetWithVersion(key string, value []byte, format string, expectedVersion time.Time) error
-	Delete(key string) error
-	List() ([]store.KeyInfo, error)
+	Get(ctx context.Context, key string) ([]byte, error)
+	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
+	GetInfo(ctx context.Context, key string) (store.KeyInfo, error)
+	Set(ctx context.Context, key string, value []byte, format string) error
+	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context) ([]store.KeyInfo, error)
 }
 
 // GitService defines the interface for git operations.
@@ -84,8 +84,9 @@ type Config struct {
 
 // New creates a new Server instance.
 // gs is optional git service, pass nil to disable git versioning.
-func New(st KVStore, val Validator, gs GitService, cfg Config) (*Server, error) {
-	auth, err := NewAuth(cfg.AuthFile, cfg.LoginTTL)
+// ss is the session store for persistent sessions.
+func New(st KVStore, val Validator, gs GitService, ss SessionStore, cfg Config) (*Server, error) {
+	auth, err := NewAuth(cfg.AuthFile, cfg.LoginTTL, ss)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth: %w", err)
 	}
@@ -137,6 +138,11 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("failed to start auth config watcher: %w", err)
 		}
 		log.Printf("[INFO] auth config hot-reload enabled")
+	}
+
+	// start session cleanup goroutine if auth is enabled
+	if s.auth.Enabled() {
+		s.auth.StartCleanup(ctx)
 	}
 
 	// graceful shutdown
