@@ -829,7 +829,7 @@ func TestRunRestore(t *testing.T) {
 	opts.Git.Branch = "master"
 	opts.RestoreCmd.Rev = headRef
 
-	err = runRestore()
+	err = runRestore(t.Context())
 	require.NoError(t, err)
 
 	// verify keys were restored to database
@@ -837,15 +837,15 @@ func TestRunRestore(t *testing.T) {
 	require.NoError(t, err)
 	defer kvStore.Close()
 
-	val1, err := kvStore.Get("app/key1")
+	val1, err := kvStore.Get(t.Context(), "app/key1")
 	require.NoError(t, err)
 	assert.Equal(t, "value1", string(val1))
 
-	val2, err := kvStore.Get("app/key2")
+	val2, err := kvStore.Get(t.Context(), "app/key2")
 	require.NoError(t, err)
 	assert.Equal(t, "value2", string(val2))
 
-	val3, err := kvStore.Get("config/db")
+	val3, err := kvStore.Get(t.Context(), "config/db")
 	require.NoError(t, err)
 	assert.Equal(t, "postgres://localhost", string(val3))
 }
@@ -863,7 +863,7 @@ func TestRunRestore_InvalidRevision(t *testing.T) {
 	opts.Git.Branch = "master"
 	opts.RestoreCmd.Rev = "abc123"
 
-	err = runRestore()
+	err = runRestore(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to checkout revision")
 }

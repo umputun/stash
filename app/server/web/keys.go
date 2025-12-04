@@ -95,7 +95,7 @@ func (h *Handler) calculateModalDimensions(value string) (width, textareaHeight 
 
 // handleKeyList renders the keys table partial (for HTMX).
 func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List()
+	keys, err := h.store.List(r.Context())
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -210,7 +210,7 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, format, err := h.store.GetWithFormat(key)
+	value, format, err := h.store.GetWithFormat(r.Context(), key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -260,7 +260,7 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, format, err := h.store.GetWithFormat(key)
+	value, format, err := h.store.GetWithFormat(r.Context(), key)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -273,7 +273,7 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 
 	// get key info for conflict detection (updated_at timestamp as nanoseconds)
 	var updatedAt int64
-	if info, infoErr := h.store.GetInfo(key); infoErr == nil {
+	if info, infoErr := h.store.GetInfo(r.Context(), key); infoErr == nil {
 		updatedAt = info.UpdatedAt.UnixNano()
 	}
 
@@ -339,7 +339,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// check if key already exists
-	_, _, getErr := h.store.GetWithFormat(key)
+	_, _, getErr := h.store.GetWithFormat(r.Context(), key)
 	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
 		// unexpected store error
 		log.Printf("[ERROR] failed to check key existence: %v", getErr)
@@ -399,7 +399,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.store.Set(key, value, format); err != nil {
+	if err := h.store.Set(r.Context(), key, value, format); err != nil {
 		log.Printf("[ERROR] failed to set key: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -484,7 +484,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		expectedVersion = time.Unix(0, formUpdatedAt).UTC()
 	}
 
-	if err := h.store.SetWithVersion(key, value, format, expectedVersion); err != nil {
+	if err := h.store.SetWithVersion(r.Context(), key, value, format, expectedVersion); err != nil {
 		var conflictErr *store.ConflictError
 		if errors.As(err, &conflictErr) {
 			// conflict detected - render form with server's current value
@@ -547,7 +547,7 @@ func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.Delete(key); err != nil {
+	if err := h.store.Delete(r.Context(), key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return

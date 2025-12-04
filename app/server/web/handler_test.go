@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -434,7 +435,7 @@ func TestHandler_CalculateModalDimensions(t *testing.T) {
 
 func TestHandler_GetCurrentUser(t *testing.T) {
 	auth := &mocks.AuthProviderMock{
-		GetSessionUserFunc: func(token string) (string, bool) {
+		GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
 			if token == "valid-token" {
 				return "testuser", true
 			}
@@ -480,11 +481,11 @@ func defaultValidatorMock() *mocks.ValidatorMock {
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		EnabledFunc:             func() bool { return false },
-		GetSessionUserFunc:      func(token string) (string, bool) { return "", false },
+		GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "", false },
 		FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 		UserCanWriteFunc:        func(username string) bool { return true },
@@ -498,11 +499,11 @@ func newTestHandler(t *testing.T) *Handler {
 func newTestHandlerWithBaseURL(t *testing.T, baseURL string) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		EnabledFunc:             func() bool { return false },
-		GetSessionUserFunc:      func(token string) (string, bool) { return "", false },
+		GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "", false },
 		FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 		UserCanWriteFunc:        func(username string) bool { return true },
@@ -538,7 +539,7 @@ func TestHandler_GetAuthor(t *testing.T) {
 func newTestHandlerWithAuth(t *testing.T, auth AuthProvider) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	h, err := New(st, auth, defaultValidatorMock(), nil, Config{})
 	require.NoError(t, err)

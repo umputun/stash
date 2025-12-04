@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -31,9 +32,9 @@ func NewCached(store Interface, maxKeys int) (*Cached, error) {
 }
 
 // Get retrieves the value for a key, using cache with load-through.
-func (c *Cached) Get(key string) ([]byte, error) {
+func (c *Cached) Get(ctx context.Context, key string) ([]byte, error) {
 	entry, err := c.cache.Get(key, func() (cacheEntry, error) {
-		val, format, loadErr := c.store.GetWithFormat(key)
+		val, format, loadErr := c.store.GetWithFormat(ctx, key)
 		if loadErr != nil {
 			return cacheEntry{}, fmt.Errorf("load from store: %w", loadErr)
 		}
@@ -46,9 +47,9 @@ func (c *Cached) Get(key string) ([]byte, error) {
 }
 
 // GetWithFormat retrieves the value and format for a key, using cache with load-through.
-func (c *Cached) GetWithFormat(key string) ([]byte, string, error) {
+func (c *Cached) GetWithFormat(ctx context.Context, key string) ([]byte, string, error) {
 	entry, err := c.cache.Get(key, func() (cacheEntry, error) {
-		val, format, loadErr := c.store.GetWithFormat(key)
+		val, format, loadErr := c.store.GetWithFormat(ctx, key)
 		if loadErr != nil {
 			return cacheEntry{}, fmt.Errorf("load from store: %w", loadErr)
 		}
@@ -61,8 +62,8 @@ func (c *Cached) GetWithFormat(key string) ([]byte, string, error) {
 }
 
 // Set stores a value and invalidates the cache entry.
-func (c *Cached) Set(key string, value []byte, format string) error {
-	if err := c.store.Set(key, value, format); err != nil {
+func (c *Cached) Set(ctx context.Context, key string, value []byte, format string) error {
+	if err := c.store.Set(ctx, key, value, format); err != nil {
 		return fmt.Errorf("store set: %w", err)
 	}
 	c.cache.Invalidate(func(k string) bool { return k == key })
@@ -70,8 +71,8 @@ func (c *Cached) Set(key string, value []byte, format string) error {
 }
 
 // SetWithVersion stores a value with version check and invalidates the cache entry on success.
-func (c *Cached) SetWithVersion(key string, value []byte, format string, expectedVersion time.Time) error {
-	if err := c.store.SetWithVersion(key, value, format, expectedVersion); err != nil {
+func (c *Cached) SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
+	if err := c.store.SetWithVersion(ctx, key, value, format, expectedVersion); err != nil {
 		// don't wrap - let caller check error type directly (ErrConflict, ConflictError, etc.)
 		return err //nolint:wrapcheck // intentionally pass through for error type checks
 	}
@@ -80,18 +81,18 @@ func (c *Cached) SetWithVersion(key string, value []byte, format string, expecte
 }
 
 // Delete removes a key and invalidates the cache entry.
-func (c *Cached) Delete(key string) error {
+func (c *Cached) Delete(ctx context.Context, key string) error {
 	// invalidate regardless of error - key might have been cached
 	c.cache.Invalidate(func(k string) bool { return k == key })
-	if err := c.store.Delete(key); err != nil {
+	if err := c.store.Delete(ctx, key); err != nil {
 		return fmt.Errorf("store delete: %w", err)
 	}
 	return nil
 }
 
 // GetInfo retrieves metadata for a key from the underlying store (not cached).
-func (c *Cached) GetInfo(key string) (KeyInfo, error) {
-	info, err := c.store.GetInfo(key)
+func (c *Cached) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
+	info, err := c.store.GetInfo(ctx, key)
 	if err != nil {
 		return KeyInfo{}, fmt.Errorf("store get info: %w", err)
 	}
@@ -99,8 +100,8 @@ func (c *Cached) GetInfo(key string) (KeyInfo, error) {
 }
 
 // List returns all keys from the underlying store (not cached).
-func (c *Cached) List() ([]KeyInfo, error) {
-	keys, err := c.store.List()
+func (c *Cached) List(ctx context.Context) ([]KeyInfo, error) {
+	keys, err := c.store.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("store list: %w", err)
 	}

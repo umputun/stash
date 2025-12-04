@@ -106,7 +106,7 @@ func main() {
 	case p.Active != nil && p.Find("server") == p.Active:
 		err = runServer(ctx)
 	case p.Active != nil && p.Find("restore") == p.Active:
-		err = runRestore()
+		err = runRestore(ctx)
 	default:
 		p.WriteHelp(os.Stderr)
 		os.Exit(2)
@@ -142,15 +142,16 @@ func runServer(ctx context.Context) error {
 	}
 
 	// initialize storage
-	var kvStore store.Interface
-	kvStore, err = store.New(opts.DB)
+	// initialize store - keep raw store reference for session operations
+	rawStore, err := store.New(opts.DB)
 	if err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}
 
-	// wrap with cache if enabled
+	// kvStore is used for KV operations (may be cached)
+	var kvStore store.Interface = rawStore
 	if opts.Cache.Enabled {
-		kvStore, err = store.NewCached(kvStore, opts.Cache.MaxKeys)
+		kvStore, err = store.NewCached(rawStore, opts.Cache.MaxKeys)
 		if err != nil {
 			return fmt.Errorf("failed to initialize cache: %w", err)
 		}
@@ -173,7 +174,7 @@ func runServer(ctx context.Context) error {
 	}
 
 	// initialize and start HTTP server
-	srv, err := server.New(kvStore, validator.NewService(), gitService, server.Config{
+	srv, err := server.New(kvStore, validator.NewService(), gitService, rawStore, server.Config{
 		Address:          opts.Server.Address,
 		ReadTimeout:      opts.Server.ReadTimeout,
 		WriteTimeout:     opts.Server.WriteTimeout,
@@ -199,7 +200,7 @@ func runServer(ctx context.Context) error {
 	return nil
 }
 
-func runRestore() error {
+func runRestore(ctx context.Context) error {
 	log.Printf("[INFO] restoring from revision %s", opts.RestoreCmd.Rev)
 	log.Printf("[INFO] git path: %s, db: %s", opts.Git.Path, opts.DB)
 
@@ -242,12 +243,12 @@ func runRestore() error {
 	defer kvStore.Close()
 
 	// clear all keys from database
-	existingKeys, listErr := kvStore.List()
+	existingKeys, listErr := kvStore.List(ctx)
 	if listErr != nil {
 		return fmt.Errorf("failed to list existing keys: %w", listErr)
 	}
 	for _, k := range existingKeys {
-		if delErr := kvStore.Delete(k.Key); delErr != nil {
+		if delErr := kvStore.Delete(ctx, k.Key); delErr != nil {
 			log.Printf("[WARN] failed to delete key %s: %v", k.Key, delErr)
 		}
 	}
@@ -256,7 +257,7 @@ func runRestore() error {
 	// insert all key-value pairs from git with their formats
 	var restored int
 	for key, kv := range kvPairs {
-		if setErr := kvStore.Set(key, kv.Value, kv.Format); setErr != nil {
+		if setErr := kvStore.Set(ctx, key, kv.Value, kv.Format); setErr != nil {
 			log.Printf("[WARN] failed to restore key %s: %v", key, setErr)
 			continue
 		}

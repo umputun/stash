@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,7 @@ import (
 
 func TestHandler_HandleKeyList(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func() ([]store.KeyInfo, error) {
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) {
 			return []store.KeyInfo{
 				{Key: "alpha", Size: 50},
 				{Key: "beta", Size: 100},
@@ -74,13 +75,13 @@ func TestHandler_HandleKeyNew_PermissionDenied(t *testing.T) {
 
 func TestHandler_HandleKeyView(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetWithFormatFunc: func(key string) ([]byte, string, error) {
+		GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) {
 			if key == "testkey" {
 				return []byte("testvalue"), "text", nil
 			}
 			return nil, "", store.ErrNotFound
 		},
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -123,16 +124,16 @@ func TestHandler_HandleKeyView_PermissionDenied(t *testing.T) {
 
 func TestHandler_HandleKeyEdit(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetWithFormatFunc: func(key string) ([]byte, string, error) {
+		GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) {
 			if key == "editkey" {
 				return []byte("editvalue"), "text", nil
 			}
 			return nil, "", store.ErrNotFound
 		},
-		GetInfoFunc: func(key string) (store.KeyInfo, error) {
+		GetInfoFunc: func(_ context.Context, key string) (store.KeyInfo, error) {
 			return store.KeyInfo{Key: key, UpdatedAt: time.Now()}, nil
 		},
-		ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -160,8 +161,8 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 
 	t.Run("permission denied", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return []byte("val"), "text", nil },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return []byte("val"), "text", nil },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
@@ -178,8 +179,8 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", errors.New("db error") },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", errors.New("db error") },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -197,9 +198,9 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 
 func TestHandler_HandleKeyCreate(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-		SetFunc:           func(key string, value []byte, format string) error { return nil },
-		ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+		SetFunc:           func(context.Context, string, []byte, string) error { return nil },
+		ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -226,8 +227,8 @@ func TestHandler_HandleKeyCreate(t *testing.T) {
 func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(key string, value []byte, format string) error { return nil },
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		h := newTestHandlerWithStore(t, st)
 
@@ -243,9 +244,9 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-			SetFunc:           func(key string, value []byte, format string) error { return errors.New("db error") },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			SetFunc:           func(context.Context, string, []byte, string) error { return errors.New("db error") },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -263,9 +264,9 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 
 	t.Run("duplicate key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return []byte("existing"), "text", nil },
-			SetFunc:           func(key string, value []byte, format string) error { return nil },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return []byte("existing"), "text", nil },
+			SetFunc:           func(context.Context, string, []byte, string) error { return nil },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -286,8 +287,8 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 
 	t.Run("permission denied", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
@@ -307,8 +308,10 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 
 	t.Run("store check error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) { return nil, "", errors.New("db connection failed") },
-			ListFunc:          func() ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) {
+				return nil, "", errors.New("db connection failed")
+			},
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -328,8 +331,8 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 func TestHandler_HandleKeyUpdate(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetWithVersionFunc: func(key string, value []byte, format string, expectedVersion time.Time) error { return nil },
-			ListFunc:           func() ([]store.KeyInfo, error) { return nil, nil },
+			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error { return nil },
+			ListFunc:           func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -353,7 +356,7 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 
 	t.Run("permission denied", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
@@ -374,10 +377,10 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetWithVersionFunc: func(key string, value []byte, format string, expectedVersion time.Time) error {
+			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error {
 				return errors.New("db error")
 			},
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -396,7 +399,7 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 
 	t.Run("validation error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -424,8 +427,8 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 func TestHandler_HandleKeyDelete(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return nil },
-			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc: func(context.Context, string) error { return nil },
+			ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -446,8 +449,8 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return store.ErrNotFound },
-			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc: func(context.Context, string) error { return store.ErrNotFound },
+			ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -464,8 +467,8 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 
 	t.Run("internal error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return errors.New("db error") },
-			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc: func(context.Context, string) error { return errors.New("db error") },
+			ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -482,8 +485,8 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 
 	t.Run("permission denied", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return nil },
-			ListFunc:   func() ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc: func(context.Context, string) error { return nil },
+			ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
@@ -505,7 +508,7 @@ func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 
 	t.Run("conflict detected when version mismatch", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetWithVersionFunc: func(key string, value []byte, format string, expectedVersion time.Time) error {
+			SetWithVersionFunc: func(_ context.Context, _ string, _ []byte, _ string, expectedVersion time.Time) error {
 				// return ConflictError with server's current state
 				return &store.ConflictError{
 					Info: store.ConflictInfo{
@@ -516,7 +519,7 @@ func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 					},
 				}
 			},
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -543,10 +546,10 @@ func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 
 	t.Run("force_overwrite bypasses conflict check", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetWithVersionFunc: func(key string, value []byte, format string, expectedVersion time.Time) error {
+			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error {
 				return nil // success
 			},
-			ListFunc: func() ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },

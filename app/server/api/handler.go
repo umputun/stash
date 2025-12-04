@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -34,17 +35,17 @@ type GitService interface {
 
 // KVStore defines the interface for key-value storage operations.
 type KVStore interface {
-	Get(key string) ([]byte, error)
-	GetWithFormat(key string) ([]byte, string, error)
-	Set(key string, value []byte, format string) error
-	Delete(key string) error
-	List() ([]store.KeyInfo, error)
+	Get(ctx context.Context, key string) ([]byte, error)
+	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
+	Set(ctx context.Context, key string, value []byte, format string) error
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context) ([]store.KeyInfo, error)
 }
 
 // AuthProvider defines the interface for authentication operations.
 type AuthProvider interface {
 	Enabled() bool
-	GetSessionUser(token string) (string, bool)
+	GetSessionUser(ctx context.Context, token string) (string, bool)
 	FilterUserKeys(username string, keys []string) []string
 	FilterTokenKeys(token string, keys []string) []string
 	FilterPublicKeys(keys []string) []string
@@ -86,7 +87,7 @@ func (h *Handler) Register(r *routegroup.Bundle) {
 // GET /kv
 // Optional query params: ?prefix=app/config (filter by prefix)
 func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List()
+	keys, err := h.store.List(r.Context())
 	if err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to list keys")
 		return
@@ -149,7 +150,7 @@ func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
 		if err != nil {
 			continue
 		}
-		username, valid := h.auth.GetSessionUser(cookie.Value)
+		username, valid := h.auth.GetSessionUser(r.Context(), cookie.Value)
 		if valid {
 			return h.auth.FilterUserKeys(username, keys)
 		}
@@ -180,7 +181,7 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, format, err := h.store.GetWithFormat(key)
+	value, format, err := h.store.GetWithFormat(r.Context(), key)
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -232,7 +233,7 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 		format = "text"
 	}
 
-	if err := h.store.Set(key, value, format); err != nil {
+	if err := h.store.Set(r.Context(), key, value, format); err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to set key")
 		return
 	}
@@ -259,7 +260,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.store.Delete(key)
+	err := h.store.Delete(r.Context(), key)
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -309,7 +310,7 @@ func (h *Handler) getIdentity(r *http.Request) identity {
 		if err != nil {
 			continue
 		}
-		if username, valid := h.auth.GetSessionUser(cookie.Value); valid && username != "" {
+		if username, valid := h.auth.GetSessionUser(r.Context(), cookie.Value); valid && username != "" {
 			return identity{typ: identityUser, name: username}
 		}
 	}

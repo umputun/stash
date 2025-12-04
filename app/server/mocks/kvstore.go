@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -16,25 +17,25 @@ import (
 //
 //		// make and configure a mocked server.KVStore
 //		mockedKVStore := &KVStoreMock{
-//			DeleteFunc: func(key string) error {
+//			DeleteFunc: func(ctx context.Context, key string) error {
 //				panic("mock out the Delete method")
 //			},
-//			GetFunc: func(key string) ([]byte, error) {
+//			GetFunc: func(ctx context.Context, key string) ([]byte, error) {
 //				panic("mock out the Get method")
 //			},
-//			GetInfoFunc: func(key string) (store.KeyInfo, error) {
+//			GetInfoFunc: func(ctx context.Context, key string) (store.KeyInfo, error) {
 //				panic("mock out the GetInfo method")
 //			},
-//			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+//			GetWithFormatFunc: func(ctx context.Context, key string) ([]byte, string, error) {
 //				panic("mock out the GetWithFormat method")
 //			},
-//			ListFunc: func() ([]store.KeyInfo, error) {
+//			ListFunc: func(ctx context.Context) ([]store.KeyInfo, error) {
 //				panic("mock out the List method")
 //			},
-//			SetFunc: func(key string, value []byte, format string) error {
+//			SetFunc: func(ctx context.Context, key string, value []byte, format string) error {
 //				panic("mock out the Set method")
 //			},
-//			SetWithVersionFunc: func(key string, value []byte, format string, expectedVersion time.Time) error {
+//			SetWithVersionFunc: func(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
 //				panic("mock out the SetWithVersion method")
 //			},
 //		}
@@ -45,53 +46,65 @@ import (
 //	}
 type KVStoreMock struct {
 	// DeleteFunc mocks the Delete method.
-	DeleteFunc func(key string) error
+	DeleteFunc func(ctx context.Context, key string) error
 
 	// GetFunc mocks the Get method.
-	GetFunc func(key string) ([]byte, error)
+	GetFunc func(ctx context.Context, key string) ([]byte, error)
 
 	// GetInfoFunc mocks the GetInfo method.
-	GetInfoFunc func(key string) (store.KeyInfo, error)
+	GetInfoFunc func(ctx context.Context, key string) (store.KeyInfo, error)
 
 	// GetWithFormatFunc mocks the GetWithFormat method.
-	GetWithFormatFunc func(key string) ([]byte, string, error)
+	GetWithFormatFunc func(ctx context.Context, key string) ([]byte, string, error)
 
 	// ListFunc mocks the List method.
-	ListFunc func() ([]store.KeyInfo, error)
+	ListFunc func(ctx context.Context) ([]store.KeyInfo, error)
 
 	// SetFunc mocks the Set method.
-	SetFunc func(key string, value []byte, format string) error
+	SetFunc func(ctx context.Context, key string, value []byte, format string) error
 
 	// SetWithVersionFunc mocks the SetWithVersion method.
-	SetWithVersionFunc func(key string, value []byte, format string, expectedVersion time.Time) error
+	SetWithVersionFunc func(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
 
 	// calls tracks calls to the methods.
 	calls struct {
 		// Delete holds details about calls to the Delete method.
 		Delete []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Key is the key argument value.
 			Key string
 		}
 		// Get holds details about calls to the Get method.
 		Get []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Key is the key argument value.
 			Key string
 		}
 		// GetInfo holds details about calls to the GetInfo method.
 		GetInfo []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Key is the key argument value.
 			Key string
 		}
 		// GetWithFormat holds details about calls to the GetWithFormat method.
 		GetWithFormat []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Key is the key argument value.
 			Key string
 		}
 		// List holds details about calls to the List method.
 		List []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 		}
 		// Set holds details about calls to the Set method.
 		Set []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Key is the key argument value.
 			Key string
 			// Value is the value argument value.
@@ -101,6 +114,8 @@ type KVStoreMock struct {
 		}
 		// SetWithVersion holds details about calls to the SetWithVersion method.
 		SetWithVersion []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Key is the key argument value.
 			Key string
 			// Value is the value argument value.
@@ -121,19 +136,21 @@ type KVStoreMock struct {
 }
 
 // Delete calls DeleteFunc.
-func (mock *KVStoreMock) Delete(key string) error {
+func (mock *KVStoreMock) Delete(ctx context.Context, key string) error {
 	if mock.DeleteFunc == nil {
 		panic("KVStoreMock.DeleteFunc: method is nil but KVStore.Delete was just called")
 	}
 	callInfo := struct {
+		Ctx context.Context
 		Key string
 	}{
+		Ctx: ctx,
 		Key: key,
 	}
 	mock.lockDelete.Lock()
 	mock.calls.Delete = append(mock.calls.Delete, callInfo)
 	mock.lockDelete.Unlock()
-	return mock.DeleteFunc(key)
+	return mock.DeleteFunc(ctx, key)
 }
 
 // DeleteCalls gets all the calls that were made to Delete.
@@ -141,9 +158,11 @@ func (mock *KVStoreMock) Delete(key string) error {
 //
 //	len(mockedKVStore.DeleteCalls())
 func (mock *KVStoreMock) DeleteCalls() []struct {
+	Ctx context.Context
 	Key string
 } {
 	var calls []struct {
+		Ctx context.Context
 		Key string
 	}
 	mock.lockDelete.RLock()
@@ -153,19 +172,21 @@ func (mock *KVStoreMock) DeleteCalls() []struct {
 }
 
 // Get calls GetFunc.
-func (mock *KVStoreMock) Get(key string) ([]byte, error) {
+func (mock *KVStoreMock) Get(ctx context.Context, key string) ([]byte, error) {
 	if mock.GetFunc == nil {
 		panic("KVStoreMock.GetFunc: method is nil but KVStore.Get was just called")
 	}
 	callInfo := struct {
+		Ctx context.Context
 		Key string
 	}{
+		Ctx: ctx,
 		Key: key,
 	}
 	mock.lockGet.Lock()
 	mock.calls.Get = append(mock.calls.Get, callInfo)
 	mock.lockGet.Unlock()
-	return mock.GetFunc(key)
+	return mock.GetFunc(ctx, key)
 }
 
 // GetCalls gets all the calls that were made to Get.
@@ -173,9 +194,11 @@ func (mock *KVStoreMock) Get(key string) ([]byte, error) {
 //
 //	len(mockedKVStore.GetCalls())
 func (mock *KVStoreMock) GetCalls() []struct {
+	Ctx context.Context
 	Key string
 } {
 	var calls []struct {
+		Ctx context.Context
 		Key string
 	}
 	mock.lockGet.RLock()
@@ -185,19 +208,21 @@ func (mock *KVStoreMock) GetCalls() []struct {
 }
 
 // GetInfo calls GetInfoFunc.
-func (mock *KVStoreMock) GetInfo(key string) (store.KeyInfo, error) {
+func (mock *KVStoreMock) GetInfo(ctx context.Context, key string) (store.KeyInfo, error) {
 	if mock.GetInfoFunc == nil {
 		panic("KVStoreMock.GetInfoFunc: method is nil but KVStore.GetInfo was just called")
 	}
 	callInfo := struct {
+		Ctx context.Context
 		Key string
 	}{
+		Ctx: ctx,
 		Key: key,
 	}
 	mock.lockGetInfo.Lock()
 	mock.calls.GetInfo = append(mock.calls.GetInfo, callInfo)
 	mock.lockGetInfo.Unlock()
-	return mock.GetInfoFunc(key)
+	return mock.GetInfoFunc(ctx, key)
 }
 
 // GetInfoCalls gets all the calls that were made to GetInfo.
@@ -205,9 +230,11 @@ func (mock *KVStoreMock) GetInfo(key string) (store.KeyInfo, error) {
 //
 //	len(mockedKVStore.GetInfoCalls())
 func (mock *KVStoreMock) GetInfoCalls() []struct {
+	Ctx context.Context
 	Key string
 } {
 	var calls []struct {
+		Ctx context.Context
 		Key string
 	}
 	mock.lockGetInfo.RLock()
@@ -217,19 +244,21 @@ func (mock *KVStoreMock) GetInfoCalls() []struct {
 }
 
 // GetWithFormat calls GetWithFormatFunc.
-func (mock *KVStoreMock) GetWithFormat(key string) ([]byte, string, error) {
+func (mock *KVStoreMock) GetWithFormat(ctx context.Context, key string) ([]byte, string, error) {
 	if mock.GetWithFormatFunc == nil {
 		panic("KVStoreMock.GetWithFormatFunc: method is nil but KVStore.GetWithFormat was just called")
 	}
 	callInfo := struct {
+		Ctx context.Context
 		Key string
 	}{
+		Ctx: ctx,
 		Key: key,
 	}
 	mock.lockGetWithFormat.Lock()
 	mock.calls.GetWithFormat = append(mock.calls.GetWithFormat, callInfo)
 	mock.lockGetWithFormat.Unlock()
-	return mock.GetWithFormatFunc(key)
+	return mock.GetWithFormatFunc(ctx, key)
 }
 
 // GetWithFormatCalls gets all the calls that were made to GetWithFormat.
@@ -237,9 +266,11 @@ func (mock *KVStoreMock) GetWithFormat(key string) ([]byte, string, error) {
 //
 //	len(mockedKVStore.GetWithFormatCalls())
 func (mock *KVStoreMock) GetWithFormatCalls() []struct {
+	Ctx context.Context
 	Key string
 } {
 	var calls []struct {
+		Ctx context.Context
 		Key string
 	}
 	mock.lockGetWithFormat.RLock()
@@ -249,16 +280,19 @@ func (mock *KVStoreMock) GetWithFormatCalls() []struct {
 }
 
 // List calls ListFunc.
-func (mock *KVStoreMock) List() ([]store.KeyInfo, error) {
+func (mock *KVStoreMock) List(ctx context.Context) ([]store.KeyInfo, error) {
 	if mock.ListFunc == nil {
 		panic("KVStoreMock.ListFunc: method is nil but KVStore.List was just called")
 	}
 	callInfo := struct {
-	}{}
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
 	mock.lockList.Lock()
 	mock.calls.List = append(mock.calls.List, callInfo)
 	mock.lockList.Unlock()
-	return mock.ListFunc()
+	return mock.ListFunc(ctx)
 }
 
 // ListCalls gets all the calls that were made to List.
@@ -266,8 +300,10 @@ func (mock *KVStoreMock) List() ([]store.KeyInfo, error) {
 //
 //	len(mockedKVStore.ListCalls())
 func (mock *KVStoreMock) ListCalls() []struct {
+	Ctx context.Context
 } {
 	var calls []struct {
+		Ctx context.Context
 	}
 	mock.lockList.RLock()
 	calls = mock.calls.List
@@ -276,15 +312,17 @@ func (mock *KVStoreMock) ListCalls() []struct {
 }
 
 // Set calls SetFunc.
-func (mock *KVStoreMock) Set(key string, value []byte, format string) error {
+func (mock *KVStoreMock) Set(ctx context.Context, key string, value []byte, format string) error {
 	if mock.SetFunc == nil {
 		panic("KVStoreMock.SetFunc: method is nil but KVStore.Set was just called")
 	}
 	callInfo := struct {
+		Ctx    context.Context
 		Key    string
 		Value  []byte
 		Format string
 	}{
+		Ctx:    ctx,
 		Key:    key,
 		Value:  value,
 		Format: format,
@@ -292,7 +330,7 @@ func (mock *KVStoreMock) Set(key string, value []byte, format string) error {
 	mock.lockSet.Lock()
 	mock.calls.Set = append(mock.calls.Set, callInfo)
 	mock.lockSet.Unlock()
-	return mock.SetFunc(key, value, format)
+	return mock.SetFunc(ctx, key, value, format)
 }
 
 // SetCalls gets all the calls that were made to Set.
@@ -300,11 +338,13 @@ func (mock *KVStoreMock) Set(key string, value []byte, format string) error {
 //
 //	len(mockedKVStore.SetCalls())
 func (mock *KVStoreMock) SetCalls() []struct {
+	Ctx    context.Context
 	Key    string
 	Value  []byte
 	Format string
 } {
 	var calls []struct {
+		Ctx    context.Context
 		Key    string
 		Value  []byte
 		Format string
@@ -316,16 +356,18 @@ func (mock *KVStoreMock) SetCalls() []struct {
 }
 
 // SetWithVersion calls SetWithVersionFunc.
-func (mock *KVStoreMock) SetWithVersion(key string, value []byte, format string, expectedVersion time.Time) error {
+func (mock *KVStoreMock) SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
 	if mock.SetWithVersionFunc == nil {
 		panic("KVStoreMock.SetWithVersionFunc: method is nil but KVStore.SetWithVersion was just called")
 	}
 	callInfo := struct {
+		Ctx             context.Context
 		Key             string
 		Value           []byte
 		Format          string
 		ExpectedVersion time.Time
 	}{
+		Ctx:             ctx,
 		Key:             key,
 		Value:           value,
 		Format:          format,
@@ -334,7 +376,7 @@ func (mock *KVStoreMock) SetWithVersion(key string, value []byte, format string,
 	mock.lockSetWithVersion.Lock()
 	mock.calls.SetWithVersion = append(mock.calls.SetWithVersion, callInfo)
 	mock.lockSetWithVersion.Unlock()
-	return mock.SetWithVersionFunc(key, value, format, expectedVersion)
+	return mock.SetWithVersionFunc(ctx, key, value, format, expectedVersion)
 }
 
 // SetWithVersionCalls gets all the calls that were made to SetWithVersion.
@@ -342,12 +384,14 @@ func (mock *KVStoreMock) SetWithVersion(key string, value []byte, format string,
 //
 //	len(mockedKVStore.SetWithVersionCalls())
 func (mock *KVStoreMock) SetWithVersionCalls() []struct {
+	Ctx             context.Context
 	Key             string
 	Value           []byte
 	Format          string
 	ExpectedVersion time.Time
 } {
 	var calls []struct {
+		Ctx             context.Context
 		Key             string
 		Value           []byte
 		Format          string

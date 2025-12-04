@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"sync"
 )
 
@@ -25,7 +26,7 @@ import (
 //			FilterUserKeysFunc: func(username string, keys []string) []string {
 //				panic("mock out the FilterUserKeys method")
 //			},
-//			GetSessionUserFunc: func(token string) (string, bool) {
+//			GetSessionUserFunc: func(ctx context.Context, token string) (string, bool) {
 //				panic("mock out the GetSessionUser method")
 //			},
 //			HasTokenACLFunc: func(token string) bool {
@@ -51,7 +52,7 @@ type AuthProviderMock struct {
 	FilterUserKeysFunc func(username string, keys []string) []string
 
 	// GetSessionUserFunc mocks the GetSessionUser method.
-	GetSessionUserFunc func(token string) (string, bool)
+	GetSessionUserFunc func(ctx context.Context, token string) (string, bool)
 
 	// HasTokenACLFunc mocks the HasTokenACL method.
 	HasTokenACLFunc func(token string) bool
@@ -82,6 +83,8 @@ type AuthProviderMock struct {
 		}
 		// GetSessionUser holds details about calls to the GetSessionUser method.
 		GetSessionUser []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
 			// Token is the token argument value.
 			Token string
 		}
@@ -231,19 +234,21 @@ func (mock *AuthProviderMock) FilterUserKeysCalls() []struct {
 }
 
 // GetSessionUser calls GetSessionUserFunc.
-func (mock *AuthProviderMock) GetSessionUser(token string) (string, bool) {
+func (mock *AuthProviderMock) GetSessionUser(ctx context.Context, token string) (string, bool) {
 	if mock.GetSessionUserFunc == nil {
 		panic("AuthProviderMock.GetSessionUserFunc: method is nil but AuthProvider.GetSessionUser was just called")
 	}
 	callInfo := struct {
+		Ctx   context.Context
 		Token string
 	}{
+		Ctx:   ctx,
 		Token: token,
 	}
 	mock.lockGetSessionUser.Lock()
 	mock.calls.GetSessionUser = append(mock.calls.GetSessionUser, callInfo)
 	mock.lockGetSessionUser.Unlock()
-	return mock.GetSessionUserFunc(token)
+	return mock.GetSessionUserFunc(ctx, token)
 }
 
 // GetSessionUserCalls gets all the calls that were made to GetSessionUser.
@@ -251,9 +256,11 @@ func (mock *AuthProviderMock) GetSessionUser(token string) (string, bool) {
 //
 //	len(mockedAuthProvider.GetSessionUserCalls())
 func (mock *AuthProviderMock) GetSessionUserCalls() []struct {
+	Ctx   context.Context
 	Token string
 } {
 	var calls []struct {
+		Ctx   context.Context
 		Token string
 	}
 	mock.lockGetSessionUser.RLock()

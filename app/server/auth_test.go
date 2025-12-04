@@ -13,7 +13,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/app/store"
 )
+
+// testSessionStore creates an in-memory SQLite store for testing session operations.
+func testSessionStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	return st
+}
 
 func TestPermission_CanRead(t *testing.T) {
 	tests := []struct {
@@ -101,7 +111,7 @@ tokens:
 }
 
 func TestNewAuth_Disabled(t *testing.T) {
-	auth, err := NewAuth("", time.Hour)
+	auth, err := NewAuth("", time.Hour, nil)
 	require.NoError(t, err)
 	assert.Nil(t, auth)
 }
@@ -121,7 +131,7 @@ tokens:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 	require.NotNil(t, auth)
 	assert.True(t, auth.Enabled())
@@ -130,7 +140,7 @@ tokens:
 func TestNewAuth_Errors(t *testing.T) {
 	t.Run("empty users and tokens", func(t *testing.T) {
 		f := createTempFile(t, "users: []\ntokens: []")
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "at least one user or token")
 	})
@@ -142,7 +152,7 @@ func TestNewAuth_Errors(t *testing.T) {
     permissions:
       - prefix: "*"
         access: rw`)
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "user name cannot be empty")
 	})
@@ -154,7 +164,7 @@ func TestNewAuth_Errors(t *testing.T) {
     permissions:
       - prefix: "*"
         access: rw`)
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "password hash cannot be empty")
 	})
@@ -171,7 +181,7 @@ func TestNewAuth_Errors(t *testing.T) {
     permissions:
       - prefix: "*"
         access: r`)
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate user name")
 	})
@@ -182,7 +192,7 @@ func TestNewAuth_Errors(t *testing.T) {
     permissions:
       - prefix: "*"
         access: rw`)
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "token cannot be empty")
 	})
@@ -194,7 +204,7 @@ func TestNewAuth_Errors(t *testing.T) {
     permissions:
       - prefix: "*"
         access: invalid`)
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "value must be one of")
 	})
@@ -208,7 +218,7 @@ func TestNewAuth_Errors(t *testing.T) {
         access: rw
       - prefix: "*"
         access: r`)
-		_, err := NewAuth(f, time.Hour)
+		_, err := NewAuth(f, time.Hour, testSessionStore(t))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate prefix")
 	})
@@ -225,7 +235,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -330,7 +340,7 @@ tokens:
         access: r
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -380,7 +390,7 @@ users:
         access: r
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -416,7 +426,7 @@ users:
         access: r
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	keys := []string{"app/config", "app/db", "other/key", "secret/data"}
@@ -455,7 +465,7 @@ users:
         access: r
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	assert.True(t, auth.UserCanWrite("admin"))
@@ -474,31 +484,31 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	// create session
-	token, err := auth.CreateSession("admin")
+	token, err := auth.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 	assert.Len(t, token, 36) // uuid format
 
 	// validate session
-	assert.True(t, auth.ValidateSession(token))
-	assert.False(t, auth.ValidateSession("invalid"))
+	assert.True(t, auth.ValidateSession(t.Context(), token))
+	assert.False(t, auth.ValidateSession(t.Context(), "invalid"))
 
 	// get session user
-	username, valid := auth.GetSessionUser(token)
+	username, valid := auth.GetSessionUser(t.Context(), token)
 	assert.True(t, valid)
 	assert.Equal(t, "admin", username)
 
 	// invalid session
-	_, valid = auth.GetSessionUser("invalid")
+	_, valid = auth.GetSessionUser(t.Context(), "invalid")
 	assert.False(t, valid)
 
 	// invalidate session
-	auth.InvalidateSession(token)
-	assert.False(t, auth.ValidateSession(token))
+	auth.InvalidateSession(t.Context(), token)
+	assert.False(t, auth.ValidateSession(t.Context(), token))
 }
 
 func TestAuth_SessionExpiry(t *testing.T) {
@@ -511,24 +521,24 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, 1*time.Millisecond)
+	auth, err := NewAuth(f, 1*time.Millisecond, testSessionStore(t))
 	require.NoError(t, err)
 
-	token, err := auth.CreateSession("admin")
+	token, err := auth.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
 
-	assert.True(t, auth.ValidateSession(token))
+	assert.True(t, auth.ValidateSession(t.Context(), token))
 	time.Sleep(10 * time.Millisecond)
-	assert.False(t, auth.ValidateSession(token))
+	assert.False(t, auth.ValidateSession(t.Context(), token))
 
 	// GetSessionUser also respects expiry
-	_, valid := auth.GetSessionUser(token)
+	_, valid := auth.GetSessionUser(t.Context(), token)
 	assert.False(t, valid)
 }
 
 func TestAuth_CreateSession_NilAuth(t *testing.T) {
 	var auth *Auth
-	_, err := auth.CreateSession("admin")
+	_, err := auth.CreateSession(t.Context(), "admin")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth not enabled")
 }
@@ -546,7 +556,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 	assert.True(t, auth.Enabled())
 }
@@ -565,7 +575,7 @@ func TestAuth_LoginTTL(t *testing.T) {
       - prefix: "*"
         access: rw`
 		f := createTempFile(t, content)
-		auth, err := NewAuth(f, 2*time.Hour)
+		auth, err := NewAuth(f, 2*time.Hour, testSessionStore(t))
 		require.NoError(t, err)
 		assert.Equal(t, 2*time.Hour, auth.LoginTTL())
 	})
@@ -592,7 +602,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	middleware := auth.SessionAuth("/login")
@@ -608,7 +618,7 @@ users:
 	assert.Equal(t, "/login", rec.Header().Get("Location"))
 
 	// with valid session should pass
-	token, err := auth.CreateSession("admin")
+	token, err := auth.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
 
 	req = httptest.NewRequest("GET", "/", http.NoBody)
@@ -642,7 +652,7 @@ tokens:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -670,7 +680,7 @@ tokens:
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	// session cookie should also work for API
-	token, err := auth.CreateSession("admin")
+	token, err := auth.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
 
 	req = httptest.NewRequest("GET", "/kv/test", http.NoBody)
@@ -689,7 +699,7 @@ tokens:
         access: r
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -728,7 +738,7 @@ tokens:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -834,7 +844,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -842,7 +852,7 @@ users:
 	}))
 
 	// create session for read-only user
-	sessionToken, err := auth.CreateSession("readonly")
+	sessionToken, err := auth.CreateSession(t.Context(), "readonly")
 	require.NoError(t, err)
 
 	t.Run("readonly user cannot PUT via session cookie", func(t *testing.T) {
@@ -878,7 +888,7 @@ users:
 	})
 
 	// create session for scoped user (app/* only)
-	scopedSession, err := auth.CreateSession("scoped")
+	scopedSession, err := auth.CreateSession(t.Context(), "scoped")
 	require.NoError(t, err)
 
 	t.Run("scoped user can write to allowed prefix via session cookie", func(t *testing.T) {
@@ -914,7 +924,7 @@ tokens:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 	require.NotNil(t, auth.publicACL, "public ACL should be set")
 
@@ -984,7 +994,7 @@ tokens:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	handler := auth.TokenAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -1071,7 +1081,7 @@ tokens:
         access: r
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 	require.NotNil(t, auth)
 	require.NotNil(t, auth.publicACL)
@@ -1104,7 +1114,7 @@ tokens:
         access: r
 `
 	f := createTempFile(t, initialConfig)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	// verify initial config
@@ -1112,9 +1122,9 @@ tokens:
 	assert.False(t, auth.HasTokenACL("token2"))
 
 	// create a session
-	session, err := auth.CreateSession("admin")
+	session, err := auth.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
-	assert.True(t, auth.ValidateSession(session))
+	assert.True(t, auth.ValidateSession(t.Context(), session))
 
 	// update config file with new token
 	newConfig := `
@@ -1139,7 +1149,7 @@ tokens:
 	require.NoError(t, err)
 
 	// reload config
-	err = auth.Reload()
+	err = auth.Reload(t.Context())
 	require.NoError(t, err)
 
 	// verify new config is loaded
@@ -1147,7 +1157,7 @@ tokens:
 	assert.True(t, auth.HasTokenACL("token2"), "new token should exist")
 
 	// verify session was invalidated
-	assert.False(t, auth.ValidateSession(session), "session should be invalidated after reload")
+	assert.False(t, auth.ValidateSession(t.Context(), session), "session should be invalidated after reload")
 
 	// verify new user exists
 	assert.True(t, auth.CheckUserPermission("viewer", "test", false))
@@ -1163,7 +1173,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, initialConfig)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	// verify initial state
@@ -1174,7 +1184,7 @@ users:
 	require.NoError(t, err)
 
 	// reload should fail
-	err = auth.Reload()
+	err = auth.Reload(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load auth config")
 
@@ -1192,7 +1202,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, initialConfig)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	// write empty config (no users or tokens)
@@ -1200,7 +1210,7 @@ users:
 	require.NoError(t, err)
 
 	// reload should fail
-	err = auth.Reload()
+	err = auth.Reload(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one user or token")
 
@@ -1210,7 +1220,7 @@ users:
 
 func TestAuth_Reload_NilAuth(t *testing.T) {
 	var auth *Auth
-	err := auth.Reload()
+	err := auth.Reload(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth not enabled")
 }
@@ -1230,25 +1240,25 @@ users:
         access: r
 `
 	f := createTempFile(t, config)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	// create multiple sessions
-	session1, err := auth.CreateSession("user1")
+	session1, err := auth.CreateSession(t.Context(), "user1")
 	require.NoError(t, err)
-	session2, err := auth.CreateSession("user2")
+	session2, err := auth.CreateSession(t.Context(), "user2")
 	require.NoError(t, err)
 
-	assert.True(t, auth.ValidateSession(session1))
-	assert.True(t, auth.ValidateSession(session2))
+	assert.True(t, auth.ValidateSession(t.Context(), session1))
+	assert.True(t, auth.ValidateSession(t.Context(), session2))
 
 	// reload with same config
-	err = auth.Reload()
+	err = auth.Reload(t.Context())
 	require.NoError(t, err)
 
 	// all sessions should be invalidated
-	assert.False(t, auth.ValidateSession(session1), "session1 should be invalidated")
-	assert.False(t, auth.ValidateSession(session2), "session2 should be invalidated")
+	assert.False(t, auth.ValidateSession(t.Context(), session1), "session1 should be invalidated")
+	assert.False(t, auth.ValidateSession(t.Context(), session2), "session2 should be invalidated")
 }
 
 func TestAuth_ConcurrentAccess(t *testing.T) {
@@ -1266,7 +1276,7 @@ tokens:
         access: r
 `
 	f := createTempFile(t, config)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	// run concurrent reads and reloads
@@ -1274,7 +1284,7 @@ tokens:
 	go func() {
 		defer close(done)
 		for range 100 {
-			_ = auth.Reload()
+			_ = auth.Reload(t.Context())
 		}
 	}()
 
@@ -1306,7 +1316,7 @@ tokens:
         access: r
 `
 	f := createTempFile(t, config)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	err = auth.StartWatcher(t.Context())
@@ -1356,7 +1366,7 @@ users:
 	err := os.WriteFile(authFile, []byte(config), 0o600)
 	require.NoError(t, err)
 
-	auth, err := NewAuth(authFile, time.Hour)
+	auth, err := NewAuth(authFile, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	err = auth.StartWatcher(t.Context())
@@ -1402,7 +1412,7 @@ users:
         access: rw
 `
 	f := createTempFile(t, config)
-	auth, err := NewAuth(f, time.Hour)
+	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1429,12 +1439,76 @@ func TestAuth_StartWatcher_NilAuth(t *testing.T) {
 
 func TestAuth_StartWatcher_EmptyAuthFile(t *testing.T) {
 	auth := &Auth{
-		authFile: "",
-		users:    make(map[string]User),
-		tokens:   make(map[string]TokenACL),
-		sessions: make(map[string]session),
+		authFile:     "",
+		users:        make(map[string]User),
+		tokens:       make(map[string]TokenACL),
+		sessionStore: testSessionStore(t),
 	}
-	err := auth.StartWatcher(context.Background())
+	err := auth.StartWatcher(t.Context())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth file path not set")
+}
+
+func TestAuth_StartCleanup(t *testing.T) {
+	t.Run("cleanup stops on context cancel", func(t *testing.T) {
+		ss := testSessionStore(t)
+		auth := &Auth{
+			users:           make(map[string]User),
+			tokens:          make(map[string]TokenACL),
+			sessionStore:    ss,
+			cleanupInterval: 50 * time.Millisecond,
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		auth.StartCleanup(ctx)
+
+		// cancel immediately - cleanup should stop gracefully
+		cancel()
+		time.Sleep(100 * time.Millisecond) // give goroutine time to stop
+	})
+
+	t.Run("cleanup deletes expired sessions", func(t *testing.T) {
+		ss := testSessionStore(t)
+		ctx := t.Context()
+
+		// create expired session
+		expired := time.Now().Add(-time.Hour).UTC()
+		err := ss.CreateSession(ctx, "expired-token", "user", expired)
+		require.NoError(t, err)
+
+		// create valid session
+		valid := time.Now().Add(time.Hour).UTC()
+		err = ss.CreateSession(ctx, "valid-token", "user", valid)
+		require.NoError(t, err)
+
+		// start cleanup with short interval
+		auth := &Auth{
+			users:           make(map[string]User),
+			tokens:          make(map[string]TokenACL),
+			sessionStore:    ss,
+			cleanupInterval: 50 * time.Millisecond,
+		}
+
+		cleanupCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		auth.StartCleanup(cleanupCtx)
+
+		// wait for at least 2 cleanup cycles
+		time.Sleep(150 * time.Millisecond)
+
+		// verify expired session was deleted by cleanup (not by our test code).
+		// if we call DeleteExpiredSessions now, it should return 0 because cleanup already handled it.
+		deleted, err := ss.DeleteExpiredSessions(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), deleted, "cleanup should have already deleted expired sessions")
+
+		// valid session should remain
+		_, _, err = ss.GetSession(ctx, "valid-token")
+		require.NoError(t, err)
+	})
+
+	t.Run("nil auth is noop", func(t *testing.T) {
+		var auth *Auth
+		auth.StartCleanup(context.Background()) // should not panic
+	})
 }

@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -41,13 +42,13 @@ func (e *ConflictError) Unwrap() error {
 // Interface defines the contract for key-value storage operations.
 // Both Store (concrete DB) and Cached (wrapper) implement this interface.
 type Interface interface {
-	Get(key string) ([]byte, error)
-	GetWithFormat(key string) ([]byte, string, error)
-	GetInfo(key string) (KeyInfo, error)
-	Set(key string, value []byte, format string) error
-	SetWithVersion(key string, value []byte, format string, expectedVersion time.Time) error
-	Delete(key string) error
-	List() ([]KeyInfo, error)
+	Get(ctx context.Context, key string) ([]byte, error)
+	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
+	GetInfo(ctx context.Context, key string) (KeyInfo, error)
+	Set(ctx context.Context, key string, value []byte, format string) error
+	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context) ([]KeyInfo, error)
 	Close() error
 }
 

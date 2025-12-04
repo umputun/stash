@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,7 @@ import (
 func TestHandler_HandleList(t *testing.T) {
 	t.Run("returns all keys", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func() ([]store.KeyInfo, error) {
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) {
 				return []store.KeyInfo{
 					{Key: "alpha", Size: 50},
 					{Key: "beta", Size: 100},
@@ -42,7 +43,7 @@ func TestHandler_HandleList(t *testing.T) {
 
 	t.Run("filters by prefix", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func() ([]store.KeyInfo, error) {
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) {
 				return []store.KeyInfo{
 					{Key: "app/config", Size: 50},
 					{Key: "app/db", Size: 100},
@@ -68,7 +69,7 @@ func TestHandler_HandleList(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func() ([]store.KeyInfo, error) {
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) {
 				return nil, errors.New("db error")
 			},
 		}
@@ -86,7 +87,7 @@ func TestHandler_HandleList(t *testing.T) {
 func TestHandler_HandleGet(t *testing.T) {
 	t.Run("existing key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+			GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) {
 				if key == "testkey" {
 					return []byte("testvalue"), "text", nil
 				}
@@ -108,7 +109,7 @@ func TestHandler_HandleGet(t *testing.T) {
 
 	t.Run("json format returns application/json", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) {
 				return []byte(`{"key":"value"}`), "json", nil
 			},
 		}
@@ -126,7 +127,7 @@ func TestHandler_HandleGet(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			GetWithFormatFunc: func(key string) ([]byte, string, error) {
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) {
 				return nil, "", store.ErrNotFound
 			},
 		}
@@ -158,7 +159,7 @@ func TestHandler_HandleGet(t *testing.T) {
 func TestHandler_HandleSet(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(key string, value []byte, format string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) error { return nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -177,7 +178,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("with format header", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(key string, value []byte, format string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) error { return nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -195,7 +196,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("with format query param", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(key string, value []byte, format string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) error { return nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -212,7 +213,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("invalid format defaults to text", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(key string, value []byte, format string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) error { return nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -243,7 +244,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(key string, value []byte, format string) error { return errors.New("db error") },
+			SetFunc: func(context.Context, string, []byte, string) error { return errors.New("db error") },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -260,7 +261,7 @@ func TestHandler_HandleSet(t *testing.T) {
 func TestHandler_HandleDelete(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return nil },
+			DeleteFunc: func(context.Context, string) error { return nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := newTestHandler(t, st, auth)
@@ -277,7 +278,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return store.ErrNotFound },
+			DeleteFunc: func(context.Context, string) error { return store.ErrNotFound },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := newTestHandler(t, st, auth)
@@ -292,7 +293,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(key string) error { return errors.New("db error") },
+			DeleteFunc: func(context.Context, string) error { return errors.New("db error") },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := newTestHandler(t, st, auth)
@@ -366,7 +367,7 @@ func TestHandler_FilterKeysByAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc: func() bool { return true },
-			GetSessionUserFunc: func(token string) (string, bool) {
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
 				if token == "valid-token" {
 					return "testuser", true
 				}
@@ -388,7 +389,7 @@ func TestHandler_FilterKeysByAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc:        func() bool { return true },
-			GetSessionUserFunc: func(token string) (string, bool) { return "", false },
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
 			FilterTokenKeysFunc: func(token string, keys []string) []string {
 				if token == "api-token" {
 					return []string{"app/config"}
@@ -408,7 +409,7 @@ func TestHandler_FilterKeysByAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc:         func() bool { return true },
-			GetSessionUserFunc:  func(token string) (string, bool) { return "", false },
+			GetSessionUserFunc:  func(_ context.Context, token string) (string, bool) { return "", false },
 			FilterTokenKeysFunc: func(token string, keys []string) []string { return nil },
 			FilterPublicKeysFunc: func(keys []string) []string {
 				return []string{"app/config"} // only public keys
@@ -425,7 +426,7 @@ func TestHandler_FilterKeysByAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc:          func() bool { return true },
-			GetSessionUserFunc:   func(token string) (string, bool) { return "", false },
+			GetSessionUserFunc:   func(_ context.Context, token string) (string, bool) { return "", false },
 			FilterTokenKeysFunc:  func(token string, keys []string) []string { return nil },
 			FilterPublicKeysFunc: func(keys []string) []string { return nil },
 		}
@@ -447,7 +448,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 
 	t.Run("session cookie returns user identity", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(token string) (string, bool) {
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
 				if token == "valid" {
 					return "testuser", true
 				}
@@ -465,7 +466,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 
 	t.Run("bearer token returns token identity", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(token string) (string, bool) { return "", false },
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
 			HasTokenACLFunc:    func(token string) bool { return token == "api-token" },
 		}
 		h := &Handler{auth: auth}
@@ -481,7 +482,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 func TestHandler_GetIdentityForLog(t *testing.T) {
 	t.Run("user identity", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(token string) (string, bool) { return "admin", true },
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "admin", true },
 		}
 		h := &Handler{auth: auth}
 
@@ -501,7 +502,7 @@ func TestHandler_GetIdentityForLog(t *testing.T) {
 
 func TestHandler_HandleSet_WithGit(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc: func(key string, value []byte, format string) error { return nil },
+		SetFunc: func(context.Context, string, []byte, string) error { return nil },
 	}
 	auth := &mocks.AuthProviderMock{}
 	gitMock := &mocks.GitServiceMock{
@@ -525,7 +526,7 @@ func TestHandler_HandleSet_WithGit(t *testing.T) {
 
 func TestHandler_HandleDelete_WithGit(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		DeleteFunc: func(key string) error { return nil },
+		DeleteFunc: func(context.Context, string) error { return nil },
 	}
 	auth := &mocks.AuthProviderMock{}
 	gitMock := &mocks.GitServiceMock{
@@ -566,7 +567,7 @@ func TestHandler_GetAuthorFromRequest(t *testing.T) {
 
 	t.Run("user identity returns author with username", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(token string) (string, bool) {
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
 				if token == "valid-session" {
 					return "testuser", true
 				}
@@ -586,7 +587,7 @@ func TestHandler_GetAuthorFromRequest(t *testing.T) {
 
 	t.Run("token identity returns author with token prefix", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(token string) (string, bool) { return "", false },
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
 			HasTokenACLFunc:    func(token string) bool { return token == "my-api-token" },
 		}
 		h := newTestHandler(t, st, auth)
@@ -602,7 +603,7 @@ func TestHandler_GetAuthorFromRequest(t *testing.T) {
 
 	t.Run("anonymous returns default author", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(token string) (string, bool) { return "", false },
+			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
 			HasTokenACLFunc:    func(token string) bool { return false },
 		}
 		h := newTestHandler(t, st, auth)

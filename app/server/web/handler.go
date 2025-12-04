@@ -2,6 +2,7 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/base64"
 	"fmt"
@@ -49,12 +50,12 @@ func StaticFS() (fs.FS, error) {
 
 // KVStore defines the interface for key-value storage operations.
 type KVStore interface {
-	GetWithFormat(key string) ([]byte, string, error)
-	GetInfo(key string) (store.KeyInfo, error)
-	Set(key string, value []byte, format string) error
-	SetWithVersion(key string, value []byte, format string, expectedVersion time.Time) error
-	Delete(key string) error
-	List() ([]store.KeyInfo, error)
+	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
+	GetInfo(ctx context.Context, key string) (store.KeyInfo, error)
+	Set(ctx context.Context, key string, value []byte, format string) error
+	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context) ([]store.KeyInfo, error)
 }
 
 // Validator defines the interface for format validation.
@@ -67,14 +68,14 @@ type Validator interface {
 // AuthProvider defines the interface for authentication operations.
 type AuthProvider interface {
 	Enabled() bool
-	GetSessionUser(token string) (string, bool)
+	GetSessionUser(ctx context.Context, token string) (string, bool)
 	FilterUserKeys(username string, keys []string) []string
 	CheckUserPermission(username, key string, write bool) bool
 	UserCanWrite(username string) bool
 	// login methods
 	IsValidUser(username, password string) bool
-	CreateSession(username string) (string, error)
-	InvalidateSession(token string)
+	CreateSession(ctx context.Context, username string) (string, error)
+	InvalidateSession(ctx context.Context, token string)
 	LoginTTL() time.Duration
 }
 
@@ -316,7 +317,7 @@ func (h *Handler) cookiePath() string {
 func (h *Handler) getCurrentUser(r *http.Request) string {
 	for _, cookieName := range sessionCookieNames {
 		if cookie, err := r.Cookie(cookieName); err == nil {
-			if username, ok := h.auth.GetSessionUser(cookie.Value); ok {
+			if username, ok := h.auth.GetSessionUser(r.Context(), cookie.Value); ok {
 				return username
 			}
 		}
