@@ -61,6 +61,16 @@ make run      # run with logging enabled
 
 **Local testing with auth**: Use `auth-private.yml` (gitignored) with users: admin, readonly, scoped (all password: "testpass"). Run with `./stash server --auth.file=auth-private.yml --auth.hot-reload --dbg`
 
+**Manual API testing**: Use `requests.http` with JetBrains IDE or CLI:
+```bash
+# JetBrains HTTP Client CLI (ijhttp)
+ijhttp requests.http -e local -E http-client.env.json
+
+# or with Docker
+docker run --rm -v $(pwd):/workdir jetbrains/intellij-http-client \
+  -e local -E http-client.env.json requests.http
+```
+
 ## API
 
 ```

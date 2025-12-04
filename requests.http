@@ -1,0 +1,74 @@
+### setup: create test keys
+PUT {{host}}/kv/test/key1
+Content-Type: text/plain
+
+simple text value
+
+### setup: create json config
+PUT {{host}}/kv/app/config/settings
+Content-Type: text/plain
+
+{
+  "debug": true,
+  "timeout": 30,
+  "features": ["auth", "cache"]
+}
+
+### setup: create yaml config
+PUT {{host}}/kv/app/config/database
+Content-Type: text/plain
+
+host: localhost
+port: 5432
+name: stash_db
+user: admin
+
+###
+
+### ping stash service
+GET {{host}}/ping
+
+### list all keys
+GET {{host}}/kv/
+
+### list keys with prefix
+GET {{host}}/kv/?prefix=app/
+
+### get key value
+GET {{host}}/kv/test/key1
+
+### get key with slashes
+GET {{host}}/kv/app/config/database
+
+### set key value
+PUT {{host}}/kv/test/key1
+Content-Type: text/plain
+
+updated value
+
+### delete key
+DELETE {{host}}/kv/test/key1
+
+### get key history (requires git)
+GET {{host}}/kv/history/app/config/database
+
+###
+
+### list keys with token auth
+GET {{host}}/kv/
+Authorization: Bearer {{token}}
+
+### set key with token auth
+PUT {{host}}/kv/secure/key
+Authorization: Bearer {{token}}
+Content-Type: text/plain
+
+secret value
+
+### get key with token auth
+GET {{host}}/kv/secure/key
+Authorization: Bearer {{token}}
+
+### delete key with token auth
+DELETE {{host}}/kv/secure/key
+Authorization: Bearer {{token}}
