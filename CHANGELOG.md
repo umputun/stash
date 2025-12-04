@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.11.0] - 2025-12-04
+
+### Added
+- Persistent session storage in database - sessions survive server restarts (#23)
+
+### Changed
+- Migrated manual enums to go-pkgz/enum for type-safe enum handling (#22)
+- Added context.Context to all store methods
+- Refactored paginate to return struct instead of multiple values
+
 ## [0.10.4] - 2025-12-02
 
 ### Fixed
