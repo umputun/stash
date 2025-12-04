@@ -139,7 +139,8 @@ func (s *Store) createSchema() error {
 				username TEXT NOT NULL,
 				expires_at TIMESTAMPTZ NOT NULL
 			);
-			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`
+			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+			CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username)`
 	default:
 		kvSchema = `
 			CREATE TABLE IF NOT EXISTS kv (
@@ -155,7 +156,8 @@ func (s *Store) createSchema() error {
 				username TEXT NOT NULL,
 				expires_at DATETIME NOT NULL
 			);
-			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)`
+			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+			CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username)`
 	}
 
 	if _, err := s.db.Exec(kvSchema); err != nil { //nolint:noctx // init-time, no context available
@@ -244,11 +246,13 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	query := s.adoptQuery("SELECT value FROM kv WHERE key = ?")
 	err := s.db.GetContext(ctx, &value, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
+		log.Printf("[DEBUG] get key %q: not found", key)
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key %q: %w", key, err)
 	}
+	log.Printf("[DEBUG] get key %q: %d bytes", key, len(value))
 	return value, nil
 }
 
@@ -309,6 +313,7 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 	if _, err := s.db.ExecContext(ctx, query, key, value, format, now, now); err != nil {
 		return fmt.Errorf("failed to set key %q: %w", key, err)
 	}
+	log.Printf("[DEBUG] set key %q: %d bytes, format=%s", key, len(value), format)
 	return nil
 }
 
@@ -392,8 +397,10 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("failed to check affected rows: %w", err)
 	}
 	if rows == 0 {
+		log.Printf("[DEBUG] delete key %q: not found", key)
 		return ErrNotFound
 	}
+	log.Printf("[DEBUG] delete key %q: ok", key)
 	return nil
 }
 
@@ -407,6 +414,7 @@ func (s *Store) List(ctx context.Context) ([]KeyInfo, error) {
 	if err := s.db.SelectContext(ctx, &keys, query); err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
+	log.Printf("[DEBUG] list keys: %d keys", len(keys))
 	return keys, nil
 }
 
@@ -456,6 +464,7 @@ func (s *Store) CreateSession(ctx context.Context, token, username string, expir
 	if _, err := s.db.ExecContext(ctx, query, token, username, expiresAt.UTC()); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
+	log.Printf("[DEBUG] create session for user %q", username)
 	return nil
 }
 
@@ -496,6 +505,11 @@ func (s *Store) DeleteSession(ctx context.Context, token string) error {
 	if _, err := s.db.ExecContext(ctx, query, token); err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)
 	}
+	maskedToken := "****"
+	if len(token) > 4 {
+		maskedToken = token[:4] + "****"
+	}
+	log.Printf("[DEBUG] delete session %s", maskedToken)
 	return nil
 }
 
@@ -507,6 +521,21 @@ func (s *Store) DeleteAllSessions(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
 		return fmt.Errorf("failed to delete all sessions: %w", err)
 	}
+	log.Printf("[DEBUG] delete all sessions")
+	return nil
+}
+
+// DeleteSessionsByUsername removes all sessions for a specific user.
+// Returns nil even if the user has no sessions (idempotent).
+func (s *Store) DeleteSessionsByUsername(ctx context.Context, username string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	query := s.adoptQuery("DELETE FROM sessions WHERE username = ?")
+	if _, err := s.db.ExecContext(ctx, query, username); err != nil {
+		return fmt.Errorf("failed to delete sessions for user %q: %w", username, err)
+	}
+	log.Printf("[DEBUG] delete sessions for user %q", username)
 	return nil
 }
 
@@ -525,6 +554,9 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 	count, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get affected rows: %w", err)
+	}
+	if count > 0 {
+		log.Printf("[DEBUG] delete expired sessions: %d deleted", count)
 	}
 	return count, nil
 }

@@ -27,6 +27,9 @@ import (
 //			DeleteSessionFunc: func(ctx context.Context, token string) error {
 //				panic("mock out the DeleteSession method")
 //			},
+//			DeleteSessionsByUsernameFunc: func(ctx context.Context, username string) error {
+//				panic("mock out the DeleteSessionsByUsername method")
+//			},
 //			GetSessionFunc: func(ctx context.Context, token string) (string, time.Time, error) {
 //				panic("mock out the GetSession method")
 //			},
@@ -48,6 +51,9 @@ type SessionStoreMock struct {
 
 	// DeleteSessionFunc mocks the DeleteSession method.
 	DeleteSessionFunc func(ctx context.Context, token string) error
+
+	// DeleteSessionsByUsernameFunc mocks the DeleteSessionsByUsername method.
+	DeleteSessionsByUsernameFunc func(ctx context.Context, username string) error
 
 	// GetSessionFunc mocks the GetSession method.
 	GetSessionFunc func(ctx context.Context, token string) (string, time.Time, error)
@@ -82,6 +88,13 @@ type SessionStoreMock struct {
 			// Token is the token argument value.
 			Token string
 		}
+		// DeleteSessionsByUsername holds details about calls to the DeleteSessionsByUsername method.
+		DeleteSessionsByUsername []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Username is the username argument value.
+			Username string
+		}
 		// GetSession holds details about calls to the GetSession method.
 		GetSession []struct {
 			// Ctx is the ctx argument value.
@@ -90,11 +103,12 @@ type SessionStoreMock struct {
 			Token string
 		}
 	}
-	lockCreateSession         sync.RWMutex
-	lockDeleteAllSessions     sync.RWMutex
-	lockDeleteExpiredSessions sync.RWMutex
-	lockDeleteSession         sync.RWMutex
-	lockGetSession            sync.RWMutex
+	lockCreateSession            sync.RWMutex
+	lockDeleteAllSessions        sync.RWMutex
+	lockDeleteExpiredSessions    sync.RWMutex
+	lockDeleteSession            sync.RWMutex
+	lockDeleteSessionsByUsername sync.RWMutex
+	lockGetSession               sync.RWMutex
 }
 
 // CreateSession calls CreateSessionFunc.
@@ -238,6 +252,42 @@ func (mock *SessionStoreMock) DeleteSessionCalls() []struct {
 	mock.lockDeleteSession.RLock()
 	calls = mock.calls.DeleteSession
 	mock.lockDeleteSession.RUnlock()
+	return calls
+}
+
+// DeleteSessionsByUsername calls DeleteSessionsByUsernameFunc.
+func (mock *SessionStoreMock) DeleteSessionsByUsername(ctx context.Context, username string) error {
+	if mock.DeleteSessionsByUsernameFunc == nil {
+		panic("SessionStoreMock.DeleteSessionsByUsernameFunc: method is nil but SessionStore.DeleteSessionsByUsername was just called")
+	}
+	callInfo := struct {
+		Ctx      context.Context
+		Username string
+	}{
+		Ctx:      ctx,
+		Username: username,
+	}
+	mock.lockDeleteSessionsByUsername.Lock()
+	mock.calls.DeleteSessionsByUsername = append(mock.calls.DeleteSessionsByUsername, callInfo)
+	mock.lockDeleteSessionsByUsername.Unlock()
+	return mock.DeleteSessionsByUsernameFunc(ctx, username)
+}
+
+// DeleteSessionsByUsernameCalls gets all the calls that were made to DeleteSessionsByUsername.
+// Check the length with:
+//
+//	len(mockedSessionStore.DeleteSessionsByUsernameCalls())
+func (mock *SessionStoreMock) DeleteSessionsByUsernameCalls() []struct {
+	Ctx      context.Context
+	Username string
+} {
+	var calls []struct {
+		Ctx      context.Context
+		Username string
+	}
+	mock.lockDeleteSessionsByUsername.RLock()
+	calls = mock.calls.DeleteSessionsByUsername
+	mock.lockDeleteSessionsByUsername.RUnlock()
 	return calls
 }
 

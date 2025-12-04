@@ -104,6 +104,7 @@ type SessionStore interface {
 	GetSession(ctx context.Context, token string) (username string, expiresAt time.Time, err error)
 	DeleteSession(ctx context.Context, token string) error
 	DeleteAllSessions(ctx context.Context) error
+	DeleteSessionsByUsername(ctx context.Context, username string) error
 	DeleteExpiredSessions(ctx context.Context) (int64, error)
 }
 
@@ -291,7 +292,8 @@ func (a *Auth) LoginTTL() time.Duration {
 }
 
 // Reload reloads the auth configuration from the file.
-// Validates new config before applying. On success, invalidates all sessions.
+// Validates new config before applying. On success, invalidates sessions only for
+// users that were removed or had their password changed.
 // On error, keeps the existing config and returns the error.
 func (a *Auth) Reload(ctx context.Context) error {
 	if a == nil {
@@ -300,6 +302,14 @@ func (a *Auth) Reload(ctx context.Context) error {
 	if a.authFile == "" {
 		return errors.New("auth file path not set")
 	}
+
+	// capture old users state for selective session invalidation
+	oldUsers := make(map[string]string) // username → passwordHash
+	a.mu.RLock()
+	for name, user := range a.users {
+		oldUsers[name] = user.PasswordHash
+	}
+	a.mu.RUnlock()
 
 	// load and validate new config before acquiring any locks
 	cfg, err := LoadAuthConfig(a.authFile)
@@ -328,12 +338,29 @@ func (a *Auth) Reload(ctx context.Context) error {
 	a.publicACL = publicACL
 	a.mu.Unlock()
 
-	// clear all sessions from persistent storage
-	if err := a.sessionStore.DeleteAllSessions(ctx); err != nil {
-		log.Printf("[WARN] failed to clear sessions: %v", err)
+	// selective session invalidation: only for users removed or with password changes
+	var invalidated []string
+	a.mu.RLock()
+	for username, oldHash := range oldUsers {
+		newUser, exists := a.users[username]
+		if !exists || newUser.PasswordHash != oldHash {
+			invalidated = append(invalidated, username)
+		}
+	}
+	a.mu.RUnlock()
+
+	// delete sessions outside the lock to avoid holding it during I/O
+	for _, username := range invalidated {
+		if err := a.sessionStore.DeleteSessionsByUsername(ctx, username); err != nil {
+			log.Printf("[WARN] failed to delete sessions for user %q: %v", username, err)
+		}
 	}
 
-	log.Printf("[INFO] auth config reloaded from %s, all sessions invalidated", a.authFile)
+	if len(invalidated) > 0 {
+		log.Printf("[INFO] auth config reloaded from %s, invalidated sessions for: %v", a.authFile, invalidated)
+	} else {
+		log.Printf("[INFO] auth config reloaded from %s, no sessions invalidated", a.authFile)
+	}
 	return nil
 }
 

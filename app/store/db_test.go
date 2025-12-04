@@ -457,6 +457,35 @@ func TestStore_Postgres(t *testing.T) {
 		// verify the returned time is in UTC location
 		assert.Equal(t, "UTC", expiresAt.Location().String(), "returned time should be in UTC")
 	})
+
+	t.Run("session delete by username", func(t *testing.T) {
+		expires := time.Now().Add(time.Hour).UTC()
+		// create sessions for different users
+		_ = store.CreateSession(t.Context(), "pg-alice-1", "alice", expires)
+		_ = store.CreateSession(t.Context(), "pg-alice-2", "alice", expires)
+		_ = store.CreateSession(t.Context(), "pg-bob-1", "bob", expires)
+
+		// delete alice's sessions only
+		err := store.DeleteSessionsByUsername(t.Context(), "alice")
+		require.NoError(t, err)
+
+		// alice's sessions should be gone
+		_, _, err = store.GetSession(t.Context(), "pg-alice-1")
+		require.ErrorIs(t, err, ErrNotFound)
+		_, _, err = store.GetSession(t.Context(), "pg-alice-2")
+		require.ErrorIs(t, err, ErrNotFound)
+
+		// bob's session should remain
+		username, _, err := store.GetSession(t.Context(), "pg-bob-1")
+		require.NoError(t, err)
+		assert.Equal(t, "bob", username)
+	})
+
+	t.Run("session delete by username - no sessions", func(t *testing.T) {
+		// should not error when user has no sessions
+		err := store.DeleteSessionsByUsername(t.Context(), "pg-nonexistent-user")
+		require.NoError(t, err)
+	})
 }
 
 func TestDetectDBType(t *testing.T) {
@@ -856,5 +885,37 @@ func TestSQLite_Session(t *testing.T) {
 
 		// verify the returned time is in UTC location
 		assert.Equal(t, "UTC", expiresAt.Location().String(), "returned time should be in UTC")
+	})
+
+	t.Run("delete sessions by username", func(t *testing.T) {
+		expires := time.Now().Add(time.Hour).UTC()
+		// create sessions for different users
+		err := store.CreateSession(ctx, "token-alice-1", "alice", expires)
+		require.NoError(t, err)
+		err = store.CreateSession(ctx, "token-alice-2", "alice", expires)
+		require.NoError(t, err)
+		err = store.CreateSession(ctx, "token-bob-1", "bob", expires)
+		require.NoError(t, err)
+
+		// delete alice's sessions only
+		err = store.DeleteSessionsByUsername(ctx, "alice")
+		require.NoError(t, err)
+
+		// alice's sessions should be gone
+		_, _, err = store.GetSession(ctx, "token-alice-1")
+		require.ErrorIs(t, err, ErrNotFound)
+		_, _, err = store.GetSession(ctx, "token-alice-2")
+		require.ErrorIs(t, err, ErrNotFound)
+
+		// bob's session should remain
+		username, _, err := store.GetSession(ctx, "token-bob-1")
+		require.NoError(t, err)
+		assert.Equal(t, "bob", username)
+	})
+
+	t.Run("delete sessions by username - no sessions", func(t *testing.T) {
+		// should not error when user has no sessions
+		err := store.DeleteSessionsByUsername(ctx, "nonexistent-user")
+		require.NoError(t, err)
 	})
 }
