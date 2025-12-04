@@ -123,6 +123,7 @@ POST   /logout                   # clear session, redirect to login
 - Git storage: path-based with `.val` suffix (app/config → .history/app/config.val)
 - Auth: YAML config file with users (web UI) and tokens (API), both use prefix-based ACL
 - Auth flow: username+password login creates session, session tracks username for permission checks
+- Sessions: stored in database (sessions table), persist across server restarts, background cleanup of expired sessions
 - Permissions: prefix patterns (*, foo/*, exact) with access levels (r, w, rw), longest match wins
 - Auth hot-reload: fsnotify watches directory (not file) for atomic rename support, debounces 100ms
 - Auth hot-reload invalidates all sessions on config change, rejects invalid configs

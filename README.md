@@ -225,6 +225,10 @@ When the auth config file changes:
 
 Hot-reload watches the directory containing the auth file, so it works correctly with editors that use atomic saves (vim, VSCode, etc.).
 
+### Session Storage
+
+User sessions are stored in the database (same as key-value data), so they persist across server restarts. Expired sessions are automatically cleaned up in the background.
+
 ### Generating Password Hashes
 
 ```bash
