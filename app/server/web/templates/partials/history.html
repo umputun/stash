@@ -5,6 +5,7 @@
 </div>
 <div class="modal-body">
     {{if .History}}
+    <div class="table-container">
     <table class="history-table">
         <thead>
             <tr>
@@ -40,6 +41,7 @@
         {{end}}
         </tbody>
     </table>
+    </div>
     {{else}}
     <p class="no-history">No history available for this key.</p>
     {{end}}

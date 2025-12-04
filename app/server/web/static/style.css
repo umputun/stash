@@ -1030,34 +1030,36 @@ tr.clickable-row {
     justify-content: flex-end;
 }
 
-/* History table */
+/* History table - matches main keys table style */
 .history-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 14px;
 }
 
 .history-table th,
 .history-table td {
-    padding: 10px 12px;
+    padding: 10px 16px;
     text-align: left;
-    border-bottom: 1px solid var(--color-border);
 }
 
 .history-table th {
     font-weight: 600;
     color: var(--color-text-muted);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: 13px;
+    background-color: var(--color-table-header);
+    border-bottom: 1px solid var(--color-border);
 }
 
-.history-table tbody tr:hover {
-    background-color: var(--color-surface);
+.history-table td {
+    border-bottom: 1px solid var(--color-border);
 }
 
 .history-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+.history-table tbody tr:hover td {
+    background-color: var(--color-surface-hover);
 }
 
 .history-actions {
