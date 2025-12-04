@@ -324,7 +324,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// convert to response format with base64-encoded values
+	// base64-encode values to safely transmit arbitrary binary data in JSON
 	resp := make([]historyResponse, len(history))
 	for i, entry := range history {
 		resp[i] = historyResponse{
