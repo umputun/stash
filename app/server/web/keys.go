@@ -242,6 +242,7 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		TextareaHeight: textareaHeight,
 		CanWrite:       h.auth.CheckUserPermission(username, key, true),
 		Username:       username,
+		GitEnabled:     h.git != nil,
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "view", data); err != nil {
@@ -564,6 +565,154 @@ func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 		if err := h.git.Delete(key, h.getAuthor(username)); err != nil {
 			log.Printf("[WARN] git delete failed for %s: %v", key, err)
 		}
+	}
+
+	// return updated keys table
+	h.handleKeyList(w, r)
+}
+
+// handleKeyHistory renders the history modal for a key.
+func (h *Handler) handleKeyHistory(w http.ResponseWriter, r *http.Request) {
+	key := store.NormalizeKey(r.PathValue("key"))
+
+	// check if git is enabled
+	if h.git == nil {
+		http.Error(w, "git not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// check read permission
+	username := h.getCurrentUser(r)
+	if !h.auth.CheckUserPermission(username, key, false) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	history, err := h.git.History(key, 50)
+	if err != nil {
+		log.Printf("[ERROR] failed to get history for %s: %v", key, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	data := templateData{
+		Key:        key,
+		History:    history,
+		GitEnabled: true,
+		Theme:      h.getTheme(r),
+		BaseURL:    h.baseURL,
+		CanWrite:   h.auth.CheckUserPermission(username, key, true),
+		Username:   username,
+	}
+
+	if err := h.tmpl.ExecuteTemplate(w, "history", data); err != nil {
+		log.Printf("[ERROR] failed to execute template: %v", err)
+	}
+}
+
+// handleKeyRevision renders a specific revision of a key.
+func (h *Handler) handleKeyRevision(w http.ResponseWriter, r *http.Request) {
+	key := store.NormalizeKey(r.PathValue("key"))
+	rev := r.URL.Query().Get("rev")
+
+	// check if git is enabled
+	if h.git == nil {
+		http.Error(w, "git not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// check read permission
+	username := h.getCurrentUser(r)
+	if !h.auth.CheckUserPermission(username, key, false) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	if rev == "" {
+		http.Error(w, "revision required", http.StatusBadRequest)
+		return
+	}
+
+	value, format, err := h.git.GetRevision(key, rev)
+	if err != nil {
+		log.Printf("[ERROR] failed to get revision %s for %s: %v", rev, key, err)
+		http.Error(w, "revision not found", http.StatusNotFound)
+		return
+	}
+
+	displayValue, isBinary := h.valueForDisplay(value)
+	modalWidth, textareaHeight := h.calculateModalDimensions(displayValue)
+
+	var highlightedVal template.HTML
+	if !isBinary {
+		highlightedVal = h.highlighter.Code(displayValue, format)
+	}
+
+	data := templateData{
+		Key:            key,
+		Value:          displayValue,
+		HighlightedVal: highlightedVal,
+		Format:         format,
+		IsBinary:       isBinary,
+		Theme:          h.getTheme(r),
+		BaseURL:        h.baseURL,
+		ModalWidth:     modalWidth,
+		TextareaHeight: textareaHeight,
+		CanWrite:       h.auth.CheckUserPermission(username, key, true),
+		Username:       username,
+		GitEnabled:     true,
+		RevHash:        rev,
+	}
+
+	if err := h.tmpl.ExecuteTemplate(w, "revision", data); err != nil {
+		log.Printf("[ERROR] failed to execute template: %v", err)
+	}
+}
+
+// handleKeyRestore restores a key to a specific revision.
+func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
+	key := store.NormalizeKey(r.PathValue("key"))
+
+	// check if git is enabled
+	if h.git == nil {
+		http.Error(w, "git not enabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	// check write permission
+	username := h.getCurrentUser(r)
+	if !h.auth.CheckUserPermission(username, key, true) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	rev := r.FormValue("rev")
+	if rev == "" {
+		http.Error(w, "revision required", http.StatusBadRequest)
+		return
+	}
+
+	// get value at revision
+	value, format, err := h.git.GetRevision(key, rev)
+	if err != nil {
+		log.Printf("[ERROR] failed to get revision %s for %s: %v", rev, key, err)
+		http.Error(w, "revision not found", http.StatusNotFound)
+		return
+	}
+
+	// save to store
+	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+		log.Printf("[ERROR] failed to set key %s: %v", key, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[INFO] restore %q to revision %s by user:%s", key, rev, username)
+
+	// commit to git
+	req := git.CommitRequest{Key: key, Value: value, Operation: "restore", Format: format, Author: h.getAuthor(username)}
+	if err := h.git.Commit(req); err != nil {
+		log.Printf("[WARN] git commit failed for %s: %v", key, err)
 	}
 
 	// return updated keys table

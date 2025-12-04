@@ -616,3 +616,108 @@ func TestHandler_GetAuthorFromRequest(t *testing.T) {
 		assert.Equal(t, expected.Email, author.Email)
 	})
 }
+
+func TestHandler_HandleHistory(t *testing.T) {
+	t.Run("returns history entries", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
+		gitSvc := &mocks.GitServiceMock{
+			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) {
+				if key == "testkey" {
+					return []git.HistoryEntry{
+						{Hash: "abc123", Author: "admin", Operation: "set", Format: "json", Value: []byte(`{"foo":"bar"}`)},
+						{Hash: "def456", Author: "admin", Operation: "set", Format: "json", Value: []byte(`{"foo":"old"}`)},
+					}, nil
+				}
+				return nil, nil
+			},
+		}
+		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "abc123")
+		assert.Contains(t, rec.Body.String(), "def456")
+		assert.Contains(t, rec.Body.String(), `"operation":"set"`)
+	})
+
+	t.Run("git not enabled returns 503", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
+		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), nil) // no git
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, req)
+
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	})
+
+	t.Run("empty key returns 400", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
+		gitSvc := &mocks.GitServiceMock{}
+		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/history/", http.NoBody)
+		req.SetPathValue("key", "")
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("access denied when auth enabled", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc:          func() bool { return true },
+			GetSessionUserFunc:   func(_ context.Context, _ string) (string, bool) { return "", false },
+			HasTokenACLFunc:      func(_ string) bool { return false },
+			FilterPublicKeysFunc: func(keys []string) []string { return nil },
+		}
+		gitSvc := &mocks.GitServiceMock{}
+		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("returns empty array for key without history", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
+		gitSvc := &mocks.GitServiceMock{
+			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) { return nil, nil },
+		}
+		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/history/newkey", http.NoBody)
+		req.SetPathValue("key", "newkey")
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "[]\n", rec.Body.String())
+	})
+
+	t.Run("git error returns 500", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
+		gitSvc := &mocks.GitServiceMock{
+			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) {
+				return nil, errors.New("git error")
+			},
+		}
+		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "failed to get history")
+	})
+}

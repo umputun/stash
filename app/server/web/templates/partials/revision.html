@@ -1,7 +1,8 @@
-{{define "view"}}
+{{define "revision"}}
 <div class="modal-header">
-    <h2>View Key</h2>
+    <h2>Revision: {{.Key}}</h2>
     <div class="modal-header-right">
+        <span class="revision-badge">{{.RevHash}}</span>
         {{if and .Format (ne .Format "text")}}<span class="format-badge">{{.Format}}</span>{{end}}
         <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
     </div>
@@ -12,7 +13,7 @@
         <div class="value-display">{{.Key}}</div>
     </div>
     <div class="form-group">
-        <label>Value</label>
+        <label>Value at revision {{.RevHash}}</label>
         {{if .IsBinary}}
         <span class="binary-indicator">Base64 encoded</span>
         <div class="value-display value-content">{{.Value}}</div>
@@ -23,17 +24,17 @@
 </div>
 <div class="modal-footer">
     <button class="btn btn-secondary" onclick="hideModal('main-modal')">Close</button>
-    {{if .GitEnabled}}
     <button class="btn btn-secondary"
             hx-get="{{.BaseURL}}/web/keys/history/{{.Key | urlEncode}}"
             hx-target="#modal-content"
-            hx-swap="innerHTML">History</button>
-    {{end}}
+            hx-swap="innerHTML">Back to History</button>
     {{if .CanWrite}}
     <button class="btn btn-primary"
-            hx-get="{{.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
-            hx-target="#modal-content"
-            hx-swap="innerHTML">Edit</button>
+            hx-post="{{.BaseURL}}/web/keys/restore/{{.Key | urlEncode}}"
+            hx-vals='{"rev": "{{.RevHash}}"}'
+            hx-target="#keys-table"
+            hx-swap="innerHTML"
+            onclick="hideModal('main-modal')">Restore This Version</button>
     {{end}}
 </div>
 <style>

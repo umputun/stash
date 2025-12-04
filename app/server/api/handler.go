@@ -3,10 +3,12 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/rest"
@@ -31,6 +33,8 @@ var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 type GitService interface {
 	Commit(req git.CommitRequest) error
 	Delete(key string, author git.Author) error
+	History(key string, limit int) ([]git.HistoryEntry, error)
+	GetRevision(key string, rev string) ([]byte, string, error)
 }
 
 // KVStore defines the interface for key-value storage operations.
@@ -77,9 +81,10 @@ func New(st KVStore, auth AuthProvider, fv FormatValidator, gs GitService) *Hand
 
 // Register registers API routes on the given router.
 func (h *Handler) Register(r *routegroup.Bundle) {
-	r.HandleFunc("GET /{$}", h.handleList)     // list keys (must be before {key...})
-	r.HandleFunc("GET /{key...}", h.handleGet) // get specific key
-	r.HandleFunc("PUT /{key...}", h.handleSet) // set key
+	r.HandleFunc("GET /{$}", h.handleList)                 // list keys (must be before {key...})
+	r.HandleFunc("GET /history/{key...}", h.handleHistory) // get key history (before generic key)
+	r.HandleFunc("GET /{key...}", h.handleGet)             // get specific key
+	r.HandleFunc("PUT /{key...}", h.handleSet)             // set key
 	r.HandleFunc("DELETE /{key...}", h.handleDelete)
 }
 
@@ -280,6 +285,59 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// historyResponse represents a single entry in the history response.
+type historyResponse struct {
+	Hash      string `json:"hash"`
+	Timestamp string `json:"timestamp"`
+	Author    string `json:"author"`
+	Operation string `json:"operation"`
+	Format    string `json:"format"`
+	Value     string `json:"value"` // base64 encoded
+}
+
+// handleHistory returns the commit history for a key.
+// GET /kv/history/{key...}
+func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if h.git == nil {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusServiceUnavailable, nil, "git integration not enabled")
+		return
+	}
+
+	key := store.NormalizeKey(r.PathValue("key"))
+	if key == "" {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, nil, "key is required")
+		return
+	}
+
+	// check read permission
+	filtered := h.filterKeysByAuth(r, []string{key})
+	if len(filtered) == 0 {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusForbidden, nil, "access denied")
+		return
+	}
+
+	history, err := h.git.History(key, 50)
+	if err != nil {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to get history")
+		return
+	}
+
+	// convert to response format with base64-encoded values
+	resp := make([]historyResponse, len(history))
+	for i, entry := range history {
+		resp[i] = historyResponse{
+			Hash:      entry.Hash,
+			Timestamp: entry.Timestamp.UTC().Format(time.RFC3339),
+			Author:    entry.Author,
+			Operation: entry.Operation,
+			Format:    entry.Format,
+			Value:     base64.StdEncoding.EncodeToString(entry.Value),
+		}
+	}
+
+	rest.RenderJSON(w, resp)
 }
 
 // identityType represents the type of identity detected from a request.

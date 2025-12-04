@@ -10,6 +10,8 @@ type Storer interface {
 	Delete(key string, author Author) error
 	Pull() error
 	Push() error
+	History(key string, limit int) ([]HistoryEntry, error)
+	GetRevision(key string, rev string) ([]byte, string, error)
 }
 
 // Service wraps Store and provides orchestrated git operations.
@@ -56,4 +58,22 @@ func (s *Service) pullAndPush() error {
 		return fmt.Errorf("push: %w", err)
 	}
 	return nil
+}
+
+// History returns commit history for a key.
+func (s *Service) History(key string, limit int) ([]HistoryEntry, error) {
+	entries, err := s.store.History(key, limit)
+	if err != nil {
+		return nil, fmt.Errorf("history: %w", err)
+	}
+	return entries, nil
+}
+
+// GetRevision returns value and format at specific revision.
+func (s *Service) GetRevision(key, rev string) ([]byte, string, error) {
+	value, format, err := s.store.GetRevision(key, rev)
+	if err != nil {
+		return nil, "", fmt.Errorf("get revision: %w", err)
+	}
+	return value, format, nil
 }

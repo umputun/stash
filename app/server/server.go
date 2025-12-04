@@ -52,6 +52,8 @@ type KVStore interface {
 type GitService interface {
 	Commit(req git.CommitRequest) error
 	Delete(key string, author git.Author) error
+	History(key string, limit int) ([]git.HistoryEntry, error)
+	GetRevision(key string, rev string) ([]byte, string, error)
 }
 
 // Validator defines the interface for format validation.

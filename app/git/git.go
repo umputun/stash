@@ -36,6 +36,16 @@ type KeyValue struct {
 	Format string
 }
 
+// HistoryEntry represents a single revision of a key.
+type HistoryEntry struct {
+	Hash      string    `json:"hash"`
+	Timestamp time.Time `json:"timestamp"`
+	Author    string    `json:"author"`
+	Operation string    `json:"operation"`
+	Format    string    `json:"format"`
+	Value     []byte    `json:"value"`
+}
+
 // CommitRequest holds parameters for a git commit operation.
 type CommitRequest struct {
 	Key       string
@@ -430,6 +440,103 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 	return result, nil
 }
 
+// History returns commit history for a key (newest first).
+// limit specifies maximum number of entries to return (0 = unlimited).
+func (s *Store) History(key string, limit int) ([]HistoryEntry, error) {
+	if err := s.validateKey(key); err != nil {
+		return nil, err
+	}
+
+	filePath := keyToPath(key)
+
+	logIter, err := s.repo.Log(&git.LogOptions{
+		FileName: &filePath,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get log: %w", err)
+	}
+	defer logIter.Close()
+
+	var entries []HistoryEntry
+	count := 0
+
+	for limit <= 0 || count < limit {
+		commit, err := logIter.Next()
+		if err != nil {
+			break // end of history or error
+		}
+
+		// extract metadata from commit
+		entry := HistoryEntry{
+			Hash:      commit.Hash.String()[:7],
+			Timestamp: commit.Author.When,
+			Author:    commit.Author.Name,
+			Operation: parseOperationFromCommit(commit.Message),
+			Format:    parseFormatFromCommit(commit.Message),
+		}
+
+		// get file content at this commit
+		tree, treeErr := commit.Tree()
+		if treeErr == nil {
+			file, fileErr := tree.File(filePath)
+			if fileErr == nil {
+				content, contentErr := file.Contents()
+				if contentErr == nil {
+					entry.Value = []byte(content)
+				}
+			}
+		}
+
+		entries = append(entries, entry)
+		count++
+	}
+
+	return entries, nil
+}
+
+// GetRevision returns value and format at specific revision.
+func (s *Store) GetRevision(key, rev string) ([]byte, string, error) {
+	if err := s.validateKey(key); err != nil {
+		return nil, "", err
+	}
+
+	filePath := keyToPath(key)
+
+	// resolve revision to commit hash
+	hash, err := s.repo.ResolveRevision(plumbing.Revision(rev))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to resolve revision %s: %w", rev, err)
+	}
+
+	// get commit object
+	commit, err := s.repo.CommitObject(*hash)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get commit: %w", err)
+	}
+
+	// get file tree at commit
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get tree: %w", err)
+	}
+
+	// get file content
+	file, err := tree.File(filePath)
+	if err != nil {
+		return nil, "", fmt.Errorf("file not found at revision %s: %w", rev, err)
+	}
+
+	content, err := file.Contents()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	// get format from commit message
+	format := parseFormatFromCommit(commit.Message)
+
+	return []byte(content), format, nil
+}
+
 // getFileFormat finds the last commit that modified a file and extracts format from its message.
 // returns "text" if no format is found.
 func (s *Store) getFileFormat(filePath string) string {
@@ -460,6 +567,21 @@ func parseFormatFromCommit(message string) string {
 		}
 	}
 	return "text"
+}
+
+// parseOperationFromCommit extracts operation from commit message metadata.
+// looks for "operation: <value>" line, or parses first word of commit message.
+func parseOperationFromCommit(message string) string {
+	for line := range strings.SplitSeq(message, "\n") {
+		if op, found := strings.CutPrefix(line, "operation: "); found {
+			return op
+		}
+	}
+	// fallback: first word of commit message (e.g., "set", "delete")
+	if parts := strings.Fields(message); len(parts) > 0 {
+		return parts[0]
+	}
+	return "unknown"
 }
 
 // keyToPath converts a key to a file path with .val suffix

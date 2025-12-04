@@ -1,0 +1,54 @@
+{{define "history"}}
+<div class="modal-header">
+    <h2>History: {{.Key}}</h2>
+    <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
+</div>
+<div class="modal-body">
+    {{if .History}}
+    <table class="history-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Author</th>
+                <th>Action</th>
+                <th>Format</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {{range .History}}
+        <tr class="clickable-row"
+            hx-get="{{$.BaseURL}}/web/keys/revision/{{$.Key | urlEncode}}?rev={{.Hash}}"
+            hx-target="#modal-content"
+            hx-swap="innerHTML"
+            hx-trigger="click target:td:not(.history-actions)">
+            <td>{{.Timestamp | formatTime}}</td>
+            <td>{{.Author}}</td>
+            <td>{{.Operation}}</td>
+            <td>{{.Format}}</td>
+            <td class="history-actions">
+                {{if $.CanWrite}}
+                <button class="btn btn-small btn-primary"
+                        hx-post="{{$.BaseURL}}/web/keys/restore/{{$.Key | urlEncode}}"
+                        hx-vals='{"rev": "{{.Hash}}"}'
+                        hx-target="#keys-table"
+                        hx-swap="innerHTML"
+                        onclick="hideModal('main-modal')">Restore</button>
+                {{end}}
+            </td>
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="no-history">No history available for this key.</p>
+    {{end}}
+</div>
+<div class="modal-footer">
+    <button class="btn btn-secondary" onclick="hideModal('main-modal')">Close</button>
+    <button class="btn btn-secondary"
+            hx-get="{{.BaseURL}}/web/keys/view/{{.Key | urlEncode}}"
+            hx-target="#modal-content"
+            hx-swap="innerHTML">Back to View</button>
+</div>
+{{end}}

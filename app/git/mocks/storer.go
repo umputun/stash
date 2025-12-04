@@ -21,6 +21,12 @@ import (
 //			DeleteFunc: func(key string, author git.Author) error {
 //				panic("mock out the Delete method")
 //			},
+//			GetRevisionFunc: func(key string, rev string) ([]byte, string, error) {
+//				panic("mock out the GetRevision method")
+//			},
+//			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) {
+//				panic("mock out the History method")
+//			},
 //			PullFunc: func() error {
 //				panic("mock out the Pull method")
 //			},
@@ -39,6 +45,12 @@ type StorerMock struct {
 
 	// DeleteFunc mocks the Delete method.
 	DeleteFunc func(key string, author git.Author) error
+
+	// GetRevisionFunc mocks the GetRevision method.
+	GetRevisionFunc func(key string, rev string) ([]byte, string, error)
+
+	// HistoryFunc mocks the History method.
+	HistoryFunc func(key string, limit int) ([]git.HistoryEntry, error)
 
 	// PullFunc mocks the Pull method.
 	PullFunc func() error
@@ -60,6 +72,20 @@ type StorerMock struct {
 			// Author is the author argument value.
 			Author git.Author
 		}
+		// GetRevision holds details about calls to the GetRevision method.
+		GetRevision []struct {
+			// Key is the key argument value.
+			Key string
+			// Rev is the rev argument value.
+			Rev string
+		}
+		// History holds details about calls to the History method.
+		History []struct {
+			// Key is the key argument value.
+			Key string
+			// Limit is the limit argument value.
+			Limit int
+		}
 		// Pull holds details about calls to the Pull method.
 		Pull []struct {
 		}
@@ -67,10 +93,12 @@ type StorerMock struct {
 		Push []struct {
 		}
 	}
-	lockCommit sync.RWMutex
-	lockDelete sync.RWMutex
-	lockPull   sync.RWMutex
-	lockPush   sync.RWMutex
+	lockCommit      sync.RWMutex
+	lockDelete      sync.RWMutex
+	lockGetRevision sync.RWMutex
+	lockHistory     sync.RWMutex
+	lockPull        sync.RWMutex
+	lockPush        sync.RWMutex
 }
 
 // Commit calls CommitFunc.
@@ -138,6 +166,78 @@ func (mock *StorerMock) DeleteCalls() []struct {
 	mock.lockDelete.RLock()
 	calls = mock.calls.Delete
 	mock.lockDelete.RUnlock()
+	return calls
+}
+
+// GetRevision calls GetRevisionFunc.
+func (mock *StorerMock) GetRevision(key string, rev string) ([]byte, string, error) {
+	if mock.GetRevisionFunc == nil {
+		panic("StorerMock.GetRevisionFunc: method is nil but Storer.GetRevision was just called")
+	}
+	callInfo := struct {
+		Key string
+		Rev string
+	}{
+		Key: key,
+		Rev: rev,
+	}
+	mock.lockGetRevision.Lock()
+	mock.calls.GetRevision = append(mock.calls.GetRevision, callInfo)
+	mock.lockGetRevision.Unlock()
+	return mock.GetRevisionFunc(key, rev)
+}
+
+// GetRevisionCalls gets all the calls that were made to GetRevision.
+// Check the length with:
+//
+//	len(mockedStorer.GetRevisionCalls())
+func (mock *StorerMock) GetRevisionCalls() []struct {
+	Key string
+	Rev string
+} {
+	var calls []struct {
+		Key string
+		Rev string
+	}
+	mock.lockGetRevision.RLock()
+	calls = mock.calls.GetRevision
+	mock.lockGetRevision.RUnlock()
+	return calls
+}
+
+// History calls HistoryFunc.
+func (mock *StorerMock) History(key string, limit int) ([]git.HistoryEntry, error) {
+	if mock.HistoryFunc == nil {
+		panic("StorerMock.HistoryFunc: method is nil but Storer.History was just called")
+	}
+	callInfo := struct {
+		Key   string
+		Limit int
+	}{
+		Key:   key,
+		Limit: limit,
+	}
+	mock.lockHistory.Lock()
+	mock.calls.History = append(mock.calls.History, callInfo)
+	mock.lockHistory.Unlock()
+	return mock.HistoryFunc(key, limit)
+}
+
+// HistoryCalls gets all the calls that were made to History.
+// Check the length with:
+//
+//	len(mockedStorer.HistoryCalls())
+func (mock *StorerMock) HistoryCalls() []struct {
+	Key   string
+	Limit int
+} {
+	var calls []struct {
+		Key   string
+		Limit int
+	}
+	mock.lockHistory.RLock()
+	calls = mock.calls.History
+	mock.lockHistory.RUnlock()
 	return calls
 }
 

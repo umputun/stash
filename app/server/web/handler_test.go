@@ -2,9 +2,11 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/web/mocks"
 	"github.com/umputun/stash/app/store"
 )
@@ -544,4 +547,185 @@ func newTestHandlerWithAuth(t *testing.T, auth AuthProvider) *Handler {
 	h, err := New(st, auth, defaultValidatorMock(), nil, Config{})
 	require.NoError(t, err)
 	return h
+}
+
+// newTestHandlerWithGit creates a test handler with git service.
+func newTestHandlerWithGit(t *testing.T, gitSvc GitService) *Handler {
+	t.Helper()
+	st := &mocks.KVStoreMock{
+		ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
+		SetFunc:           func(_ context.Context, key string, value []byte, format string) error { return nil },
+	}
+	auth := &mocks.AuthProviderMock{
+		EnabledFunc:             func() bool { return false },
+		GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "", false },
+		FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
+		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		UserCanWriteFunc:        func(username string) bool { return true },
+	}
+	h, err := New(st, auth, defaultValidatorMock(), gitSvc, Config{})
+	require.NoError(t, err)
+	return h
+}
+
+func TestHandler_HandleKeyHistory(t *testing.T) {
+	t.Run("returns 503 when git disabled", func(t *testing.T) {
+		h := newTestHandler(t) // git is nil
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/history/test-key", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyHistory(rec, req)
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	})
+
+	t.Run("returns history when git enabled", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) {
+				return []git.HistoryEntry{
+					{Hash: "abc1234", Author: "admin", Operation: "set", Format: "json"},
+				}, nil
+			},
+		}
+		h := newTestHandlerWithGit(t, gitSvc)
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/history/test-key", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyHistory(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "abc1234")
+	})
+}
+
+func TestHandler_HandleKeyRevision(t *testing.T) {
+	t.Run("returns 503 when git disabled", func(t *testing.T) {
+		h := newTestHandler(t)
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/revision/test-key?rev=abc1234", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRevision(rec, req)
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	})
+
+	t.Run("returns 400 when rev missing", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return nil, "", nil },
+		}
+		h := newTestHandlerWithGit(t, gitSvc)
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/revision/test-key", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRevision(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("returns revision when found", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) {
+				return []byte(`{"test": "value"}`), "json", nil
+			},
+		}
+		h := newTestHandlerWithGit(t, gitSvc)
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/revision/test-key?rev=abc1234", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRevision(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "abc1234")
+	})
+}
+
+func TestHandler_HandleKeyRestore(t *testing.T) {
+	t.Run("returns 503 when git disabled", func(t *testing.T) {
+		h := newTestHandler(t)
+		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRestore(rec, req)
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	})
+
+	t.Run("returns 400 when rev missing", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return nil, "", nil },
+			CommitFunc:      func(req git.CommitRequest) error { return nil },
+		}
+		h := newTestHandlerWithGit(t, gitSvc)
+		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", http.NoBody)
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRestore(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("returns 403 when user lacks write permission", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
+			CommitFunc:      func(req git.CommitRequest) error { return nil },
+		}
+		st := &mocks.KVStoreMock{
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
+			SetFunc:           func(_ context.Context, key string, value []byte, format string) error { return nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc:             func() bool { return true },
+			GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "readonly", true },
+			FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return !write }, // read only
+			UserCanWriteFunc:        func(username string) bool { return false },
+		}
+		h, err := New(st, auth, defaultValidatorMock(), gitSvc, Config{})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", strings.NewReader("rev=abc1234"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRestore(rec, req)
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("returns 500 when store set fails", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
+			CommitFunc:      func(req git.CommitRequest) error { return nil },
+		}
+		st := &mocks.KVStoreMock{
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
+			SetFunc:           func(_ context.Context, key string, value []byte, format string) error { return errors.New("db error") },
+		}
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc:             func() bool { return false },
+			GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "", false },
+			FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+			UserCanWriteFunc:        func(username string) bool { return true },
+		}
+		h, err := New(st, auth, defaultValidatorMock(), gitSvc, Config{})
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", strings.NewReader("rev=abc1234"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRestore(rec, req)
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("returns 404 when revision not found", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return nil, "", errors.New("not found") },
+			CommitFunc:      func(req git.CommitRequest) error { return nil },
+		}
+		h := newTestHandlerWithGit(t, gitSvc)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", strings.NewReader("rev=invalid"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("key", "test-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyRestore(rec, req)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
 }

@@ -83,6 +83,8 @@ type AuthProvider interface {
 type GitService interface {
 	Commit(req git.CommitRequest) error
 	Delete(key string, author git.Author) error
+	History(key string, limit int) ([]git.HistoryEntry, error)
+	GetRevision(key string, rev string) ([]byte, string, error)
 }
 
 // Config holds web handler configuration.
@@ -129,6 +131,9 @@ func (h *Handler) Register(r *routegroup.Bundle) {
 	r.HandleFunc("GET /web/keys/new", h.handleKeyNew)
 	r.HandleFunc("GET /web/keys/view/{key...}", h.handleKeyView)
 	r.HandleFunc("GET /web/keys/edit/{key...}", h.handleKeyEdit)
+	r.HandleFunc("GET /web/keys/history/{key...}", h.handleKeyHistory)
+	r.HandleFunc("GET /web/keys/revision/{key...}", h.handleKeyRevision)
+	r.HandleFunc("POST /web/keys/restore/{key...}", h.handleKeyRestore)
 	r.HandleFunc("POST /web/keys", h.handleKeyCreate)
 	r.HandleFunc("PUT /web/keys/{key...}", h.handleKeyUpdate)
 	r.HandleFunc("DELETE /web/keys/{key...}", h.handleKeyDelete)
@@ -205,7 +210,7 @@ func parseTemplates() (*template.Template, error) {
 	}
 
 	// parse partials
-	partials := []string{"keys-table", "form", "view"}
+	partials := []string{"keys-table", "form", "view", "history", "revision"}
 	for _, name := range partials {
 		content, readErr := templatesFS.ReadFile("templates/partials/" + name + ".html")
 		if readErr != nil {
@@ -262,6 +267,11 @@ type templateData struct {
 	TotalKeys  int  // total keys after filtering (before pagination)
 	HasPrev    bool // has previous page
 	HasNext    bool // has next page
+
+	// history fields
+	GitEnabled bool               // git integration enabled
+	History    []git.HistoryEntry // commit history entries
+	RevHash    string             // specific revision hash being viewed
 }
 
 // sortModeLabel returns a human-readable label for the sort mode.

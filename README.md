@@ -449,6 +449,29 @@ Returns JSON array of key metadata with status 200:
 
 When authentication is enabled, only keys the caller has read permission for are returned.
 
+### Get key history
+
+```bash
+curl http://localhost:8080/kv/history/mykey
+```
+
+Returns JSON array of historical revisions (requires git versioning enabled). Returns 503 if git is not enabled.
+
+```json
+[
+  {
+    "hash": "abc1234",
+    "timestamp": "2025-01-15T10:30:00Z",
+    "author": "admin",
+    "operation": "set",
+    "format": "json",
+    "value": "eyJrZXkiOiAidmFsdWUifQ=="
+  }
+]
+```
+
+The `value` field contains base64-encoded content for each revision.
+
 ### Health check
 
 ```bash
@@ -468,6 +491,7 @@ Access the web interface at `http://localhost:8080/`. Features:
 - Format validation for json, yaml, xml, toml, ini, hcl (with option to submit anyway if invalid)
 - Binary value display (base64 encoded)
 - Light/dark theme toggle
+- Key history viewing and one-click restore to previous revisions (when git versioning enabled)
 
 ![Dashboard Dark](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/dashboard-dark-desktop.png)
 
@@ -505,6 +529,14 @@ Access the web interface at `http://localhost:8080/`. Features:
 ### Login Form
 
 ![Login Form](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/login-form.png)
+
+### Key History (Git Versioning)
+
+![History Modal](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/history-modal.png)
+
+### Revision View
+
+![Revision View](https://raw.githubusercontent.com/umputun/stash/master/site/docs/screenshots/revision-view.png)
 
 </details>
 

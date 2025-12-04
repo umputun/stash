@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -614,4 +615,167 @@ func TestParseFormatFromCommit(t *testing.T) {
 			assert.Equal(t, tc.expected, parseFormatFromCommit(tc.message))
 		})
 	}
+}
+
+func TestParseOperationFromCommit(t *testing.T) {
+	tests := []struct {
+		name, message, expected string
+	}{
+		{"with operation", "set key\n\noperation: set\nkey: test", "set"},
+		{"delete operation", "delete key\n\noperation: delete\nkey: test", "delete"},
+		{"fallback to first word", "set key\n\nkey: test", "set"},
+		{"delete fallback", "delete key\n\nkey: test", "delete"},
+		{"empty message", "", "unknown"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, parseOperationFromCommit(tc.message))
+		})
+	}
+}
+
+func TestStore_History(t *testing.T) {
+	t.Run("returns history for key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		author := DefaultAuthor()
+		// create key with multiple updates
+		require.NoError(t, store.Commit(CommitRequest{Key: "app/config", Value: []byte("v1"), Operation: "set", Format: "text", Author: author}))
+		require.NoError(t, store.Commit(CommitRequest{Key: "app/config", Value: []byte("v2"), Operation: "set", Format: "json", Author: author}))
+		require.NoError(t, store.Commit(CommitRequest{Key: "app/config", Value: []byte("v3"), Operation: "set", Format: "yaml", Author: author}))
+
+		history, err := store.History("app/config", 0)
+		require.NoError(t, err)
+		require.Len(t, history, 3)
+
+		// newest first
+		assert.Equal(t, []byte("v3"), history[0].Value)
+		assert.Equal(t, "yaml", history[0].Format)
+		assert.Equal(t, "set", history[0].Operation)
+		assert.Equal(t, "stash", history[0].Author)
+		assert.Len(t, history[0].Hash, 7)
+
+		assert.Equal(t, []byte("v2"), history[1].Value)
+		assert.Equal(t, "json", history[1].Format)
+
+		assert.Equal(t, []byte("v1"), history[2].Value)
+		assert.Equal(t, "text", history[2].Format)
+	})
+
+	t.Run("respects limit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		author := DefaultAuthor()
+		for i := range 10 {
+			require.NoError(t, store.Commit(CommitRequest{Key: "key", Value: fmt.Appendf(nil, "v%d", i), Operation: "set", Author: author}))
+		}
+
+		history, err := store.History("key", 3)
+		require.NoError(t, err)
+		assert.Len(t, history, 3)
+	})
+
+	t.Run("returns empty for nonexistent key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		history, err := store.History("nonexistent", 0)
+		require.NoError(t, err)
+		assert.Empty(t, history)
+	})
+
+	t.Run("rejects invalid key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		_, err = store.History("../etc/passwd", 0)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid key")
+	})
+}
+
+func TestStore_GetRevision(t *testing.T) {
+	t.Run("returns value at specific revision", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		author := DefaultAuthor()
+		require.NoError(t, store.Commit(CommitRequest{Key: "key", Value: []byte("v1"), Operation: "set", Format: "text", Author: author}))
+
+		// get hash of first commit
+		head1, err := store.repo.Head()
+		require.NoError(t, err)
+		hash1 := head1.Hash().String()
+
+		require.NoError(t, store.Commit(CommitRequest{Key: "key", Value: []byte("v2"), Operation: "set", Format: "json", Author: author}))
+
+		// get value at first revision
+		value, format, err := store.GetRevision("key", hash1)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v1"), value)
+		assert.Equal(t, "text", format)
+	})
+
+	t.Run("returns value at short hash", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		author := DefaultAuthor()
+		require.NoError(t, store.Commit(CommitRequest{Key: "key", Value: []byte("v1"), Operation: "set", Format: "json", Author: author}))
+
+		head, err := store.repo.Head()
+		require.NoError(t, err)
+		shortHash := head.Hash().String()[:7]
+
+		value, format, err := store.GetRevision("key", shortHash)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v1"), value)
+		assert.Equal(t, "json", format)
+	})
+
+	t.Run("fails with invalid revision", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		_, _, err = store.GetRevision("key", "invalid-rev")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to resolve revision")
+	})
+
+	t.Run("fails for file not in revision", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		author := DefaultAuthor()
+		require.NoError(t, store.Commit(CommitRequest{Key: "key1", Value: []byte("v1"), Operation: "set", Author: author}))
+
+		head, err := store.repo.Head()
+		require.NoError(t, err)
+		hash := head.Hash().String()
+
+		// key2 doesn't exist at this revision
+		_, _, err = store.GetRevision("key2", hash)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "file not found")
+	})
+
+	t.Run("rejects invalid key", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		_, _, err = store.GetRevision("../etc/passwd", "abc123")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid key")
+	})
 }

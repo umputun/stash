@@ -132,3 +132,63 @@ func TestNewService(t *testing.T) {
 	s := git.NewService(st, true)
 	assert.NotNil(t, s)
 }
+
+func TestService_History(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		entries := []git.HistoryEntry{{Hash: "abc123", Author: "admin", Operation: "set"}}
+		st := &mocks.StorerMock{
+			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) { return entries, nil },
+		}
+		s := git.NewService(st, false)
+		result, err := s.History("test-key", 10)
+		require.NoError(t, err)
+		assert.Equal(t, entries, result)
+		assert.Len(t, st.HistoryCalls(), 1)
+		assert.Equal(t, "test-key", st.HistoryCalls()[0].Key)
+		assert.Equal(t, 10, st.HistoryCalls()[0].Limit)
+	})
+
+	t.Run("error propagation", func(t *testing.T) {
+		st := &mocks.StorerMock{
+			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) {
+				return nil, errors.New("history error")
+			},
+		}
+		s := git.NewService(st, false)
+		_, err := s.History("test-key", 10)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "history:")
+		assert.Contains(t, err.Error(), "history error")
+	})
+}
+
+func TestService_GetRevision(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		st := &mocks.StorerMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) {
+				return []byte("value"), "json", nil
+			},
+		}
+		s := git.NewService(st, false)
+		value, format, err := s.GetRevision("test-key", "abc123")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("value"), value)
+		assert.Equal(t, "json", format)
+		assert.Len(t, st.GetRevisionCalls(), 1)
+		assert.Equal(t, "test-key", st.GetRevisionCalls()[0].Key)
+		assert.Equal(t, "abc123", st.GetRevisionCalls()[0].Rev)
+	})
+
+	t.Run("error propagation", func(t *testing.T) {
+		st := &mocks.StorerMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) {
+				return nil, "", errors.New("revision error")
+			},
+		}
+		s := git.NewService(st, false)
+		_, _, err := s.GetRevision("test-key", "abc123")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "get revision:")
+		assert.Contains(t, err.Error(), "revision error")
+	})
+}
