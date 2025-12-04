@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -521,15 +523,19 @@ users:
         access: rw
 `
 	f := createTempFile(t, content)
-	auth, err := NewAuth(f, 1*time.Millisecond, testSessionStore(t))
+	auth, err := NewAuth(f, 50*time.Millisecond, testSessionStore(t))
 	require.NoError(t, err)
 
 	token, err := auth.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
 
+	// session should be valid immediately after creation
 	assert.True(t, auth.ValidateSession(t.Context(), token))
-	time.Sleep(10 * time.Millisecond)
-	assert.False(t, auth.ValidateSession(t.Context(), token))
+
+	// wait for session to expire using Eventually to avoid flaky timing
+	assert.Eventually(t, func() bool {
+		return !auth.ValidateSession(t.Context(), token)
+	}, 200*time.Millisecond, 10*time.Millisecond, "session should expire")
 
 	// GetSessionUser also respects expiry
 	_, valid := auth.GetSessionUser(t.Context(), token)
@@ -1156,8 +1162,8 @@ tokens:
 	assert.False(t, auth.HasTokenACL("token1"), "old token should be gone")
 	assert.True(t, auth.HasTokenACL("token2"), "new token should exist")
 
-	// verify session was invalidated
-	assert.False(t, auth.ValidateSession(t.Context(), session), "session should be invalidated after reload")
+	// verify session is preserved (admin user unchanged)
+	assert.True(t, auth.ValidateSession(t.Context(), session), "session should be preserved for unchanged user")
 
 	// verify new user exists
 	assert.True(t, auth.CheckUserPermission("viewer", "test", false))
@@ -1225,40 +1231,207 @@ func TestAuth_Reload_NilAuth(t *testing.T) {
 	assert.Contains(t, err.Error(), "auth not enabled")
 }
 
-func TestAuth_Reload_SessionsInvalidated(t *testing.T) {
-	config := `
-users:
-  - name: user1
+func TestAuth_Reload_SelectiveSessionInvalidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		initialConfig string
+		updatedConfig string
+		sessions      []string // usernames to create sessions for
+		expectValid   []string // usernames whose sessions should remain valid
+		expectInvalid []string // usernames whose sessions should be invalidated
+	}{
+		{
+			name: "user removed - sessions invalidated",
+			initialConfig: `users:
+  - name: alice
+    password: "$2a$10$hash1"
+    permissions: [{prefix: "*", access: rw}]
+  - name: bob
+    password: "$2a$10$hash2"
+    permissions: [{prefix: "*", access: r}]`,
+			updatedConfig: `users:
+  - name: bob
+    password: "$2a$10$hash2"
+    permissions: [{prefix: "*", access: r}]`,
+			sessions:      []string{"alice", "bob"},
+			expectValid:   []string{"bob"},
+			expectInvalid: []string{"alice"},
+		},
+		{
+			name: "password changed - sessions invalidated",
+			initialConfig: `users:
+  - name: alice
+    password: "$2a$10$oldhash"
+    permissions: [{prefix: "*", access: rw}]`,
+			updatedConfig: `users:
+  - name: alice
+    password: "$2a$10$newhash"
+    permissions: [{prefix: "*", access: rw}]`,
+			sessions:      []string{"alice"},
+			expectValid:   []string{},
+			expectInvalid: []string{"alice"},
+		},
+		{
+			name: "permissions changed only - sessions preserved",
+			initialConfig: `users:
+  - name: alice
     password: "$2a$10$hash"
-    permissions:
-      - prefix: "*"
-        access: rw
-  - name: user2
+    permissions: [{prefix: "*", access: rw}]`,
+			updatedConfig: `users:
+  - name: alice
     password: "$2a$10$hash"
-    permissions:
-      - prefix: "*"
-        access: r
-`
-	f := createTempFile(t, config)
-	auth, err := NewAuth(f, time.Hour, testSessionStore(t))
+    permissions: [{prefix: "readonly/*", access: r}]`,
+			sessions:      []string{"alice"},
+			expectValid:   []string{"alice"},
+			expectInvalid: []string{},
+		},
+		{
+			name: "unchanged config - all sessions preserved",
+			initialConfig: `users:
+  - name: alice
+    password: "$2a$10$hash"
+    permissions: [{prefix: "*", access: rw}]`,
+			updatedConfig: `users:
+  - name: alice
+    password: "$2a$10$hash"
+    permissions: [{prefix: "*", access: rw}]`,
+			sessions:      []string{"alice"},
+			expectValid:   []string{"alice"},
+			expectInvalid: []string{},
+		},
+		{
+			name: "new user added - existing sessions preserved",
+			initialConfig: `users:
+  - name: alice
+    password: "$2a$10$hash"
+    permissions: [{prefix: "*", access: rw}]`,
+			updatedConfig: `users:
+  - name: alice
+    password: "$2a$10$hash"
+    permissions: [{prefix: "*", access: rw}]
+  - name: bob
+    password: "$2a$10$hash2"
+    permissions: [{prefix: "*", access: r}]`,
+			sessions:      []string{"alice"},
+			expectValid:   []string{"alice"},
+			expectInvalid: []string{},
+		},
+		{
+			name: "mixed changes - selective invalidation",
+			initialConfig: `users:
+  - name: alice
+    password: "$2a$10$hash1"
+    permissions: [{prefix: "*", access: rw}]
+  - name: bob
+    password: "$2a$10$oldhash"
+    permissions: [{prefix: "*", access: rw}]
+  - name: carol
+    password: "$2a$10$hash3"
+    permissions: [{prefix: "*", access: r}]`,
+			updatedConfig: `users:
+  - name: alice
+    password: "$2a$10$hash1"
+    permissions: [{prefix: "new/*", access: rw}]
+  - name: bob
+    password: "$2a$10$newhash"
+    permissions: [{prefix: "*", access: rw}]`,
+			sessions:      []string{"alice", "bob", "carol"},
+			expectValid:   []string{"alice"},        // unchanged (only perms changed)
+			expectInvalid: []string{"bob", "carol"}, // bob: password changed, carol: removed
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := createTempFile(t, tt.initialConfig)
+			auth, err := NewAuth(f, time.Hour, testSessionStore(t))
+			require.NoError(t, err)
+
+			// create sessions and track tokens
+			tokensByUser := make(map[string]string)
+			for _, username := range tt.sessions {
+				token, createErr := auth.CreateSession(t.Context(), username)
+				require.NoError(t, createErr)
+				tokensByUser[username] = token
+			}
+
+			// reload with updated config
+			err = os.WriteFile(f, []byte(tt.updatedConfig), 0o600)
+			require.NoError(t, err)
+			err = auth.Reload(t.Context())
+			require.NoError(t, err)
+
+			// verify expected valid sessions
+			for _, username := range tt.expectValid {
+				token := tokensByUser[username]
+				assert.True(t, auth.ValidateSession(t.Context(), token),
+					"session for %q should remain valid", username)
+			}
+
+			// verify expected invalid sessions
+			for _, username := range tt.expectInvalid {
+				token := tokensByUser[username]
+				assert.False(t, auth.ValidateSession(t.Context(), token),
+					"session for %q should be invalidated", username)
+			}
+		})
+	}
+}
+
+func TestAuth_Reload_DeleteSessionsByUsernameError(t *testing.T) {
+	initialConfig := `users:
+  - name: alice
+    password: "$2a$10$hash1"
+    permissions: [{prefix: "*", access: rw}]
+  - name: bob
+    password: "$2a$10$hash2"
+    permissions: [{prefix: "*", access: r}]`
+
+	updatedConfig := `users:
+  - name: alice
+    password: "$2a$10$newhash"
+    permissions: [{prefix: "*", access: rw}]`
+
+	f := createTempFile(t, initialConfig)
+
+	// track calls and return error for alice
+	var deletedUsers []string
+	mockStore := &mocks.SessionStoreMock{
+		CreateSessionFunc: func(_ context.Context, token, username string, expiresAt time.Time) error {
+			return nil
+		},
+		GetSessionFunc: func(_ context.Context, token string) (string, time.Time, error) {
+			return "", time.Time{}, store.ErrNotFound
+		},
+		DeleteSessionsByUsernameFunc: func(_ context.Context, username string) error {
+			deletedUsers = append(deletedUsers, username)
+			if username == "alice" {
+				return errors.New("database connection lost")
+			}
+			return nil
+		},
+	}
+
+	auth, err := NewAuth(f, time.Hour, mockStore)
 	require.NoError(t, err)
 
-	// create multiple sessions
-	session1, err := auth.CreateSession(t.Context(), "user1")
-	require.NoError(t, err)
-	session2, err := auth.CreateSession(t.Context(), "user2")
+	// update config to trigger session invalidation for both users
+	err = os.WriteFile(f, []byte(updatedConfig), 0o600)
 	require.NoError(t, err)
 
-	assert.True(t, auth.ValidateSession(t.Context(), session1))
-	assert.True(t, auth.ValidateSession(t.Context(), session2))
-
-	// reload with same config
+	// reload should succeed despite DeleteSessionsByUsername error
 	err = auth.Reload(t.Context())
-	require.NoError(t, err)
+	require.NoError(t, err, "reload should succeed even when session deletion fails")
 
-	// all sessions should be invalidated
-	assert.False(t, auth.ValidateSession(t.Context(), session1), "session1 should be invalidated")
-	assert.False(t, auth.ValidateSession(t.Context(), session2), "session2 should be invalidated")
+	// verify both users were attempted (alice: password changed, bob: removed)
+	assert.ElementsMatch(t, []string{"alice", "bob"}, deletedUsers,
+		"should attempt to delete sessions for both changed users")
+
+	// verify config was updated despite error
+	assert.False(t, auth.CheckUserPermission("bob", "test", false),
+		"bob should be removed from config")
+	assert.True(t, auth.CheckUserPermission("alice", "test", false),
+		"alice should still exist in config")
 }
 
 func TestAuth_ConcurrentAccess(t *testing.T) {
