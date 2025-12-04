@@ -59,6 +59,8 @@ make run      # run with logging enabled
 
 **Note**: CSS, JS, and HTML templates are embedded at compile time. After modifying any static files or templates, you must rebuild (`make build`) and restart the server to see changes.
 
+**Local testing with auth**: Use `auth-private.yml` (gitignored) with users: admin, readonly, scoped (all password: "testpass"). Run with `./stash server --auth.file=auth-private.yml --auth.hot-reload --dbg`
+
 ## API
 
 ```
@@ -126,7 +128,8 @@ POST   /logout                   # clear session, redirect to login
 - Sessions: stored in database (sessions table), persist across server restarts, background cleanup of expired sessions
 - Permissions: prefix patterns (*, foo/*, exact) with access levels (r, w, rw), longest match wins
 - Auth hot-reload: fsnotify watches directory (not file) for atomic rename support, debounces 100ms
-- Auth hot-reload invalidates all sessions on config change, rejects invalid configs
+- Auth hot-reload selectively invalidates sessions (only for users removed or with password changed), rejects invalid configs
+- Auth hot-reload requires `--auth.hot-reload` flag to enable
 - Web handlers check permissions server-side (not just UI conditions)
 - Cache: optional loading cache wrapper, populated on reads, invalidated on writes
 - Keep it simple - no over-engineering
