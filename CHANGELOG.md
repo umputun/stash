@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.13.0] - 2025-12-05
+
+### Added
+- Per-client rate limiting using tollbooth token bucket algorithm (#27)
+- SIGHUP signal handling for auth config reload (#26)
+
 ## [0.12.1] - 2025-12-04
 
 ### Fixed
