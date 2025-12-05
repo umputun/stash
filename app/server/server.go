@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/didip/tollbooth/v8"
+	"github.com/didip/tollbooth/v8/limiter"
 	log "github.com/go-pkgz/lgr"
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/routegroup"
@@ -79,9 +81,10 @@ type Config struct {
 	PageSize        int           // keys per page in web UI (0 = unlimited)
 
 	// limits
-	BodySizeLimit    int64 // max request body size in bytes
-	RequestsPerSec   int64 // max requests per second
-	LoginConcurrency int64 // max concurrent login attempts
+	BodySizeLimit    int64   // max request body size in bytes
+	RequestsPerSec   float64 // max requests per second (rate limit)
+	MaxConcurrent    int64   // max concurrent in-flight requests
+	LoginConcurrency int64   // max concurrent login attempts
 }
 
 // New creates a new Server instance.
@@ -196,8 +199,9 @@ func (s *Server) routes() http.Handler {
 	// global middleware (applies to all routes)
 	router.Use(
 		rest.Recoverer(log.Default()),
-		rest.RealIP, // must be before Throttle to rate-limit by real client IP
-		rest.Throttle(s.requestsPerSec()),
+		rest.RealIP, // must be before rate limiting to limit by real client IP
+		s.rateLimiter(),
+		rest.Throttle(s.maxConcurrent()),
 		rest.Trace,
 		rest.SizeLimit(s.bodySizeLimit()),
 		rest.AppInfo("stash", "umputun", s.version),
@@ -242,10 +246,18 @@ func (s *Server) bodySizeLimit() int64 {
 	return 1024 * 1024 // 1MB default
 }
 
-// requestsPerSec returns the configured requests per second limit, or default 1000 if not set.
-func (s *Server) requestsPerSec() int64 {
+// requestsPerSec returns the configured rate limit (requests per second), or default 100 if not set.
+func (s *Server) requestsPerSec() float64 {
 	if s.cfg.RequestsPerSec > 0 {
 		return s.cfg.RequestsPerSec
+	}
+	return 100 // default
+}
+
+// maxConcurrent returns the configured max concurrent in-flight requests, or default 1000 if not set.
+func (s *Server) maxConcurrent() int64 {
+	if s.cfg.MaxConcurrent > 0 {
+		return s.cfg.MaxConcurrent
 	}
 	return 1000 // default
 }
@@ -256,6 +268,16 @@ func (s *Server) loginConcurrency() int64 {
 		return s.cfg.LoginConcurrency
 	}
 	return 5 // default
+}
+
+// rateLimiter returns middleware that limits requests per second using tollbooth.
+func (s *Server) rateLimiter() func(http.Handler) http.Handler {
+	lmt := tollbooth.NewLimiter(s.requestsPerSec(), &limiter.ExpirableOptions{DefaultExpirationTTL: time.Hour})
+	lmt.SetIPLookup(limiter.IPLookup{Name: "RemoteAddr", IndexFromRight: 0}) // use RemoteAddr (RealIP middleware sets it)
+	lmt.SetBurst(int(s.requestsPerSec()))                                    // burst equals rate limit
+	return func(next http.Handler) http.Handler {
+		return tollbooth.LimitHandler(lmt, next)
+	}
 }
 
 // url returns a URL path with the base URL prefix.

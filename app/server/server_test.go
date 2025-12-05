@@ -900,3 +900,37 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`) // admin sees everything
 	})
 }
+
+func TestServer_LimitHelpers(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+	}
+
+	t.Run("defaults when not configured", func(t *testing.T) {
+		srv, err := New(st, validator.NewService(), nil, nil, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1024*1024), srv.bodySizeLimit())
+		assert.InDelta(t, 100.0, srv.requestsPerSec(), 0.001)
+		assert.Equal(t, int64(1000), srv.maxConcurrent())
+		assert.Equal(t, int64(5), srv.loginConcurrency())
+	})
+
+	t.Run("uses configured values", func(t *testing.T) {
+		srv, err := New(st, validator.NewService(), nil, nil, Config{
+			Address:          ":8080",
+			ReadTimeout:      5 * time.Second,
+			Version:          "test",
+			BodySizeLimit:    500,
+			RequestsPerSec:   50.5,
+			MaxConcurrent:    200,
+			LoginConcurrency: 3,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(500), srv.bodySizeLimit())
+		assert.InDelta(t, 50.5, srv.requestsPerSec(), 0.001)
+		assert.Equal(t, int64(200), srv.maxConcurrent())
+		assert.Equal(t, int64(3), srv.loginConcurrency())
+	})
+}

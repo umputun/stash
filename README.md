@@ -111,7 +111,8 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--server.base-url` | `STASH_SERVER_BASE_URL` | - | Base URL path for reverse proxy (e.g., `/stash`) |
 | `--server.page-size` | `STASH_SERVER_PAGE_SIZE` | `50` | Keys per page in web UI (0 to disable pagination) |
 | `--limits.body-size` | `STASH_LIMITS_BODY_SIZE` | `1048576` | Max request body size in bytes (1MB) |
-| `--limits.requests-per-sec` | `STASH_LIMITS_REQUESTS_PER_SEC` | `1000` | Max requests per second |
+| `--limits.requests-per-sec` | `STASH_LIMITS_REQUESTS_PER_SEC` | `100` | Max requests per second per client (rate limit) |
+| `--limits.max-concurrent` | `STASH_LIMITS_MAX_CONCURRENT` | `1000` | Max concurrent in-flight requests |
 | `--limits.login-concurrency` | `STASH_LIMITS_LOGIN_CONCURRENCY` | `5` | Max concurrent login attempts |
 | `--auth.file` | `STASH_AUTH_FILE` | - | Path to auth config file (enables auth) |
 | `--auth.login-ttl` | `STASH_AUTH_LOGIN_TTL` | `24h` | Login session TTL |
