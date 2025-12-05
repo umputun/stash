@@ -43,9 +43,10 @@ var opts struct {
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
 	Limits struct {
-		BodySize         int64 `long:"body-size" env:"BODY_SIZE" default:"1048576" description:"max body size in bytes"`
-		RequestsPerSec   int64 `long:"requests-per-sec" env:"REQUESTS_PER_SEC" default:"1000" description:"max requests per second"`
-		LoginConcurrency int64 `long:"login-concurrency" env:"LOGIN_CONCURRENCY" default:"5" description:"max concurrent logins"`
+		BodySize         int64   `long:"body-size" env:"BODY_SIZE" default:"1048576" description:"max body size in bytes"`
+		RequestsPerSec   float64 `long:"requests-per-sec" env:"REQUESTS_PER_SEC" default:"100" description:"max requests per second (rate limit)"`
+		MaxConcurrent    int64   `long:"max-concurrent" env:"MAX_CONCURRENT" default:"1000" description:"max concurrent in-flight requests"`
+		LoginConcurrency int64   `long:"login-concurrency" env:"LOGIN_CONCURRENCY" default:"5" description:"max concurrent logins"`
 	} `group:"limits" namespace:"limits" env-namespace:"STASH_LIMITS"`
 
 	Cache struct {
@@ -186,6 +187,7 @@ func runServer(ctx context.Context) error {
 		BaseURL:          baseURL,
 		BodySizeLimit:    opts.Limits.BodySize,
 		RequestsPerSec:   opts.Limits.RequestsPerSec,
+		MaxConcurrent:    opts.Limits.MaxConcurrent,
 		LoginConcurrency: opts.Limits.LoginConcurrency,
 		PageSize:         opts.Server.PageSize,
 	})

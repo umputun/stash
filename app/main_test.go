@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -1056,4 +1059,267 @@ func TestRunServer_WithGit(t *testing.T) {
 
 	// reset git opts
 	opts.Git.Enabled = false
+}
+
+func TestIntegration_BodySizeLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18494"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	opts.Limits.BodySize = 100 // 100 bytes limit
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18494/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("request under limit succeeds", func(t *testing.T) {
+		body := bytes.NewBufferString(strings.Repeat("x", 50))
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18494/kv/small-key", body)
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("request over limit returns 413", func(t *testing.T) {
+		body := bytes.NewBufferString(strings.Repeat("x", 150))
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18494/kv/large-key", body)
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset limits
+	opts.Limits.BodySize = 0
+}
+
+func TestIntegration_RateLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18495"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	opts.Limits.RequestsPerSec = 1 // 1 request per second for testing
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18495/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// make rapid requests to /kv/ endpoint - tollbooth returns 429 when rate exceeded
+	codes := make([]int, 0, 10)
+	for range 10 {
+		resp, err := client.Get("http://127.0.0.1:18495/kv/")
+		require.NoError(t, err)
+		codes = append(codes, resp.StatusCode)
+		_ = resp.Body.Close()
+	}
+
+	// at least one should be 429 (too many requests) from tollbooth rate limiter
+	assert.True(t, slices.Contains(codes, http.StatusTooManyRequests),
+		"expected at least one 429 response from rate limiter, got: %v", codes)
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset limits
+	opts.Limits.RequestsPerSec = 0
+}
+
+func TestIntegration_MaxConcurrent(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18497"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	opts.Limits.MaxConcurrent = 2       // very low for testing
+	opts.Limits.RequestsPerSec = 10000  // high rate limit so it doesn't interfere
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18497/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("concurrent requests within limit succeed", func(t *testing.T) {
+		// sequential requests should all succeed
+		for range 5 {
+			resp, err := client.Get("http://127.0.0.1:18497/kv/")
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+			_ = resp.Body.Close()
+		}
+	})
+
+	t.Run("concurrent requests exceeding limit get 503", func(t *testing.T) {
+		// create a slow handler by putting a large value first
+		largeValue := strings.Repeat("x", 100000)
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18497/kv/large", bytes.NewBufferString(largeValue))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+
+		// fire many concurrent requests
+		const numRequests = 20
+		var wg sync.WaitGroup
+		codes := make(chan int, numRequests)
+
+		for range numRequests {
+			wg.Go(func() {
+				resp, err := client.Get("http://127.0.0.1:18497/kv/large")
+				if err != nil {
+					codes <- 0
+					return
+				}
+				codes <- resp.StatusCode
+				_ = resp.Body.Close()
+			})
+		}
+
+		wg.Wait()
+		close(codes)
+
+		results := make([]int, 0, numRequests)
+		for code := range codes {
+			results = append(results, code)
+		}
+
+		// with MaxConcurrent=2 and 20 concurrent requests, some should get 503
+		has503 := slices.Contains(results, http.StatusServiceUnavailable)
+		has200 := slices.Contains(results, http.StatusOK)
+		assert.True(t, has200, "some requests should succeed, got: %v", results)
+		assert.True(t, has503, "some requests should get 503 (service unavailable), got: %v", results)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset limits
+	opts.Limits.MaxConcurrent = 0
+	opts.Limits.RequestsPerSec = 0
+}
+
+func TestIntegration_LoginConcurrency(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18496"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Limits.LoginConcurrency = 2 // very low for testing
+
+	// setup auth
+	authContent := `users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+	opts.Auth.LoginTTL = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18496/ping")
+
+	// start concurrent login attempts
+	const numLogins = 10
+	var wg sync.WaitGroup
+	codes := make(chan int, numLogins)
+
+	noRedirectClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	for range numLogins {
+		wg.Go(func() {
+			resp, err := noRedirectClient.PostForm("http://127.0.0.1:18496/login",
+				map[string][]string{"username": {"admin"}, "password": {"testpass"}})
+			if err != nil {
+				codes <- 0 // error case
+				return
+			}
+			codes <- resp.StatusCode
+			_ = resp.Body.Close()
+		})
+	}
+
+	wg.Wait()
+	close(codes)
+
+	// collect results
+	results := make([]int, 0, numLogins)
+	for code := range codes {
+		results = append(results, code)
+	}
+
+	// some should be throttled (503 from rest.Throttle concurrent limiter)
+	assert.True(t, slices.Contains(results, http.StatusServiceUnavailable),
+		"expected at least one 503 response for login concurrency throttling, got: %v", results)
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	// reset
+	opts.Auth.File = ""
+	opts.Limits.LoginConcurrency = 0
 }
