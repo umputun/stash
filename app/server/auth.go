@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -27,11 +28,6 @@ import (
 
 // defaultSessionCleanupInterval is the default interval for background cleanup of expired sessions.
 const defaultSessionCleanupInterval = 1 * time.Hour
-
-// sessionCookieNames defines cookie names for session authentication.
-// __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
-// fallback cookie name works on HTTP for development.
-var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 // AuthConfig represents the auth configuration file (stash-auth.yml).
 type AuthConfig struct {
@@ -428,6 +424,10 @@ func (a *Auth) StartWatcher(ctx context.Context) error {
 					debounceTimer.Stop()
 				}
 				debounceTimer = time.AfterFunc(debounceDelay, func() {
+					// check if context was canceled before reload
+					if ctx.Err() != nil {
+						return
+					}
 					if err := a.Reload(ctx); err != nil {
 						log.Printf("[WARN] failed to reload auth config: %v", err)
 					}
@@ -679,7 +679,9 @@ func (a *Auth) InvalidateSession(ctx context.Context, token string) {
 	if a == nil {
 		return
 	}
-	_ = a.sessionStore.DeleteSession(ctx, token)
+	if err := a.sessionStore.DeleteSession(ctx, token); err != nil {
+		log.Printf("[WARN] failed to delete session: %v", err)
+	}
 }
 
 // StartCleanup starts background cleanup of expired sessions.
@@ -726,8 +728,8 @@ func (a *Auth) SessionAuth(loginURL string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
-			for _, cookieName := range sessionCookieNames {
-				if cookie, err := r.Cookie(cookieName); err == nil && a.ValidateSession(r.Context(), cookie.Value) {
+			for _, cookieName := range cookie.SessionCookieNames {
+				if c, err := r.Cookie(cookieName); err == nil && a.ValidateSession(r.Context(), c.Value) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -769,12 +771,12 @@ func (a *Auth) TokenAuth(next http.Handler) http.Handler {
 		}
 
 		// also accept session cookie for API (allows UI to call API)
-		for _, cookieName := range sessionCookieNames {
-			cookie, err := r.Cookie(cookieName)
+		for _, cookieName := range cookie.SessionCookieNames {
+			c, err := r.Cookie(cookieName)
 			if err != nil {
 				continue
 			}
-			username, valid := a.GetSessionUser(r.Context(), cookie.Value)
+			username, valid := a.GetSessionUser(r.Context(), c.Value)
 			if !valid {
 				continue
 			}

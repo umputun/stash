@@ -327,11 +327,15 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("HX-Retarget", "#modal-content")
 		w.Header().Set("HX-Reswap", "innerHTML")
 		data := templateData{
-			Key:     key,
-			Value:   valueStr,
-			IsNew:   true,
-			Error:   "Access denied: you don't have write permission for this key prefix",
-			BaseURL: h.baseURL,
+			Key:      key,
+			Value:    valueStr,
+			Format:   format,
+			Formats:  h.validator.SupportedFormats(),
+			IsNew:    true,
+			Error:    "Access denied: you don't have write permission for this key prefix",
+			BaseURL:  h.baseURL,
+			CanWrite: false,
+			Username: username,
 		}
 		if err := h.tmpl.ExecuteTemplate(w, "form", data); err != nil {
 			log.Printf("[ERROR] failed to execute template: %v", err)
@@ -446,12 +450,16 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		data := templateData{
 			Key:            key,
 			Value:          valueStr,
+			Format:         format,
+			Formats:        h.validator.SupportedFormats(),
 			IsBinary:       isBinary,
 			IsNew:          false,
 			Error:          "Access denied: you don't have write permission for this key",
 			BaseURL:        h.baseURL,
 			ModalWidth:     modalWidth,
 			TextareaHeight: textareaHeight,
+			CanWrite:       false,
+			Username:       username,
 		}
 		if err := h.tmpl.ExecuteTemplate(w, "form", data); err != nil {
 			log.Printf("[ERROR] failed to execute template: %v", err)

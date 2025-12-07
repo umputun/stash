@@ -20,6 +20,7 @@ import (
 
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
+	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -27,11 +28,6 @@ import (
 //go:generate moq -out mocks/validator.go -pkg mocks -skip-ensure -fmt goimports . Validator
 //go:generate moq -out mocks/authprovider.go -pkg mocks -skip-ensure -fmt goimports . AuthProvider
 //go:generate moq -out mocks/gitservice.go -pkg mocks -skip-ensure -fmt goimports . GitService
-
-// sessionCookieNames defines cookie names for session authentication.
-// __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
-// fallback cookie name works on HTTP for development.
-var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 //go:embed static
 var staticFS embed.FS
@@ -282,8 +278,8 @@ func sortModeLabel(mode enum.SortMode) string {
 
 // getTheme returns the current theme from cookie, defaulting to system.
 func (h *Handler) getTheme(r *http.Request) enum.Theme {
-	if cookie, err := r.Cookie("theme"); err == nil {
-		if theme, err := enum.ParseTheme(cookie.Value); err == nil {
+	if c, err := r.Cookie("theme"); err == nil {
+		if theme, err := enum.ParseTheme(c.Value); err == nil {
 			return theme
 		}
 	}
@@ -292,8 +288,8 @@ func (h *Handler) getTheme(r *http.Request) enum.Theme {
 
 // getViewMode returns the current view mode from cookie, defaulting to grid.
 func (h *Handler) getViewMode(r *http.Request) enum.ViewMode {
-	if cookie, err := r.Cookie("view_mode"); err == nil {
-		if mode, err := enum.ParseViewMode(cookie.Value); err == nil {
+	if c, err := r.Cookie("view_mode"); err == nil {
+		if mode, err := enum.ParseViewMode(c.Value); err == nil {
 			return mode
 		}
 	}
@@ -302,8 +298,8 @@ func (h *Handler) getViewMode(r *http.Request) enum.ViewMode {
 
 // getSortMode returns the current sort mode from cookie, defaulting to updated.
 func (h *Handler) getSortMode(r *http.Request) enum.SortMode {
-	if cookie, err := r.Cookie("sort_mode"); err == nil {
-		if mode, err := enum.ParseSortMode(cookie.Value); err == nil {
+	if c, err := r.Cookie("sort_mode"); err == nil {
+		if mode, err := enum.ParseSortMode(c.Value); err == nil {
 			return mode
 		}
 	}
@@ -325,9 +321,9 @@ func (h *Handler) cookiePath() string {
 
 // getCurrentUser returns the username from the session cookie, or empty string if not logged in.
 func (h *Handler) getCurrentUser(r *http.Request) string {
-	for _, cookieName := range sessionCookieNames {
-		if cookie, err := r.Cookie(cookieName); err == nil {
-			if username, ok := h.auth.GetSessionUser(r.Context(), cookie.Value); ok {
+	for _, cookieName := range cookie.SessionCookieNames {
+		if c, err := r.Cookie(cookieName); err == nil {
+			if username, ok := h.auth.GetSessionUser(r.Context(), c.Value); ok {
 				return username
 			}
 		}

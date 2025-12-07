@@ -16,6 +16,7 @@ import (
 
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
+	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -23,11 +24,6 @@ import (
 //go:generate moq -out mocks/authprovider.go -pkg mocks -skip-ensure -fmt goimports . AuthProvider
 //go:generate moq -out mocks/formatvalidator.go -pkg mocks -skip-ensure -fmt goimports . FormatValidator
 //go:generate moq -out mocks/gitservice.go -pkg mocks -skip-ensure -fmt goimports . GitService
-
-// sessionCookieNames defines cookie names for session authentication.
-// __Host- prefix requires HTTPS, secure, path=/ (preferred for production).
-// fallback cookie name works on HTTP for development.
-var sessionCookieNames = []string{"__Host-stash-auth", "stash-auth"}
 
 // GitService defines the interface for git operations.
 type GitService interface {
@@ -150,12 +146,12 @@ func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
 	}
 
 	// check session cookie first (authenticated user has priority over public)
-	for _, cookieName := range sessionCookieNames {
-		cookie, err := r.Cookie(cookieName)
+	for _, cookieName := range cookie.SessionCookieNames {
+		c, err := r.Cookie(cookieName)
 		if err != nil {
 			continue
 		}
-		username, valid := h.auth.GetSessionUser(r.Context(), cookie.Value)
+		username, valid := h.auth.GetSessionUser(r.Context(), c.Value)
 		if valid {
 			return h.auth.FilterUserKeys(username, keys)
 		}
@@ -363,12 +359,12 @@ func (h *Handler) getIdentity(r *http.Request) identity {
 	}
 
 	// check session cookie for web UI users
-	for _, cookieName := range sessionCookieNames {
-		cookie, err := r.Cookie(cookieName)
+	for _, cookieName := range cookie.SessionCookieNames {
+		c, err := r.Cookie(cookieName)
 		if err != nil {
 			continue
 		}
-		if username, valid := h.auth.GetSessionUser(r.Context(), cookie.Value); valid && username != "" {
+		if username, valid := h.auth.GetSessionUser(r.Context(), c.Value); valid && username != "" {
 			return identity{typ: identityUser, name: username}
 		}
 	}

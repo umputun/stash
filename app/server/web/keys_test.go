@@ -299,13 +299,16 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.PostForm = map[string][]string{"key": {"restricted/key"}, "value": {"val"}}
+		req.PostForm = map[string][]string{"key": {"restricted/key"}, "value": {"val"}, "format": {"json"}}
 		rec := httptest.NewRecorder()
 		h.handleKeyCreate(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
 		body := rec.Body.String()
 		assert.Contains(t, body, "Access denied")
+		// form should still have format dropdown options (bug fix: missing Formats field)
+		assert.Contains(t, body, `<option value="text"`)
+		assert.Contains(t, body, `<option value="json"`)
 	})
 
 	t.Run("store check error", func(t *testing.T) {
@@ -327,6 +330,61 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 		h.handleKeyCreate(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("invalid base64 in binary mode", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{
+			"key":       {"newkey"},
+			"value":     {"!!!invalid-base64!!!"},
+			"is_binary": {"true"},
+		}
+		rec := httptest.NewRecorder()
+		h.handleKeyCreate(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("validation error shows form with error", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		val := &mocks.ValidatorMock{
+			IsValidFormatFunc:    func(format string) bool { return true },
+			ValidateFunc:         func(format string, value []byte) error { return errors.New("invalid json syntax") },
+			SupportedFormatsFunc: func() []string { return []string{"text", "json", "yaml"} },
+		}
+		h := newTestHandlerWithAll(t, st, val, auth)
+
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{
+			"key":    {"newkey"},
+			"value":  {`{invalid json`},
+			"format": {"json"},
+		}
+		rec := httptest.NewRecorder()
+		h.handleKeyCreate(rec, req)
+
+		// handler re-renders form with validation error (HTMX pattern)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, "invalid json syntax")
+		assert.Contains(t, body, "Submit Anyway") // CanForce should be true
 	})
 }
 
@@ -368,13 +426,17 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/web/keys/restricted", http.NoBody)
 		req.SetPathValue("key", "restricted")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.PostForm = map[string][]string{"value": {"val"}}
+		req.PostForm = map[string][]string{"value": {"val"}, "format": {"json"}}
 		rec := httptest.NewRecorder()
 		h.handleKeyUpdate(rec, req)
 
 		// handler re-renders form with error message (HTMX pattern)
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), "Access denied")
+		body := rec.Body.String()
+		assert.Contains(t, body, "Access denied")
+		// form should still have format dropdown options (bug fix: missing Formats field)
+		assert.Contains(t, body, `<option value="text"`)
+		assert.Contains(t, body, `<option value="json"`)
 	})
 
 	t.Run("store error", func(t *testing.T) {
@@ -423,6 +485,28 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 		// handler re-renders form with validation error (HTMX pattern)
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Contains(t, rec.Body.String(), "invalid json")
+	})
+
+	t.Run("invalid base64 in binary mode", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.PostForm = map[string][]string{
+			"value":     {"!!!invalid-base64!!!"},
+			"is_binary": {"true"},
+		}
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
 

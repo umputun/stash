@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	log "github.com/go-pkgz/lgr"
+
+	"github.com/umputun/stash/app/server/internal/cookie"
 )
 
 // handleLoginForm renders the login page.
@@ -47,10 +49,10 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// set cookie - use __Host- prefix for enhanced security over HTTPS (only when no base URL)
 	// __Host- prefix requires Path="/" which doesn't work with base URL
-	cookieName := "stash-auth"
+	cookieName := cookie.NameFallback
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	if secure && h.baseURL == "" {
-		cookieName = "__Host-stash-auth"
+		cookieName = cookie.NameSecure
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -69,9 +71,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 // handleLogout logs the user out by clearing the session.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// invalidate session
-	for _, cookieName := range sessionCookieNames {
-		if cookie, err := r.Cookie(cookieName); err == nil {
-			h.auth.InvalidateSession(r.Context(), cookie.Value)
+	for _, cookieName := range cookie.SessionCookieNames {
+		if c, err := r.Cookie(cookieName); err == nil {
+			h.auth.InvalidateSession(r.Context(), c.Value)
 		}
 	}
 
@@ -79,7 +81,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	// clear both cookies - need both paths for compatibility
 	http.SetCookie(w, &http.Cookie{
-		Name:     "stash-auth",
+		Name:     cookie.NameFallback,
 		Value:    "",
 		Path:     h.cookiePath(),
 		MaxAge:   -1,
@@ -91,7 +93,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// clear __Host- cookie if baseURL is empty (it requires Path="/")
 	if h.baseURL == "" {
 		http.SetCookie(w, &http.Cookie{
-			Name:     "__Host-stash-auth",
+			Name:     cookie.NameSecure,
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,

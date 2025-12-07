@@ -1164,8 +1164,8 @@ func TestIntegration_MaxConcurrent(t *testing.T) {
 	opts.Server.Address = "127.0.0.1:18497"
 	opts.Server.ReadTimeout = 5 * time.Second
 	opts.Auth.File = ""
-	opts.Limits.MaxConcurrent = 2       // very low for testing
-	opts.Limits.RequestsPerSec = 10000  // high rate limit so it doesn't interfere
+	opts.Limits.MaxConcurrent = 2      // very low for testing
+	opts.Limits.RequestsPerSec = 10000 // high rate limit so it doesn't interfere
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
