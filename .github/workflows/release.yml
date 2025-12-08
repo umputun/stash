@@ -5,12 +5,17 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
       - name: check out code
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: set up go
         uses: actions/setup-go@v6
