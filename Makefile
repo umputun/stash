@@ -1,5 +1,3 @@
-.PHONY: build test lint docker
-
 build:
 	go build -o stash -ldflags "-X main.revision=$(shell git describe --tags --always)" ./app
 
@@ -13,7 +11,7 @@ docker:
 	docker build -t stash .
 
 run:
-	go run ./app --log.enabled --log.debug
+	go run ./app --dbg server
 
 prep_site:
 	cp -fv README.md site/docs/index.md
