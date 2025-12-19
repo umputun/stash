@@ -136,6 +136,9 @@ linters:
           - goconst
         text: "string `text` has"
       - linters:
+          - godoclint
+        path: lib/stash/
+      - linters:
           - errcheck
         text: "Error return value of .*.Close.*is not checked"
     paths:

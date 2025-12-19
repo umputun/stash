@@ -563,6 +563,26 @@ curl http://localhost:8080/kv/app/config/database
 curl -X DELETE http://localhost:8080/kv/app/env
 ```
 
+## Go Client Library
+
+A Go client library is available for programmatic access:
+
+```go
+import "github.com/umputun/stash/lib/stash"
+
+client, err := stash.New("http://localhost:8080",
+    stash.WithToken("your-api-token"),
+)
+
+// get/set/delete/list operations
+value, err := client.Get(ctx, "app/config")
+err = client.SetWithFormat(ctx, "app/config", `{"debug": true}`, stash.FormatJSON)
+err = client.Delete(ctx, "app/config")
+keys, err := client.List(ctx, "app/")
+```
+
+Features: automatic retries, configurable timeout, Bearer token auth. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
+
 ## Docker
 
 ### SQLite

@@ -15,6 +15,7 @@ import (
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/lib/stash"
 )
 
 // handleKeyList renders the keys table partial (for HTMX).
@@ -111,7 +112,7 @@ func (h *Handler) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 
 	data := templateData{
 		IsNew:    true,
-		Format:   enum.FormatText.String(),
+		Format:   stash.FormatText.String(),
 		Formats:  h.validator.SupportedFormats(),
 		Theme:    h.getTheme(r),
 		BaseURL:  h.baseURL,
@@ -238,7 +239,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
 	if !h.validator.IsValidFormat(format) {
-		format = enum.FormatText.String()
+		format = stash.FormatText.String()
 	}
 
 	if key == "" {
@@ -362,7 +363,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
 	if !h.validator.IsValidFormat(format) {
-		format = enum.FormatText.String()
+		format = stash.FormatText.String()
 	}
 
 	// check write permission

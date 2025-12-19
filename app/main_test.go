@@ -21,6 +21,7 @@ import (
 
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/lib/stash"
 )
 
 func TestIntegration(t *testing.T) {
@@ -1322,4 +1323,158 @@ func TestIntegration_LoginConcurrency(t *testing.T) {
 	// reset
 	opts.Auth.File = ""
 	opts.Limits.LoginConcurrency = 0
+}
+
+func TestIntegration_SDKClient(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18498"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18498/ping")
+
+	// create SDK client
+	client, err := stash.New("http://127.0.0.1:18498", stash.WithRetry(0, 0))
+	require.NoError(t, err)
+
+	t.Run("ping", func(t *testing.T) {
+		err := client.Ping(ctx)
+		require.NoError(t, err)
+	})
+
+	t.Run("set and get", func(t *testing.T) {
+		err := client.SetWithFormat(ctx, "sdk/test", `{"foo": "bar"}`, stash.FormatJSON)
+		require.NoError(t, err)
+
+		val, err := client.Get(ctx, "sdk/test")
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"foo": "bar"}`, val)
+	})
+
+	t.Run("list", func(t *testing.T) {
+		// add another key
+		err := client.Set(ctx, "sdk/another", "value")
+		require.NoError(t, err)
+
+		keys, err := client.List(ctx, "sdk/")
+		require.NoError(t, err)
+		assert.Len(t, keys, 2)
+
+		// verify key names
+		keyNames := make([]string, len(keys))
+		for i, k := range keys {
+			keyNames[i] = k.Key
+		}
+		assert.Contains(t, keyNames, "sdk/test")
+		assert.Contains(t, keyNames, "sdk/another")
+	})
+
+	t.Run("info", func(t *testing.T) {
+		info, err := client.Info(ctx, "sdk/test")
+		require.NoError(t, err)
+		assert.Equal(t, "sdk/test", info.Key)
+		assert.Equal(t, "json", info.Format)
+		assert.Equal(t, 14, info.Size)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		err := client.Delete(ctx, "sdk/another")
+		require.NoError(t, err)
+
+		_, err = client.Get(ctx, "sdk/another")
+		require.ErrorIs(t, err, stash.ErrNotFound)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := client.Get(ctx, "nonexistent/key")
+		require.ErrorIs(t, err, stash.ErrNotFound)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+}
+
+func TestIntegration_SDKClient_WithAuth(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18499"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	authConfig := `tokens:
+  - token: "sdk-token"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
+	opts.Auth.File = authFile
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18499/ping")
+
+	t.Run("without token returns unauthorized", func(t *testing.T) {
+		client, err := stash.New("http://127.0.0.1:18499", stash.WithRetry(0, 0))
+		require.NoError(t, err)
+
+		_, err = client.Get(ctx, "any/key")
+		require.ErrorIs(t, err, stash.ErrUnauthorized)
+	})
+
+	t.Run("with valid token works", func(t *testing.T) {
+		client, err := stash.New("http://127.0.0.1:18499",
+			stash.WithToken("sdk-token"),
+			stash.WithRetry(0, 0),
+		)
+		require.NoError(t, err)
+
+		err = client.Set(ctx, "auth/test", "secret")
+		require.NoError(t, err)
+
+		val, err := client.Get(ctx, "auth/test")
+		require.NoError(t, err)
+		assert.Equal(t, "secret", val)
+	})
+
+	t.Run("with invalid token returns unauthorized", func(t *testing.T) {
+		client, err := stash.New("http://127.0.0.1:18499",
+			stash.WithToken("wrong-token"),
+			stash.WithRetry(0, 0),
+		)
+		require.NoError(t, err)
+
+		_, err = client.Get(ctx, "any/key")
+		require.ErrorIs(t, err, stash.ErrUnauthorized)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Auth.File = ""
 }

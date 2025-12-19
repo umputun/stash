@@ -1,4 +1,4 @@
-package enum
+package stash
 
 import (
 	"testing"

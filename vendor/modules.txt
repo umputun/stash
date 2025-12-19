@@ -381,6 +381,10 @@ github.com/go-pkgz/lcw/v2/eventbus
 # github.com/go-pkgz/lgr v0.12.1
 ## explicit; go 1.21
 github.com/go-pkgz/lgr
+# github.com/go-pkgz/requester v0.4.0
+## explicit; go 1.21
+github.com/go-pkgz/requester
+github.com/go-pkgz/requester/middleware
 # github.com/go-pkgz/rest v1.20.4
 ## explicit; go 1.23.0
 github.com/go-pkgz/rest

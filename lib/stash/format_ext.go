@@ -1,4 +1,4 @@
-package enum
+package stash
 
 // ContentType returns the HTTP Content-Type for the format.
 func (f Format) ContentType() string {

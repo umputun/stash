@@ -684,9 +684,9 @@ func TestServer_HandleList(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/secret"`)
+		assert.Contains(t, rec.Body.String(), `"key":"db/host"`)
 	})
 
 	t.Run("list keys with prefix filter", func(t *testing.T) {
@@ -700,9 +700,9 @@ func TestServer_HandleList(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
-		assert.NotContains(t, rec.Body.String(), `"Key":"db/host"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/secret"`)
+		assert.NotContains(t, rec.Body.String(), `"key":"db/host"`)
 	})
 
 	t.Run("list empty keys", func(t *testing.T) {
@@ -766,9 +766,9 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
-		assert.NotContains(t, rec.Body.String(), `"Key":"db/host"`) // no permission
+		assert.Contains(t, rec.Body.String(), `"key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/secret"`)
+		assert.NotContains(t, rec.Body.String(), `"key":"db/host"`) // no permission
 	})
 
 	t.Run("list with invalid token returns 401", func(t *testing.T) {
@@ -829,9 +829,9 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.NotContains(t, rec.Body.String(), `"Key":"app/config"`) // no permission
-		assert.NotContains(t, rec.Body.String(), `"Key":"app/secret"`) // no permission
-		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`)       // has permission
+		assert.NotContains(t, rec.Body.String(), `"key":"app/config"`) // no permission
+		assert.NotContains(t, rec.Body.String(), `"key":"app/secret"`) // no permission
+		assert.Contains(t, rec.Body.String(), `"key":"db/host"`)       // has permission
 	})
 
 	t.Run("list with public access returns filtered keys", func(t *testing.T) {
@@ -859,9 +859,9 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
-		assert.NotContains(t, rec.Body.String(), `"Key":"db/host"`) // no public permission
+		assert.Contains(t, rec.Body.String(), `"key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/secret"`)
+		assert.NotContains(t, rec.Body.String(), `"key":"db/host"`) // no public permission
 	})
 
 	t.Run("admin token sees all keys even with public ACL configured", func(t *testing.T) {
@@ -895,9 +895,9 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		srv.routes().ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/config"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"app/secret"`)
-		assert.Contains(t, rec.Body.String(), `"Key":"db/host"`) // admin sees everything
+		assert.Contains(t, rec.Body.String(), `"key":"app/config"`)
+		assert.Contains(t, rec.Body.String(), `"key":"app/secret"`)
+		assert.Contains(t, rec.Body.String(), `"key":"db/host"`) // admin sees everything
 	})
 }
 

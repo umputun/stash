@@ -29,7 +29,6 @@ jobs:
         run: |
           go test -timeout=3m -covermode=count -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp ./...
           cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v -E "mocks|/enum/" > $GITHUB_WORKSPACE/profile.cov
-        working-directory: app
         env:
           TZ: "America/Chicago"
 
@@ -44,6 +43,5 @@ jobs:
       - name: submit coverage
         run: |
           goveralls -service="github" -coverprofile=$GITHUB_WORKSPACE/profile.cov
-        working-directory: app
         env:
           COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,5 +1,5 @@
 # binaries
-stash
+/stash
 *.exe
 
 # IDE

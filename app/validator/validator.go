@@ -15,7 +15,7 @@ import (
 	"gopkg.in/ini.v1"
 	"gopkg.in/yaml.v3"
 
-	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/lib/stash"
 )
 
 // Service provides format validation for known data formats.
@@ -28,12 +28,12 @@ func NewService() *Service {
 
 // SupportedFormats returns the list of supported formats.
 func (s *Service) SupportedFormats() []string {
-	return enum.FormatNames
+	return stash.FormatNames
 }
 
 // IsValidFormat checks if format is in the list of supported formats.
 func (s *Service) IsValidFormat(format string) bool {
-	return slices.Contains(enum.FormatNames, format)
+	return slices.Contains(stash.FormatNames, format)
 }
 
 // Validate checks if value is valid for the given format.
@@ -42,17 +42,17 @@ func (s *Service) IsValidFormat(format string) bool {
 // Note: YAML is extremely permissive - almost any text parses as a valid string scalar.
 func (s *Service) Validate(format string, value []byte) error {
 	switch format {
-	case enum.FormatJSON.String():
+	case stash.FormatJSON.String():
 		return s.validateJSON(value)
-	case enum.FormatYAML.String():
+	case stash.FormatYAML.String():
 		return s.validateYAML(value)
-	case enum.FormatXML.String():
+	case stash.FormatXML.String():
 		return s.validateXML(value)
-	case enum.FormatTOML.String():
+	case stash.FormatTOML.String():
 		return s.validateTOML(value)
-	case enum.FormatINI.String():
+	case stash.FormatINI.String():
 		return s.validateINI(value)
-	case enum.FormatHCL.String():
+	case stash.FormatHCL.String():
 		return s.validateHCL(value)
 	default:
 		// text, shell, unknown formats - no validation

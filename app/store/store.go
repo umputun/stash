@@ -54,11 +54,11 @@ type Interface interface {
 
 // KeyInfo holds metadata about a stored key.
 type KeyInfo struct {
-	Key       string    `db:"key"`
-	Size      int       `db:"size"`
-	Format    string    `db:"format"`
-	CreatedAt time.Time `db:"created_at"`
-	UpdatedAt time.Time `db:"updated_at"`
+	Key       string    `json:"key" db:"key"`
+	Size      int       `json:"size" db:"size"`
+	Format    string    `json:"format" db:"format"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // DBType is an alias for enum.DbType for compatibility.

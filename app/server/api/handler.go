@@ -14,10 +14,10 @@ import (
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/routegroup"
 
-	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/lib/stash"
 )
 
 //go:generate moq -out mocks/kvstore.go -pkg mocks -skip-ensure -fmt goimports . KVStore
@@ -202,7 +202,7 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 
 // formatToContentType maps storage format to HTTP Content-Type
 func (h *Handler) formatToContentType(format string) string {
-	if f, err := enum.ParseFormat(format); err == nil {
+	if f, err := stash.ParseFormat(format); err == nil {
 		return f.ContentType()
 	}
 	return "application/octet-stream"

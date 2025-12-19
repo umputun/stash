@@ -18,20 +18,6 @@ const (
 	dbTypePostgres               // enum:alias=postgres
 )
 
-//go:generate go run github.com/go-pkgz/enum@latest -type format -lower
-type format int
-
-const (
-	formatText format = iota
-	formatJSON
-	formatYAML
-	formatXML
-	formatTOML
-	formatINI
-	formatHCL
-	formatShell
-)
-
 //go:generate go run github.com/go-pkgz/enum@latest -type viewMode -lower
 type viewMode int
 
