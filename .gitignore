@@ -26,12 +26,6 @@ coverage.html
 .playwright-mcp/
 .history/
 
-# e2e tests
-e2e/node_modules/
-e2e/.auth/
-e2e/playwright-report/
-e2e/test-results/
-
 # private auth config
 auth-private.yml
 # vendor (if not committed)

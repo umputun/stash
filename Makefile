@@ -19,17 +19,12 @@ prep_site:
 	cd site && pip install -r requirements.txt && mkdocs build
 
 e2e-setup:
-	cd e2e && npm install && npx playwright install chromium
+	go run github.com/playwright-community/playwright-go/cmd/playwright@latest install --with-deps chromium
 
 e2e:
-	rm -rf /tmp/stash-e2e.db /tmp/stash-e2e-git
-	cd e2e && npx playwright test
+	go test -v -count=1 -timeout=5m ./app/e2e/...
 
 e2e-ui:
-	rm -rf /tmp/stash-e2e.db /tmp/stash-e2e-git
-	cd e2e && npx playwright test --ui
+	E2E_HEADLESS=false go test -v -count=1 -timeout=10m ./app/e2e/...
 
-e2e-report:
-	cd e2e && npx playwright show-report
-
-.PHONY: build test lint docker run prep_site e2e-setup e2e e2e-ui e2e-report
+.PHONY: build test lint docker run prep_site e2e-setup e2e e2e-ui

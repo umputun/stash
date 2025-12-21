@@ -24,44 +24,20 @@ jobs:
         with:
           go-version: "1.25"
 
-      - name: setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: e2e/package-lock.json
-
       - name: cache playwright browsers
         uses: actions/cache@v4
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
-
-      - name: build stash
-        run: go build -o stash ./app
-
-      - name: install dependencies
-        working-directory: e2e
-        run: npm ci
+          key: playwright-${{ runner.os }}-${{ hashFiles('go.sum') }}
 
       - name: install playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: e2e
-        run: npx playwright install --with-deps chromium
+        run: go run github.com/playwright-community/playwright-go/cmd/playwright@latest install --with-deps chromium
 
       - name: install playwright deps only
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: go run github.com/playwright-community/playwright-go/cmd/playwright@latest install-deps chromium
 
       - name: run e2e tests
-        working-directory: e2e
-        run: npx playwright test
-
-      - name: upload report
-        uses: actions/upload-artifact@v6
-        if: failure()
-        with:
-          name: playwright-report
-          path: e2e/playwright-report/
-          retention-days: 7
+        run: go test -v -count=1 -timeout=5m ./app/e2e/...
