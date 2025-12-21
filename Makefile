@@ -20,4 +20,18 @@ prep_site:
 	sed -i 's|^# Stash \[!\[.*$$|# Stash|' site/docs/index.md
 	cd site && pip install -r requirements.txt && mkdocs build
 
-.PHONY: build test lint docker run prep_site
+e2e-setup:
+	cd e2e && npm install && npx playwright install chromium
+
+e2e:
+	rm -rf /tmp/stash-e2e.db /tmp/stash-e2e-git
+	cd e2e && npx playwright test
+
+e2e-ui:
+	rm -rf /tmp/stash-e2e.db /tmp/stash-e2e-git
+	cd e2e && npx playwright test --ui
+
+e2e-report:
+	cd e2e && npx playwright show-report
+
+.PHONY: build test lint docker run prep_site e2e-setup e2e e2e-ui e2e-report
