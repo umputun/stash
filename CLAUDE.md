@@ -167,6 +167,17 @@ POST   /logout                   # clear session, redirect to login
 - Changelog: CHANGELOG.md (uppercase) in project root, uses Keep a Changelog format
 - Keep it simple - no over-engineering
 
+## E2E Testing
+
+- **Location**: `app/e2e/e2e_test.go` with fixtures in `app/e2e/fixtures/`
+- **Technology**: playwright-go (Go bindings for Playwright, no npm/TypeScript)
+- **Build tag**: `//go:build e2e` - excluded from regular `go test ./...`
+- **Commands**:
+  - `make e2e` - run headless
+  - `make e2e-ui` - run with visible browser (slowMo enabled)
+  - `make e2e-setup` - install chromium browser
+- **Visible mode**: Set `E2E_HEADLESS=false` for visible browser
+
 ## Testing Selectors (Playwright)
 
 **Table View:**
