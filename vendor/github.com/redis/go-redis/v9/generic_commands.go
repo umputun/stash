@@ -3,6 +3,8 @@ package redis
 import (
 	"context"
 	"time"
+
+	"github.com/redis/go-redis/v9/internal/hashtag"
 )
 
 type GenericCmdable interface {
@@ -19,6 +21,7 @@ type GenericCmdable interface {
 	Keys(ctx context.Context, pattern string) *StringSliceCmd
 	Migrate(ctx context.Context, host, port, key string, db int, timeout time.Duration) *StatusCmd
 	Move(ctx context.Context, key string, db int) *BoolCmd
+	ObjectFreq(ctx context.Context, key string) *IntCmd
 	ObjectRefCount(ctx context.Context, key string) *IntCmd
 	ObjectEncoding(ctx context.Context, key string) *StringCmd
 	ObjectIdleTime(ctx context.Context, key string) *DurationCmd
@@ -155,6 +158,12 @@ func (c cmdable) Migrate(ctx context.Context, host, port, key string, db int, ti
 
 func (c cmdable) Move(ctx context.Context, key string, db int) *BoolCmd {
 	cmd := NewBoolCmd(ctx, "move", key, db)
+	_ = c(ctx, cmd)
+	return cmd
+}
+
+func (c cmdable) ObjectFreq(ctx context.Context, key string) *IntCmd {
+	cmd := NewIntCmd(ctx, "object", "freq", key)
 	_ = c(ctx, cmd)
 	return cmd
 }
@@ -356,6 +365,9 @@ func (c cmdable) Scan(ctx context.Context, cursor uint64, match string, count in
 		args = append(args, "count", count)
 	}
 	cmd := NewScanCmd(ctx, c, args...)
+	if hashtag.Present(match) {
+		cmd.SetFirstKeyPos(3)
+	}
 	_ = c(ctx, cmd)
 	return cmd
 }
@@ -372,6 +384,9 @@ func (c cmdable) ScanType(ctx context.Context, cursor uint64, match string, coun
 		args = append(args, "type", keyType)
 	}
 	cmd := NewScanCmd(ctx, c, args...)
+	if hashtag.Present(match) {
+		cmd.SetFirstKeyPos(3)
+	}
 	_ = c(ctx, cmd)
 	return cmd
 }

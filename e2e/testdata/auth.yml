@@ -1,0 +1,21 @@
+# e2e test auth configuration
+# all users have password: testpass
+
+users:
+  - name: admin
+    password: $2a$10$NgkQ//qToD01pjDUq12/neYkmOoVwQteZ8g.M.j4lUSeN/K9RQzU2
+    permissions:
+      - prefix: "*"
+        access: rw
+
+  - name: readonly
+    password: $2a$10$NgkQ//qToD01pjDUq12/neYkmOoVwQteZ8g.M.j4lUSeN/K9RQzU2
+    permissions:
+      - prefix: "*"
+        access: r
+
+  - name: scoped
+    password: $2a$10$NgkQ//qToD01pjDUq12/neYkmOoVwQteZ8g.M.j4lUSeN/K9RQzU2
+    permissions:
+      - prefix: "app/*"
+        access: rw
