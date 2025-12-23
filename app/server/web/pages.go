@@ -5,13 +5,12 @@ import (
 	"strconv"
 
 	log "github.com/go-pkgz/lgr"
-
-	"github.com/umputun/stash/app/enum"
 )
 
 // handleIndex renders the main page.
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List(r.Context(), enum.SecretsFilterAll)
+	secretsFilter := h.getSecretsFilter(r)
+	keys, err := h.store.List(r.Context(), secretsFilter)
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -35,19 +34,21 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	pr := h.paginate(filteredKeys, page, h.pageSize)
 
 	data := templateData{
-		Keys:        pr.keys,
-		Theme:       h.getTheme(r),
-		ViewMode:    h.getViewMode(r),
-		SortMode:    sortMode,
-		AuthEnabled: h.auth.Enabled(),
-		BaseURL:     h.baseURL,
-		CanWrite:    h.auth.UserCanWrite(username),
-		Username:    username,
-		Page:        pr.page,
-		TotalPages:  pr.totalPages,
-		TotalKeys:   totalKeys,
-		HasPrev:     pr.hasPrev,
-		HasNext:     pr.hasNext,
+		Keys:           pr.keys,
+		Theme:          h.getTheme(r),
+		ViewMode:       h.getViewMode(r),
+		SortMode:       sortMode,
+		AuthEnabled:    h.auth.Enabled(),
+		BaseURL:        h.baseURL,
+		CanWrite:       h.auth.UserCanWrite(username),
+		Username:       username,
+		Page:           pr.page,
+		TotalPages:     pr.totalPages,
+		TotalKeys:      totalKeys,
+		HasPrev:        pr.hasPrev,
+		HasNext:        pr.hasNext,
+		SecretsFilter:  secretsFilter,
+		SecretsEnabled: h.store.SecretsEnabled(),
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {
@@ -101,5 +102,21 @@ func (h *Handler) handleSortToggle(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// return updated keys table with new sort mode
+	h.handleKeyList(w, r)
+}
+
+// handleSecretsFilterToggle cycles through secrets filters: all -> secrets -> keys -> all.
+func (h *Handler) handleSecretsFilterToggle(w http.ResponseWriter, r *http.Request) {
+	newFilter := h.getSecretsFilter(r).Next()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "secrets_filter",
+		Value:    newFilter.String(),
+		Path:     h.cookiePath(),
+		MaxAge:   365 * 24 * 60 * 60, // 1 year
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// return updated keys table with new filter
 	h.handleKeyList(w, r)
 }

@@ -27,6 +27,7 @@ func TestHandler_HandleKeyList(t *testing.T) {
 				{Key: "beta", Size: 100},
 			}, nil
 		},
+		SecretsEnabledFunc: func() bool { return false },
 	}
 	h := newTestHandlerWithStore(t, st)
 
@@ -84,7 +85,8 @@ func TestHandler_HandleKeyView(t *testing.T) {
 			}
 			return nil, "", store.ErrNotFound
 		},
-		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		SecretsEnabledFunc: func() bool { return false },
 	}
 	auth := &mocks.AuthProviderMock{
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -136,7 +138,8 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 		GetInfoFunc: func(_ context.Context, key string) (store.KeyInfo, error) {
 			return store.KeyInfo{Key: key, UpdatedAt: time.Now()}, nil
 		},
-		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		SecretsEnabledFunc: func() bool { return false },
 	}
 	auth := &mocks.AuthProviderMock{
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -201,9 +204,10 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 
 func TestHandler_HandleKeyCreate(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-		SetFunc:           func(context.Context, string, []byte, string) error { return nil },
-		ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc:  func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+		SetFunc:            func(context.Context, string, []byte, string) error { return nil },
+		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		SecretsEnabledFunc: func() bool { return false },
 	}
 	auth := &mocks.AuthProviderMock{
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -394,6 +398,7 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error { return nil },
 			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -514,8 +519,9 @@ func TestHandler_HandleKeyUpdate(t *testing.T) {
 func TestHandler_HandleKeyDelete(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(context.Context, string) error { return nil },
-			ListFunc:   func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc:         func(context.Context, string) error { return nil },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -536,8 +542,9 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(context.Context, string) error { return store.ErrNotFound },
-			ListFunc:   func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc:         func(context.Context, string) error { return store.ErrNotFound },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -554,8 +561,9 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 
 	t.Run("internal error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(context.Context, string) error { return errors.New("db error") },
-			ListFunc:   func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc:         func(context.Context, string) error { return errors.New("db error") },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -572,8 +580,9 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 
 	t.Run("permission denied", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			DeleteFunc: func(context.Context, string) error { return nil },
-			ListFunc:   func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			DeleteFunc:         func(context.Context, string) error { return nil },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return false },
@@ -606,7 +615,8 @@ func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 					},
 				}
 			},
-			ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
@@ -636,7 +646,8 @@ func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error {
 				return nil // success
 			},
-			ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },

@@ -137,6 +137,7 @@ func (h *Handler) Register(r *routegroup.Bundle) {
 	r.HandleFunc("POST /web/theme", h.handleThemeToggle)
 	r.HandleFunc("POST /web/view-mode", h.handleViewModeToggle)
 	r.HandleFunc("POST /web/sort", h.handleSortToggle)
+	r.HandleFunc("POST /web/secrets-filter", h.handleSecretsFilterToggle)
 }
 
 // RegisterAuth registers auth routes (login/logout) on the given router.
@@ -271,6 +272,10 @@ type templateData struct {
 	HasPrev    bool // has previous page
 	HasNext    bool // has next page
 
+	// secrets filter fields
+	SecretsFilter  enum.SecretsFilter // current filter mode (all/secrets/keys)
+	SecretsEnabled bool               // secrets feature enabled
+
 	// history fields
 	GitEnabled bool               // git integration enabled
 	History    []git.HistoryEntry // commit history entries
@@ -305,6 +310,56 @@ func (h *Handler) getSortMode(r *http.Request) enum.SortMode {
 		}
 	}
 	return enum.SortModeUpdated
+}
+
+// getSecretsFilter returns the current secrets filter from cookie, defaulting to all.
+func (h *Handler) getSecretsFilter(r *http.Request) enum.SecretsFilter {
+	if c, err := r.Cookie("secrets_filter"); err == nil {
+		if filter, err := enum.ParseSecretsFilter(c.Value); err == nil {
+			return filter
+		}
+	}
+	return enum.SecretsFilterAll
+}
+
+// listParams holds view state parameters extracted from cookies and Set-Cookie headers.
+type listParams struct {
+	viewMode      enum.ViewMode
+	sortMode      enum.SortMode
+	secretsFilter enum.SecretsFilter
+}
+
+// getListParams extracts view/sort/filter state, checking Set-Cookie header for just-set values.
+// this is needed when toggle handlers set cookie and then call handleKeyList in same request.
+func (h *Handler) getListParams(w http.ResponseWriter, r *http.Request) listParams {
+	p := listParams{
+		viewMode:      h.getViewMode(r),
+		sortMode:      h.getSortMode(r),
+		secretsFilter: h.getSecretsFilter(r),
+	}
+	for _, c := range w.Header()["Set-Cookie"] {
+		switch {
+		case strings.Contains(c, "view_mode=cards"):
+			p.viewMode = enum.ViewModeCards
+		case strings.Contains(c, "view_mode=grid"):
+			p.viewMode = enum.ViewModeGrid
+		case strings.Contains(c, "sort_mode=key"):
+			p.sortMode = enum.SortModeKey
+		case strings.Contains(c, "sort_mode=size"):
+			p.sortMode = enum.SortModeSize
+		case strings.Contains(c, "sort_mode=created"):
+			p.sortMode = enum.SortModeCreated
+		case strings.Contains(c, "sort_mode=updated"):
+			p.sortMode = enum.SortModeUpdated
+		case strings.Contains(c, "secrets_filter=all"):
+			p.secretsFilter = enum.SecretsFilterAll
+		case strings.Contains(c, "secrets_filter=secretsonly"):
+			p.secretsFilter = enum.SecretsFilterSecretsOnly
+		case strings.Contains(c, "secrets_filter=keysonly"):
+			p.secretsFilter = enum.SecretsFilterKeysOnly
+		}
+	}
+	return p
 }
 
 // url returns a URL path with the base URL prefix.

@@ -12,7 +12,6 @@ import (
 
 	log "github.com/go-pkgz/lgr"
 
-	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/lib/stash"
@@ -20,7 +19,9 @@ import (
 
 // handleKeyList renders the keys table partial (for HTMX).
 func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List(r.Context(), enum.SecretsFilterAll)
+	params := h.getListParams(w, r)
+
+	keys, err := h.store.List(r.Context(), params.secretsFilter)
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -36,44 +37,16 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		search = r.FormValue("search")
 	}
 	filteredKeys = h.filterBySearch(filteredKeys, search)
+	h.sortByMode(filteredKeys, params.sortMode)
 
-	// check if view_mode was just set via Set-Cookie header (from toggle handler)
-	viewMode := h.getViewMode(r)
-	for _, c := range w.Header()["Set-Cookie"] {
-		switch {
-		case strings.Contains(c, "view_mode=cards"):
-			viewMode = enum.ViewModeCards
-		case strings.Contains(c, "view_mode=grid"):
-			viewMode = enum.ViewModeGrid
-		}
-	}
-
-	// check if sort_mode was just set via Set-Cookie header (from toggle handler)
-	sortMode := h.getSortMode(r)
-	for _, c := range w.Header()["Set-Cookie"] {
-		switch {
-		case strings.Contains(c, "sort_mode=key"):
-			sortMode = enum.SortModeKey
-		case strings.Contains(c, "sort_mode=size"):
-			sortMode = enum.SortModeSize
-		case strings.Contains(c, "sort_mode=created"):
-			sortMode = enum.SortModeCreated
-		case strings.Contains(c, "sort_mode=updated"):
-			sortMode = enum.SortModeUpdated
-		}
-	}
-	h.sortByMode(filteredKeys, sortMode)
-
-	// pagination
+	// pagination - check query then form value
 	totalKeys := len(filteredKeys)
 	page := 1
 	if p := r.URL.Query().Get("page"); p != "" {
 		if parsed, parseErr := strconv.Atoi(p); parseErr == nil && parsed > 0 {
 			page = parsed
 		}
-	}
-	// also check form value (for POST requests like sort/view toggle)
-	if p := r.FormValue("page"); p != "" {
+	} else if p := r.FormValue("page"); p != "" {
 		if parsed, parseErr := strconv.Atoi(p); parseErr == nil && parsed > 0 {
 			page = parsed
 		}
@@ -81,19 +54,21 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	pr := h.paginate(filteredKeys, page, h.pageSize)
 
 	data := templateData{
-		Keys:       pr.keys,
-		Search:     search,
-		Theme:      h.getTheme(r),
-		ViewMode:   viewMode,
-		SortMode:   sortMode,
-		BaseURL:    h.baseURL,
-		CanWrite:   h.auth.UserCanWrite(username),
-		Username:   username,
-		Page:       pr.page,
-		TotalPages: pr.totalPages,
-		TotalKeys:  totalKeys,
-		HasPrev:    pr.hasPrev,
-		HasNext:    pr.hasNext,
+		Keys:           pr.keys,
+		Search:         search,
+		Theme:          h.getTheme(r),
+		ViewMode:       params.viewMode,
+		SortMode:       params.sortMode,
+		BaseURL:        h.baseURL,
+		CanWrite:       h.auth.UserCanWrite(username),
+		Username:       username,
+		Page:           pr.page,
+		TotalPages:     pr.totalPages,
+		TotalKeys:      totalKeys,
+		HasPrev:        pr.hasPrev,
+		HasNext:        pr.hasNext,
+		SecretsFilter:  params.secretsFilter,
+		SecretsEnabled: h.store.SecretsEnabled(),
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "keys-table", data); err != nil {

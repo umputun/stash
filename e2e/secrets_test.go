@@ -247,6 +247,106 @@ func TestSecrets_CardViewLockIcon(t *testing.T) {
 	waitHidden(t, confirmModal)
 }
 
+func TestSecrets_FilterToggle(t *testing.T) {
+	cleanup := startSecretsServer(t)
+	defer cleanup()
+
+	page := newPage(t)
+	_, err := page.Goto(secretsBaseURL + "/login")
+	require.NoError(t, err)
+
+	require.NoError(t, page.Locator("#username").Fill("admin"))
+	require.NoError(t, page.Locator("#password").Fill("testpass"))
+	require.NoError(t, page.Locator(`button[type="submit"]`).Click())
+	waitVisible(t, page.Locator(`h1:has-text("Stash")`))
+
+	// create a regular key
+	regularKeyName := "regular/filter-test"
+	require.NoError(t, page.Locator(`button:has-text("New Key")`).Click())
+	modal := page.Locator("#main-modal.active")
+	waitVisible(t, modal)
+	require.NoError(t, page.Locator(`input[name="key"]`).Fill(regularKeyName))
+	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill("regular value"))
+	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	waitHidden(t, modal)
+
+	// create a secret key
+	secretKeyName := "secrets/filter-test"
+	require.NoError(t, page.Locator(`button:has-text("New Key")`).Click())
+	waitVisible(t, modal)
+	require.NoError(t, page.Locator(`input[name="key"]`).Fill(secretKeyName))
+	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill("secret value"))
+	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	waitHidden(t, modal)
+
+	// verify both keys are visible (All filter - default)
+	filterButton := page.Locator(".filter-button")
+	waitVisible(t, filterButton)
+	filterLabel := page.Locator("#filter-label")
+	labelText, err := filterLabel.TextContent()
+	require.NoError(t, err)
+	assert.Equal(t, "All", labelText, "default filter should be All")
+
+	regularCell := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, regularKeyName))
+	secretCell := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, secretKeyName))
+	waitVisible(t, regularCell)
+	waitVisible(t, secretCell)
+
+	// click filter to switch to "Secrets" mode
+	require.NoError(t, filterButton.Click())
+	assert.Eventually(t, func() bool {
+		text, e := filterLabel.TextContent()
+		return e == nil && text == "Secrets"
+	}, 5*time.Second, 100*time.Millisecond, "filter should switch to Secrets")
+
+	// verify only secret key is visible
+	secretVisible, err := secretCell.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, secretVisible, "secret key should be visible in Secrets filter")
+
+	regularVisible, err := regularCell.IsVisible()
+	require.NoError(t, err)
+	assert.False(t, regularVisible, "regular key should NOT be visible in Secrets filter")
+
+	// click filter to switch to "Keys" mode
+	require.NoError(t, filterButton.Click())
+	assert.Eventually(t, func() bool {
+		text, e := filterLabel.TextContent()
+		return e == nil && text == "Keys"
+	}, 5*time.Second, 100*time.Millisecond, "filter should switch to Keys")
+
+	// verify only regular key is visible
+	regularVisible, err = regularCell.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, regularVisible, "regular key should be visible in Keys filter")
+
+	secretVisible, err = secretCell.IsVisible()
+	require.NoError(t, err)
+	assert.False(t, secretVisible, "secret key should NOT be visible in Keys filter")
+
+	// click filter to switch back to "All" mode
+	require.NoError(t, filterButton.Click())
+	assert.Eventually(t, func() bool {
+		text, e := filterLabel.TextContent()
+		return e == nil && text == "All"
+	}, 5*time.Second, 100*time.Millisecond, "filter should switch back to All")
+
+	// verify both keys are visible again
+	waitVisible(t, regularCell)
+	waitVisible(t, secretCell)
+
+	// cleanup - delete both keys
+	for _, key := range []string{regularKeyName, secretKeyName} {
+		row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, key))
+		require.NoError(t, row.Locator(".btn-danger").Click())
+		confirmModal := page.Locator("#confirm-modal")
+		waitVisible(t, confirmModal)
+		require.NoError(t, page.Locator("#confirm-delete-btn").Click())
+		waitHidden(t, confirmModal)
+		waitHidden(t, row)
+	}
+}
+
 func TestSecrets_ScopedSecretsAccess(t *testing.T) {
 	cleanup := startSecretsServer(t)
 	defer cleanup()

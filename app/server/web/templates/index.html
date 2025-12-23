@@ -2,6 +2,19 @@
 <div class="header">
     <h1><svg class="logo-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M7 12.25h10v-2H7zm0-3.5h10v-2H7zM3 21V3h18v18zm2-2h14v-3h-3q-.75.95-1.787 1.475T12 18t-2.212-.525T8 16H5zm7-3q.95 0 1.725-.55T14.8 14H19V5H5v9h4.2q.3.9 1.075 1.45T12 16m-7 3h14z"/></svg>Stash</h1>
     <div class="header-actions">
+        {{if .SecretsEnabled}}
+        <button class="filter-button"
+                hx-post="{{.BaseURL}}/web/secrets-filter"
+                hx-target="#keys-table"
+                hx-swap="innerHTML"
+                hx-include="[name='search'], [name='page']"
+                title="Filter keys">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span id="filter-label">{{.SecretsFilter.Label}}</span>
+        </button>
+        {{end}}
         <button class="sort-button"
                 hx-post="{{.BaseURL}}/web/sort"
                 hx-target="#keys-table"
