@@ -323,6 +323,121 @@ func TestTokenACL_CheckKeyPermission(t *testing.T) {
 	}
 }
 
+func TestPrefixPerm_GrantsSecrets(t *testing.T) {
+	tests := []struct {
+		prefix string
+		want   bool
+	}{
+		{"secrets/*", true},
+		{"secrets/db", true},
+		{"app/secrets/*", true},
+		{"app/secrets/key", true},
+		{"*", false},
+		{"app/*", false},
+		{"config/*", false},
+		{"mysecrets/*", false}, // "mysecrets" is not a path segment
+		{"secretsabc/*", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.prefix, func(t *testing.T) {
+			pp := prefixPerm{prefix: tt.prefix, permission: enum.PermissionRead}
+			assert.Equal(t, tt.want, pp.grantsSecrets(), "prefix: %s", tt.prefix)
+		})
+	}
+}
+
+func TestTokenACL_CheckKeyPermission_Secrets(t *testing.T) {
+	t.Run("wildcard does not grant secrets", func(t *testing.T) {
+		acl := TokenACL{
+			Token: "wildcard",
+			prefixes: []prefixPerm{
+				{prefix: "*", permission: enum.PermissionReadWrite},
+			},
+		}
+
+		// regular keys work
+		assert.True(t, acl.CheckKeyPermission("app/config", false))
+		assert.True(t, acl.CheckKeyPermission("app/config", true))
+
+		// secrets are denied
+		assert.False(t, acl.CheckKeyPermission("secrets/db", false))
+		assert.False(t, acl.CheckKeyPermission("secrets/db", true))
+		assert.False(t, acl.CheckKeyPermission("app/secrets/key", false))
+	})
+
+	t.Run("app/* does not grant app/secrets/*", func(t *testing.T) {
+		acl := TokenACL{
+			Token: "scoped",
+			prefixes: []prefixPerm{
+				{prefix: "app/*", permission: enum.PermissionReadWrite},
+			},
+		}
+
+		// regular app keys work
+		assert.True(t, acl.CheckKeyPermission("app/config", false))
+		assert.True(t, acl.CheckKeyPermission("app/config", true))
+
+		// app/secrets/* is denied
+		assert.False(t, acl.CheckKeyPermission("app/secrets/db", false))
+		assert.False(t, acl.CheckKeyPermission("app/secrets/db", true))
+	})
+
+	t.Run("secrets/* grants access to secrets", func(t *testing.T) {
+		acl := TokenACL{
+			Token: "secrets-reader",
+			prefixes: []prefixPerm{
+				{prefix: "secrets/*", permission: enum.PermissionRead},
+			},
+		}
+
+		assert.True(t, acl.CheckKeyPermission("secrets/db", false))
+		assert.False(t, acl.CheckKeyPermission("secrets/db", true)) // no write
+
+		// doesn't grant access to non-secrets
+		assert.False(t, acl.CheckKeyPermission("app/config", false))
+	})
+
+	t.Run("app/secrets/* grants app/secrets/*", func(t *testing.T) {
+		acl := TokenACL{
+			Token: "app-secrets",
+			prefixes: []prefixPerm{
+				{prefix: "app/secrets/*", permission: enum.PermissionReadWrite},
+			},
+		}
+
+		assert.True(t, acl.CheckKeyPermission("app/secrets/db", false))
+		assert.True(t, acl.CheckKeyPermission("app/secrets/db", true))
+
+		// doesn't grant other secrets
+		assert.False(t, acl.CheckKeyPermission("secrets/db", false))
+		assert.False(t, acl.CheckKeyPermission("other/secrets/key", false))
+	})
+
+	t.Run("combined permissions with secrets", func(t *testing.T) {
+		acl := TokenACL{
+			Token: "combined",
+			prefixes: []prefixPerm{
+				{prefix: "app/secrets/*", permission: enum.PermissionReadWrite},
+				{prefix: "app/*", permission: enum.PermissionRead},
+				{prefix: "*", permission: enum.PermissionRead},
+			},
+		}
+
+		// regular keys via app/* or *
+		assert.True(t, acl.CheckKeyPermission("app/config", false))
+		assert.False(t, acl.CheckKeyPermission("app/config", true)) // app/* is read-only
+		assert.True(t, acl.CheckKeyPermission("other/key", false))
+
+		// app/secrets via explicit app/secrets/*
+		assert.True(t, acl.CheckKeyPermission("app/secrets/db", false))
+		assert.True(t, acl.CheckKeyPermission("app/secrets/db", true))
+
+		// other secrets denied (no matching secrets prefix)
+		assert.False(t, acl.CheckKeyPermission("secrets/db", false))
+	})
+}
+
 func TestAuth_CheckPermission(t *testing.T) {
 	content := `
 tokens:

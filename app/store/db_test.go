@@ -10,6 +10,8 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 func TestNewSQLite(t *testing.T) {
@@ -136,7 +138,7 @@ func TestSQLite_List(t *testing.T) {
 	defer store.Close()
 
 	t.Run("empty store returns empty slice", func(t *testing.T) {
-		keys, err := store.List(t.Context())
+		keys, err := store.List(t.Context(), enum.SecretsFilterAll)
 		require.NoError(t, err)
 		assert.Empty(t, keys)
 	})
@@ -147,7 +149,7 @@ func TestSQLite_List(t *testing.T) {
 		err = store.Set(t.Context(), "key2", []byte("longer value here"), "json")
 		require.NoError(t, err)
 
-		keys, err := store.List(t.Context())
+		keys, err := store.List(t.Context(), enum.SecretsFilterAll)
 		require.NoError(t, err)
 		require.Len(t, keys, 2)
 
@@ -183,7 +185,7 @@ func TestSQLite_List(t *testing.T) {
 		err = store2.Set(t.Context(), "second", []byte("2"), "yaml")
 		require.NoError(t, err)
 
-		keys, err := store2.List(t.Context())
+		keys, err := store2.List(t.Context(), enum.SecretsFilterAll)
 		require.NoError(t, err)
 		require.Len(t, keys, 2)
 
@@ -315,7 +317,7 @@ func TestStore_Postgres(t *testing.T) {
 		err = store.Set(t.Context(), "pglist2", []byte("longer value"), "json")
 		require.NoError(t, err)
 
-		keys, err := store.List(t.Context())
+		keys, err := store.List(t.Context(), enum.SecretsFilterAll)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(keys), 2)
 
@@ -637,7 +639,7 @@ func TestMigration_SQLite_AddFormatColumn(t *testing.T) {
 	assert.Equal(t, "json", format)
 
 	// verify List works with migrated data
-	keys, err := store.List(t.Context())
+	keys, err := store.List(t.Context(), enum.SecretsFilterAll)
 	require.NoError(t, err)
 	assert.Len(t, keys, 2)
 }
@@ -917,5 +919,240 @@ func TestSQLite_Session(t *testing.T) {
 		// should not error when user has no sessions
 		err := store.DeleteSessionsByUsername(ctx, "nonexistent-user")
 		require.NoError(t, err)
+	})
+}
+
+// secrets tests
+
+func newTestStoreWithEncryptor(t *testing.T) *Store {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	enc, err := NewCrypto([]byte("test-secret-key-1234"))
+	require.NoError(t, err)
+	store, err := New(dbPath, WithEncryptor(enc))
+	require.NoError(t, err)
+	return store
+}
+
+func TestStore_SecretsEnabled(t *testing.T) {
+	t.Run("false when no encryptor", func(t *testing.T) {
+		store := newTestStore(t)
+		defer store.Close()
+		assert.False(t, store.SecretsEnabled())
+	})
+
+	t.Run("true when encryptor set", func(t *testing.T) {
+		store := newTestStoreWithEncryptor(t)
+		defer store.Close()
+		assert.True(t, store.SecretsEnabled())
+	})
+}
+
+func TestStore_Secrets_CRUD(t *testing.T) {
+	store := newTestStoreWithEncryptor(t)
+	defer store.Close()
+	ctx := t.Context()
+
+	t.Run("set and get secret", func(t *testing.T) {
+		err := store.Set(ctx, "secrets/db/password", []byte("super-secret"), "text")
+		require.NoError(t, err)
+
+		value, err := store.Get(ctx, "secrets/db/password")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("super-secret"), value)
+	})
+
+	t.Run("set and get secret with format", func(t *testing.T) {
+		err := store.Set(ctx, "app/secrets/config", []byte(`{"key":"secret"}`), "json")
+		require.NoError(t, err)
+
+		value, format, err := store.GetWithFormat(ctx, "app/secrets/config")
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"key":"secret"}`, string(value))
+		assert.Equal(t, "json", format)
+	})
+
+	t.Run("update secret", func(t *testing.T) {
+		err := store.Set(ctx, "secrets/update-test", []byte("original"), "text")
+		require.NoError(t, err)
+
+		err = store.Set(ctx, "secrets/update-test", []byte("updated"), "text")
+		require.NoError(t, err)
+
+		value, err := store.Get(ctx, "secrets/update-test")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("updated"), value)
+	})
+
+	t.Run("delete secret", func(t *testing.T) {
+		err := store.Set(ctx, "secrets/delete-test", []byte("to-delete"), "text")
+		require.NoError(t, err)
+
+		err = store.Delete(ctx, "secrets/delete-test")
+		require.NoError(t, err)
+
+		_, err = store.Get(ctx, "secrets/delete-test")
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("get info for secret", func(t *testing.T) {
+		err := store.Set(ctx, "secrets/info-test", []byte("test-value"), "yaml")
+		require.NoError(t, err)
+
+		info, err := store.GetInfo(ctx, "secrets/info-test")
+		require.NoError(t, err)
+		assert.Equal(t, "secrets/info-test", info.Key)
+		assert.Equal(t, "yaml", info.Format)
+		assert.True(t, info.Secret, "secret flag should be true")
+		assert.Positive(t, info.Size) // encrypted size is larger than plaintext
+	})
+
+	t.Run("get info for non-secret", func(t *testing.T) {
+		err := store.Set(ctx, "config/database", []byte("test"), "text")
+		require.NoError(t, err)
+
+		info, err := store.GetInfo(ctx, "config/database")
+		require.NoError(t, err)
+		assert.Equal(t, "config/database", info.Key)
+		assert.False(t, info.Secret, "secret flag should be false")
+	})
+
+	t.Run("secret value is encrypted in database", func(t *testing.T) {
+		secretValue := []byte("plaintext-secret")
+		err := store.Set(ctx, "secrets/encrypted-check", secretValue, "text")
+		require.NoError(t, err)
+
+		// read raw value from database
+		var rawValue []byte
+		err = store.db.Get(&rawValue, "SELECT value FROM kv WHERE key = ?", "secrets/encrypted-check")
+		require.NoError(t, err)
+
+		// raw value should not equal plaintext
+		assert.NotEqual(t, secretValue, rawValue, "stored value should be encrypted")
+
+		// but Get should return decrypted value
+		decrypted, err := store.Get(ctx, "secrets/encrypted-check")
+		require.NoError(t, err)
+		assert.Equal(t, secretValue, decrypted)
+	})
+
+	t.Run("regular key is not encrypted", func(t *testing.T) {
+		regularValue := []byte("regular-value")
+		err := store.Set(ctx, "config/regular", regularValue, "text")
+		require.NoError(t, err)
+
+		// read raw value from database
+		var rawValue []byte
+		err = store.db.Get(&rawValue, "SELECT value FROM kv WHERE key = ?", "config/regular")
+		require.NoError(t, err)
+
+		// raw value should equal plaintext
+		assert.Equal(t, regularValue, rawValue, "regular value should not be encrypted")
+	})
+}
+
+func TestStore_Secrets_WithoutEncryptor(t *testing.T) {
+	store := newTestStore(t) // no encryptor
+	defer store.Close()
+	ctx := t.Context()
+
+	t.Run("set secret returns error", func(t *testing.T) {
+		err := store.Set(ctx, "secrets/test", []byte("value"), "text")
+		assert.ErrorIs(t, err, ErrSecretsNotConfigured)
+	})
+
+	t.Run("get secret returns error", func(t *testing.T) {
+		_, err := store.Get(ctx, "secrets/test")
+		assert.ErrorIs(t, err, ErrSecretsNotConfigured)
+	})
+
+	t.Run("get secret with format returns error", func(t *testing.T) {
+		_, _, err := store.GetWithFormat(ctx, "secrets/test")
+		assert.ErrorIs(t, err, ErrSecretsNotConfigured)
+	})
+
+	t.Run("regular keys work without encryptor", func(t *testing.T) {
+		err := store.Set(ctx, "config/regular", []byte("value"), "text")
+		require.NoError(t, err)
+
+		value, err := store.Get(ctx, "config/regular")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("value"), value)
+	})
+}
+
+func TestStore_Secrets_ListFilter(t *testing.T) {
+	store := newTestStoreWithEncryptor(t)
+	defer store.Close()
+	ctx := t.Context()
+
+	// create mix of secret and regular keys
+	require.NoError(t, store.Set(ctx, "config/db", []byte("v1"), "text"))
+	require.NoError(t, store.Set(ctx, "config/app", []byte("v2"), "text"))
+	require.NoError(t, store.Set(ctx, "secrets/db/password", []byte("s1"), "text"))
+	require.NoError(t, store.Set(ctx, "app/secrets/key", []byte("s2"), "text"))
+
+	t.Run("list all keys", func(t *testing.T) {
+		keys, err := store.List(ctx, enum.SecretsFilterAll)
+		require.NoError(t, err)
+		assert.Len(t, keys, 4)
+
+		// verify secret flags are set correctly
+		secretCount := 0
+		for _, k := range keys {
+			if k.Secret {
+				secretCount++
+			}
+		}
+		assert.Equal(t, 2, secretCount)
+	})
+
+	t.Run("list only secrets", func(t *testing.T) {
+		keys, err := store.List(ctx, enum.SecretsFilterSecretsOnly)
+		require.NoError(t, err)
+		assert.Len(t, keys, 2)
+		for _, k := range keys {
+			assert.True(t, k.Secret, "all keys should be secrets")
+			assert.True(t, IsSecret(k.Key), "key path should match secret pattern")
+		}
+	})
+
+	t.Run("list only non-secrets", func(t *testing.T) {
+		keys, err := store.List(ctx, enum.SecretsFilterKeysOnly)
+		require.NoError(t, err)
+		assert.Len(t, keys, 2)
+		for _, k := range keys {
+			assert.False(t, k.Secret, "all keys should be non-secrets")
+			assert.False(t, IsSecret(k.Key), "key path should not match secret pattern")
+		}
+	})
+}
+
+func TestStore_Secrets_SetWithVersion(t *testing.T) {
+	store := newTestStoreWithEncryptor(t)
+	defer store.Close()
+	ctx := t.Context()
+
+	t.Run("update secret with correct version", func(t *testing.T) {
+		err := store.Set(ctx, "secrets/versioned", []byte("v1"), "text")
+		require.NoError(t, err)
+
+		info, err := store.GetInfo(ctx, "secrets/versioned")
+		require.NoError(t, err)
+
+		err = store.SetWithVersion(ctx, "secrets/versioned", []byte("v2"), "text", info.UpdatedAt)
+		require.NoError(t, err)
+
+		value, err := store.Get(ctx, "secrets/versioned")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v2"), value)
+	})
+
+	t.Run("update secret without encryptor returns error", func(t *testing.T) {
+		storeNoEnc := newTestStore(t)
+		defer storeNoEnc.Close()
+
+		err := storeNoEnc.SetWithVersion(ctx, "secrets/test", []byte("v"), "text", time.Now())
+		assert.ErrorIs(t, err, ErrSecretsNotConfigured)
 	})
 }

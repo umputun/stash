@@ -14,6 +14,7 @@ import (
 	log "github.com/go-pkgz/lgr"
 	"github.com/jessevdk/go-flags"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server"
 	"github.com/umputun/stash/app/store"
@@ -59,6 +60,10 @@ var opts struct {
 		LoginTTL  time.Duration `long:"login-ttl" env:"LOGIN_TTL" default:"720h" description:"login session TTL"`
 		HotReload bool          `long:"hot-reload" env:"HOT_RELOAD" description:"watch auth config for changes and reload"`
 	} `group:"auth" namespace:"auth" env-namespace:"STASH_AUTH"`
+
+	Secrets struct {
+		Key string `long:"key" env:"KEY" description:"master key for encrypting secrets (min 16 chars)"`
+	} `group:"secrets" namespace:"secrets" env-namespace:"STASH_SECRETS"`
 
 	ServerCmd struct {
 	} `command:"server" description:"run the stash server"`
@@ -142,8 +147,22 @@ func runServer(ctx context.Context) error {
 		log.Printf("[INFO] cache enabled, max keys: %d", opts.Cache.MaxKeys)
 	}
 
+	// configure secrets encryption if key is provided
+	var storeOpts []store.Option
+	if opts.Secrets.Key != "" {
+		if len(opts.Secrets.Key) < 16 {
+			return errors.New("secrets key must be at least 16 characters")
+		}
+		encryptor, encErr := store.NewCrypto([]byte(opts.Secrets.Key))
+		if encErr != nil {
+			return fmt.Errorf("failed to initialize secrets encryption: %w", encErr)
+		}
+		storeOpts = append(storeOpts, store.WithEncryptor(encryptor))
+		log.Printf("[INFO] secrets encryption enabled")
+	}
+
 	// initialize store - keep raw store reference for session operations
-	rawStore, err := store.New(opts.DB)
+	rawStore, err := store.New(opts.DB, storeOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to initialize store: %w", err)
 	}
@@ -236,15 +255,29 @@ func runRestore(ctx context.Context) error {
 		return fmt.Errorf("failed to read keys from git: %w", readErr)
 	}
 
+	// configure secrets encryption if key is provided
+	var storeOpts []store.Option
+	if opts.Secrets.Key != "" {
+		if len(opts.Secrets.Key) < 16 {
+			return errors.New("secrets key must be at least 16 characters")
+		}
+		encryptor, encErr := store.NewCrypto([]byte(opts.Secrets.Key))
+		if encErr != nil {
+			return fmt.Errorf("failed to initialize secrets encryption: %w", encErr)
+		}
+		storeOpts = append(storeOpts, store.WithEncryptor(encryptor))
+		log.Printf("[INFO] secrets encryption enabled")
+	}
+
 	// initialize database store
-	kvStore, dbErr := store.New(opts.DB)
+	kvStore, dbErr := store.New(opts.DB, storeOpts...)
 	if dbErr != nil {
 		return fmt.Errorf("failed to initialize store: %w", dbErr)
 	}
 	defer kvStore.Close()
 
 	// clear all keys from database
-	existingKeys, listErr := kvStore.List(ctx)
+	existingKeys, listErr := kvStore.List(ctx, enum.SecretsFilterAll)
 	if listErr != nil {
 		return fmt.Errorf("failed to list existing keys: %w", listErr)
 	}

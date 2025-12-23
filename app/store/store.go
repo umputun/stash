@@ -48,7 +48,8 @@ type Interface interface {
 	Set(ctx context.Context, key string, value []byte, format string) error
 	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
 	Delete(ctx context.Context, key string) error
-	List(ctx context.Context) ([]KeyInfo, error)
+	List(ctx context.Context, filter enum.SecretsFilter) ([]KeyInfo, error)
+	SecretsEnabled() bool
 	Close() error
 }
 
@@ -57,6 +58,7 @@ type KeyInfo struct {
 	Key       string    `json:"key" db:"key"`
 	Size      int       `json:"size" db:"size"`
 	Format    string    `json:"format" db:"format"`
+	Secret    bool      `json:"secret"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }

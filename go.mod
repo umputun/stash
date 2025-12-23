@@ -10,6 +10,7 @@ require (
 	github.com/go-git/go-git/v5 v5.16.4
 	github.com/go-pkgz/lcw/v2 v2.0.0
 	github.com/go-pkgz/lgr v0.12.1
+	github.com/go-pkgz/requester v0.4.0
 	github.com/go-pkgz/rest v1.20.4
 	github.com/go-pkgz/routegroup v1.6.0
 	github.com/go-pkgz/testutils v0.4.3
@@ -78,7 +79,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-pkgz/expirable-cache/v3 v3.0.0 // indirect
-	github.com/go-pkgz/requester v0.4.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/golang/snappy v1.0.0 // indirect

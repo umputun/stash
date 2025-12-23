@@ -14,6 +14,7 @@ import (
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/routegroup"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
@@ -39,7 +40,8 @@ type KVStore interface {
 	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
 	Set(ctx context.Context, key string, value []byte, format string) error
 	Delete(ctx context.Context, key string) error
-	List(ctx context.Context) ([]store.KeyInfo, error)
+	List(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error)
+	SecretsEnabled() bool
 }
 
 // AuthProvider defines the interface for authentication operations.
@@ -86,8 +88,18 @@ func (h *Handler) Register(r *routegroup.Bundle) {
 
 // handleList returns all keys the caller has read access to.
 // GET /kv?prefix=app/config (filter by prefix)
+// GET /kv?filter=secrets (filter to secrets only)
+// GET /kv?filter=keys (filter to non-secrets only)
 func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List(r.Context())
+	// parse secrets filter query param
+	filter := enum.SecretsFilterAll
+	if filterParam := r.URL.Query().Get("filter"); filterParam != "" {
+		if parsed, err := enum.ParseSecretsFilter(filterParam); err == nil {
+			filter = parsed
+		}
+	}
+
+	keys, err := h.store.List(r.Context(), filter)
 	if err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to list keys")
 		return
@@ -182,6 +194,10 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	value, format, err := h.store.GetWithFormat(r.Context(), key)
+	if errors.Is(err, store.ErrSecretsNotConfigured) {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -234,6 +250,10 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+		if errors.Is(err, store.ErrSecretsNotConfigured) {
+			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
+			return
+		}
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to set key")
 		return
 	}

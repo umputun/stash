@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/go-pkgz/lcw/v2"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 // cacheEntry holds cached value and format together.
@@ -100,12 +102,17 @@ func (c *Cached) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 }
 
 // List returns all keys from the underlying store (not cached).
-func (c *Cached) List(ctx context.Context) ([]KeyInfo, error) {
-	keys, err := c.store.List(ctx)
+func (c *Cached) List(ctx context.Context, filter enum.SecretsFilter) ([]KeyInfo, error) {
+	keys, err := c.store.List(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("store list: %w", err)
 	}
 	return keys, nil
+}
+
+// SecretsEnabled returns whether secrets encryption is enabled in the underlying store.
+func (c *Cached) SecretsEnabled() bool {
+	return c.store.SecretsEnabled()
 }
 
 // Close closes the cache and underlying store.

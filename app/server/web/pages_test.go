@@ -9,13 +9,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/server/web/mocks"
 	"github.com/umputun/stash/app/store"
 )
 
 func TestHandler_HandleIndex(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) {
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) {
 			return []store.KeyInfo{{Key: "test", Size: 100}}, nil
 		},
 	}
@@ -32,7 +33,7 @@ func TestHandler_HandleIndex(t *testing.T) {
 
 func TestHandler_HandleIndex_StoreError(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) {
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) {
 			return nil, assert.AnError
 		},
 	}
@@ -51,7 +52,7 @@ func TestHandler_HandleIndex_WithPagination(t *testing.T) {
 		keys[i] = store.KeyInfo{Key: "key" + string(rune('a'+i)), Size: 100}
 	}
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return keys, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return keys, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		EnabledFunc:             func() bool { return false },
@@ -86,7 +87,7 @@ func TestHandler_HandleIndex_WithPagination(t *testing.T) {
 
 func TestHandler_HandleThemeToggle(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	h := newTestHandlerWithStore(t, st)
 
@@ -125,7 +126,7 @@ func TestHandler_HandleThemeToggle(t *testing.T) {
 
 func TestHandler_HandleViewModeToggle(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	h := newTestHandlerWithStore(t, st)
 
@@ -164,7 +165,7 @@ func TestHandler_HandleViewModeToggle(t *testing.T) {
 
 func TestHandler_HandleSortToggle(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return []store.KeyInfo{}, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return []store.KeyInfo{}, nil },
 	}
 	h := newTestHandlerWithStore(t, st)
 

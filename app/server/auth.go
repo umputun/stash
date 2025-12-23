@@ -625,9 +625,19 @@ func (a *Auth) FilterPublicKeys(keys []string) []string {
 }
 
 // CheckKeyPermission checks if this ACL grants permission for a key.
+// For secret keys (containing "secrets" path segment), the matching prefix
+// must also explicitly contain "secrets" - wildcards like "*" or "app/*"
+// do not grant access to secrets.
 func (acl TokenACL) CheckKeyPermission(key string, needWrite bool) bool {
+	isSecretKey := store.IsSecret(key)
+
 	for _, pp := range acl.prefixes {
 		if matchPrefix(pp.prefix, key) {
+			// if key is a secret, the prefix must explicitly grant secrets access
+			if isSecretKey && !pp.grantsSecrets() {
+				continue // skip this prefix, try to find one that grants secrets
+			}
+
 			if needWrite {
 				return pp.permission.CanWrite()
 			}
@@ -635,6 +645,19 @@ func (acl TokenACL) CheckKeyPermission(key string, needWrite bool) bool {
 		}
 	}
 	return false
+}
+
+// grantsSecrets checks if this prefix pattern explicitly grants access to secrets.
+// A prefix grants secrets access if it contains "secrets" as a path segment.
+// Examples:
+//   - "secrets/*" → true (covers secrets/)
+//   - "app/secrets/*" → true (covers app/secrets/)
+//   - "*" → false (wildcard doesn't grant secrets)
+//   - "app/*" → false (doesn't explicitly include secrets)
+func (pp prefixPerm) grantsSecrets() bool {
+	// remove trailing * for pattern matching and check if the path is a secret path
+	basePrefix := strings.TrimSuffix(pp.prefix, "*")
+	return store.IsSecret(basePrefix)
 }
 
 // UserCanWrite returns true if user has any write permission.

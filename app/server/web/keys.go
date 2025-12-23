@@ -20,7 +20,7 @@ import (
 
 // handleKeyList renders the keys table partial (for HTMX).
 func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List(r.Context())
+	keys, err := h.store.List(r.Context(), enum.SecretsFilterAll)
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

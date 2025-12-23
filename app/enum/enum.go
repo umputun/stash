@@ -44,3 +44,12 @@ const (
 	themeLight
 	themeDark
 )
+
+//go:generate go run github.com/go-pkgz/enum@latest -type secretsFilter -lower
+type secretsFilter int
+
+const (
+	secretsFilterAll         secretsFilter = iota // enum:alias=all,
+	secretsFilterSecretsOnly                      // enum:alias=secrets,true
+	secretsFilterKeysOnly                         // enum:alias=keys,false
+)

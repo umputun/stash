@@ -5,11 +5,13 @@ import (
 	"strconv"
 
 	log "github.com/go-pkgz/lgr"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 // handleIndex renders the main page.
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
-	keys, err := h.store.List(r.Context())
+	keys, err := h.store.List(r.Context(), enum.SecretsFilterAll)
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

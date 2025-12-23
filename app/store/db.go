@@ -14,20 +14,44 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // postgresql driver
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite" // sqlite driver
+
+	"github.com/umputun/stash/app/enum"
 )
+
+// Encryptor defines the interface for encrypting and decrypting secret values.
+type Encryptor interface {
+	Encrypt(value []byte) ([]byte, error)
+	Decrypt(encrypted []byte) ([]byte, error)
+}
 
 // Store implements key-value storage using SQLite or PostgreSQL.
 type Store struct {
-	db     *sqlx.DB
-	dbType DBType
-	mu     RWLocker
+	db        *sqlx.DB
+	dbType    DBType
+	mu        RWLocker
+	encryptor Encryptor // for encrypting secrets (nil = secrets disabled)
+}
+
+// Option configures Store behavior.
+type Option func(*Store)
+
+// WithEncryptor enables secrets encryption with the given encryptor.
+func WithEncryptor(enc Encryptor) Option {
+	return func(s *Store) {
+		s.encryptor = enc
+	}
+}
+
+// SecretsEnabled returns true if the store is configured for secrets encryption.
+func (s *Store) SecretsEnabled() bool {
+	return s.encryptor != nil
 }
 
 // New creates a new Store with the given database URL.
 // Automatically detects database type from URL:
 // - postgres:// or postgresql:// -> PostgreSQL
 // - everything else -> SQLite
-func New(dbURL string) (*Store, error) {
+func New(dbURL string, opts ...Option) (*Store, error) {
 	dbType := detectDBType(dbURL)
 
 	var db *sqlx.DB
@@ -48,6 +72,11 @@ func New(dbURL string) (*Store, error) {
 	}
 
 	s := &Store{db: db, dbType: dbType, mu: locker}
+
+	// apply options
+	for _, opt := range opts {
+		opt(s)
+	}
 
 	if err := s.createSchema(); err != nil {
 		_ = db.Close()
@@ -238,9 +267,15 @@ func (s *Store) dbTypeName() string {
 
 // Get retrieves the value for the given key.
 // Returns ErrNotFound if the key does not exist.
+// Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
 func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// check if trying to access secret without key configured
+	if IsSecret(key) && !s.SecretsEnabled() {
+		return nil, ErrSecretsNotConfigured
+	}
 
 	var value []byte
 	query := s.adoptQuery("SELECT value FROM kv WHERE key = ?")
@@ -252,15 +287,31 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get key %q: %w", key, err)
 	}
+
+	// decrypt if this is a secret
+	if IsSecret(key) {
+		decrypted, err := s.encryptor.Decrypt(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt key %q: %w", key, err)
+		}
+		value = decrypted
+	}
+
 	log.Printf("[DEBUG] get key %q: %d bytes", key, len(value))
 	return value, nil
 }
 
 // GetWithFormat retrieves the value and format for the given key.
 // Returns ErrNotFound if the key does not exist.
+// Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
 func (s *Store) GetWithFormat(ctx context.Context, key string) ([]byte, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// check if trying to access secret without key configured
+	if IsSecret(key) && !s.SecretsEnabled() {
+		return nil, "", ErrSecretsNotConfigured
+	}
 
 	var result struct {
 		Value  []byte `db:"value"`
@@ -274,6 +325,16 @@ func (s *Store) GetWithFormat(ctx context.Context, key string) ([]byte, string, 
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get key %q: %w", key, err)
 	}
+
+	// decrypt if this is a secret
+	if IsSecret(key) {
+		decrypted, err := s.encryptor.Decrypt(result.Value)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to decrypt key %q: %w", key, err)
+		}
+		result.Value = decrypted
+	}
+
 	return result.Value, result.Format, nil
 }
 
@@ -292,25 +353,45 @@ func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 	if err != nil {
 		return KeyInfo{}, fmt.Errorf("failed to get info for key %q: %w", key, err)
 	}
+
+	// set secret flag based on key path
+	info.Secret = IsSecret(key)
+
 	return info, nil
 }
 
 // Set stores the value for the given key with the specified format.
 // Creates a new key or updates an existing one.
 // If format is empty, defaults to "text".
+// Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
 func (s *Store) Set(ctx context.Context, key string, value []byte, format string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// check if trying to store secret without key configured
+	if IsSecret(key) && !s.SecretsEnabled() {
+		return ErrSecretsNotConfigured
+	}
+
 	if format == "" {
 		format = "text"
+	}
+
+	// encrypt if this is a secret
+	storeValue := value
+	if IsSecret(key) {
+		encrypted, err := s.encryptor.Encrypt(value)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt key %q: %w", key, err)
+		}
+		storeValue = encrypted
 	}
 
 	now := time.Now().UTC()
 	query := s.adoptQuery(`
 		INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`)
-	if _, err := s.db.ExecContext(ctx, query, key, value, format, now, now); err != nil {
+	if _, err := s.db.ExecContext(ctx, query, key, storeValue, format, now, now); err != nil {
 		return fmt.Errorf("failed to set key %q: %w", key, err)
 	}
 	log.Printf("[DEBUG] set key %q: %d bytes, format=%s", key, len(value), format)
@@ -320,9 +401,15 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 // SetWithVersion stores the value only if the key's updated_at matches expectedVersion.
 // Returns *ConflictError with current state if the key was modified since expectedVersion.
 // If expectedVersion is zero, behaves like regular Set (no version check).
+// Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
 func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
 	if expectedVersion.IsZero() {
 		return s.Set(ctx, key, value, format)
+	}
+
+	// check if trying to store secret without key configured
+	if IsSecret(key) && !s.SecretsEnabled() {
+		return ErrSecretsNotConfigured
 	}
 
 	s.mu.Lock()
@@ -331,11 +418,22 @@ func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, fo
 	if format == "" {
 		format = "text"
 	}
+
+	// encrypt if this is a secret
+	storeValue := value
+	if IsSecret(key) {
+		encrypted, err := s.encryptor.Encrypt(value)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt key %q: %w", key, err)
+		}
+		storeValue = encrypted
+	}
+
 	now := time.Now().UTC()
 
 	// atomic update: only succeeds if version matches
 	query := s.adoptQuery(`UPDATE kv SET value = ?, format = ?, updated_at = ? WHERE key = ? AND updated_at = ?`)
-	result, err := s.db.ExecContext(ctx, query, value, format, now, key, expectedVersion)
+	result, err := s.db.ExecContext(ctx, query, storeValue, format, now, key, expectedVersion)
 	if err != nil {
 		return fmt.Errorf("failed to update key %q: %w", key, err)
 	}
@@ -404,8 +502,10 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// List returns metadata for all keys, ordered by updated_at descending.
-func (s *Store) List(ctx context.Context) ([]KeyInfo, error) {
+// List returns metadata for all keys, with optional filtering by secret flag.
+// SecretsFilterAll returns all keys, SecretsFilterSecretsOnly returns only secrets,
+// SecretsFilterKeysOnly returns only non-secrets.
+func (s *Store) List(ctx context.Context, filter enum.SecretsFilter) ([]KeyInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -414,8 +514,27 @@ func (s *Store) List(ctx context.Context) ([]KeyInfo, error) {
 	if err := s.db.SelectContext(ctx, &keys, query); err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
-	log.Printf("[DEBUG] list keys: %d keys", len(keys))
-	return keys, nil
+
+	// set secret flag and filter if needed
+	result := make([]KeyInfo, 0, len(keys))
+	for i := range keys {
+		keys[i].Secret = IsSecret(keys[i].Key)
+
+		switch filter {
+		case enum.SecretsFilterSecretsOnly:
+			if !keys[i].Secret {
+				continue // want secrets only, this is not a secret
+			}
+		case enum.SecretsFilterKeysOnly:
+			if keys[i].Secret {
+				continue // want non-secrets only, this is a secret
+			}
+		}
+		result = append(result, keys[i])
+	}
+
+	log.Printf("[DEBUG] list keys: %d keys (filter=%s)", len(result), filter)
+	return result, nil
 }
 
 // Close closes the database connection.

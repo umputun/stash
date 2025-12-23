@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/enum"
 )
 
 func TestCached_GetWithFormat(t *testing.T) {
@@ -148,7 +150,7 @@ func TestCached_List(t *testing.T) {
 		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
 		require.NoError(t, cached.Set(t.Context(), "key2", []byte("value2"), "json"))
 
-		keys, err := cached.List(t.Context())
+		keys, err := cached.List(t.Context(), enum.SecretsFilterAll)
 		require.NoError(t, err)
 		assert.Len(t, keys, 2)
 	})

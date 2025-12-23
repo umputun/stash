@@ -51,7 +51,8 @@ type KVStore interface {
 	Set(ctx context.Context, key string, value []byte, format string) error
 	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
 	Delete(ctx context.Context, key string) error
-	List(ctx context.Context) ([]store.KeyInfo, error)
+	List(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error)
+	SecretsEnabled() bool
 }
 
 // Validator defines the interface for format validation.

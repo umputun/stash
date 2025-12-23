@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/api/mocks"
 	"github.com/umputun/stash/app/store"
@@ -20,7 +21,8 @@ import (
 func TestHandler_HandleList(t *testing.T) {
 	t.Run("returns all keys", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) {
+			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
+				assert.Equal(t, enum.SecretsFilterAll, filter, "filter should be All for no filter")
 				return []store.KeyInfo{
 					{Key: "alpha", Size: 50},
 					{Key: "beta", Size: 100},
@@ -43,7 +45,7 @@ func TestHandler_HandleList(t *testing.T) {
 
 	t.Run("filters by prefix", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) {
+			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
 				return []store.KeyInfo{
 					{Key: "app/config", Size: 50},
 					{Key: "app/db", Size: 100},
@@ -67,9 +69,53 @@ func TestHandler_HandleList(t *testing.T) {
 		assert.NotContains(t, body, "other/key")
 	})
 
+	t.Run("filters secrets only", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
+				assert.Equal(t, enum.SecretsFilterSecretsOnly, filter, "filter should be SecretsOnly")
+				return []store.KeyInfo{
+					{Key: "secrets/db", Size: 50, Secret: true},
+				}, nil
+			},
+		}
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc: func() bool { return false },
+		}
+		h := newTestHandler(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/?filter=secrets", http.NoBody)
+		rec := httptest.NewRecorder()
+		h.handleList(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets/db")
+	})
+
+	t.Run("filters non-secrets only", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
+				assert.Equal(t, enum.SecretsFilterKeysOnly, filter, "filter should be KeysOnly")
+				return []store.KeyInfo{
+					{Key: "app/config", Size: 50, Secret: false},
+				}, nil
+			},
+		}
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc: func() bool { return false },
+		}
+		h := newTestHandler(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/?filter=keys", http.NoBody)
+		rec := httptest.NewRecorder()
+		h.handleList(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "app/config")
+	})
+
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) {
+			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
 				return nil, errors.New("db error")
 			},
 		}
@@ -153,6 +199,24 @@ func TestHandler_HandleGet(t *testing.T) {
 		h.handleGet(rec, req)
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("secrets not configured returns 400", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) {
+				return nil, "", store.ErrSecretsNotConfigured
+			},
+		}
+		auth := &mocks.AuthProviderMock{}
+		h := newTestHandler(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/secrets/db", http.NoBody)
+		req.SetPathValue("key", "secrets/db")
+		rec := httptest.NewRecorder()
+		h.handleGet(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
 	})
 }
 
@@ -255,6 +319,24 @@ func TestHandler_HandleSet(t *testing.T) {
 		h.handleSet(rec, req)
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	})
+
+	t.Run("secrets not configured returns 400", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) error {
+				return store.ErrSecretsNotConfigured
+			},
+		}
+		auth := &mocks.AuthProviderMock{}
+		h := New(st, auth, defaultFormatValidator(), nil)
+
+		req := httptest.NewRequest(http.MethodPut, "/kv/secrets/db", strings.NewReader("secret-value"))
+		req.SetPathValue("key", "secrets/db")
+		rec := httptest.NewRecorder()
+		h.handleSet(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
 	})
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/app/validator"
@@ -30,7 +31,7 @@ func TestServer_HandleGet(t *testing.T) {
 				return nil, "", store.ErrNotFound
 			}
 		},
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -81,7 +82,7 @@ func TestServer_HandleGet_ContentType(t *testing.T) {
 		t.Run(tc.format, func(t *testing.T) {
 			st := &mocks.KVStoreMock{
 				GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return []byte("value"), tc.format, nil },
-				ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+				ListFunc:          func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 			}
 			srv := newTestServer(t, st)
 
@@ -99,7 +100,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("set new key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -117,7 +118,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("update existing key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -135,7 +136,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("set key with slashes", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -153,7 +154,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("valid format via header", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -171,7 +172,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("valid format via query param", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -188,7 +189,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("invalid format defaults to text", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -206,7 +207,7 @@ func TestServer_HandleSet(t *testing.T) {
 	t.Run("empty format defaults to text", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -225,7 +226,7 @@ func TestServer_HandleDelete(t *testing.T) {
 	t.Run("delete existing key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			DeleteFunc: func(context.Context, string) error { return nil },
-			ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc:   func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -241,7 +242,7 @@ func TestServer_HandleDelete(t *testing.T) {
 	t.Run("delete nonexistent key returns 404", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			DeleteFunc: func(context.Context, string) error { return store.ErrNotFound },
-			ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+			ListFunc:   func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -257,7 +258,7 @@ func TestServer_HandleDelete(t *testing.T) {
 
 func TestServer_Ping(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -272,7 +273,7 @@ func TestServer_Ping(t *testing.T) {
 func TestServer_HandleGet_InternalError(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", errors.New("db error") },
-		ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc:          func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -288,7 +289,7 @@ func TestServer_HandleGet_InternalError(t *testing.T) {
 func TestServer_HandleSet_InternalError(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		SetFunc:  func(context.Context, string, []byte, string) error { return errors.New("db error") },
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -305,7 +306,7 @@ func TestServer_HandleSet_InternalError(t *testing.T) {
 func TestServer_HandleDelete_InternalError(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		DeleteFunc: func(context.Context, string) error { return errors.New("db error") },
-		ListFunc:   func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc:   func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
 
@@ -320,7 +321,7 @@ func TestServer_HandleDelete_InternalError(t *testing.T) {
 
 func TestServer_New_InvalidTokens(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	_, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 		Address:     ":8080",
@@ -340,7 +341,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 			return nil, "", store.ErrNotFound
 		},
 		SetFunc:  func(context.Context, string, []byte, string) error { return nil },
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 
 	t.Run("without base URL routes work at root", func(t *testing.T) {
@@ -432,7 +433,7 @@ func TestServer_AuthHotReload(t *testing.T) {
 	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: true,
@@ -502,7 +503,7 @@ func TestServer_AuthHotReload_Disabled(t *testing.T) {
 	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: false,
@@ -568,7 +569,7 @@ func TestServer_AuthHotReload_PermissionChange(t *testing.T) {
 	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: true,
@@ -620,7 +621,7 @@ func TestServer_AuthHotReload_TokenChange(t *testing.T) {
 	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: true,
@@ -675,7 +676,7 @@ func TestServer_HandleList(t *testing.T) {
 
 	t.Run("list all keys without auth", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -691,7 +692,7 @@ func TestServer_HandleList(t *testing.T) {
 
 	t.Run("list keys with prefix filter", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -707,7 +708,7 @@ func TestServer_HandleList(t *testing.T) {
 
 	t.Run("list empty keys", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return []store.KeyInfo{}, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return []store.KeyInfo{}, nil },
 		}
 		srv := newTestServer(t, st)
 
@@ -721,7 +722,9 @@ func TestServer_HandleList(t *testing.T) {
 
 	t.Run("list returns internal error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, errors.New("db error") },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) {
+				return nil, errors.New("db error")
+			},
 		}
 		srv := newTestServer(t, st)
 
@@ -753,7 +756,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
@@ -783,7 +786,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
@@ -812,7 +815,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
@@ -846,7 +849,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
@@ -881,7 +884,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
 
 		st := &mocks.KVStoreMock{
-			ListFunc: func(context.Context) ([]store.KeyInfo, error) { return testKeys, nil },
+			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
 		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
@@ -903,7 +906,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 
 func TestServer_LimitHelpers(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 
 	t.Run("defaults when not configured", func(t *testing.T) {

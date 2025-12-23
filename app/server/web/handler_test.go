@@ -494,7 +494,7 @@ func defaultValidatorMock() *mocks.ValidatorMock {
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		EnabledFunc:             func() bool { return false },
@@ -512,7 +512,7 @@ func newTestHandler(t *testing.T) *Handler {
 func newTestHandlerWithBaseURL(t *testing.T, baseURL string) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	auth := &mocks.AuthProviderMock{
 		EnabledFunc:             func() bool { return false },
@@ -552,7 +552,7 @@ func TestHandler_GetAuthor(t *testing.T) {
 func newTestHandlerWithAuth(t *testing.T, auth AuthProvider) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc: func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	h, err := New(st, auth, defaultValidatorMock(), nil, Config{})
 	require.NoError(t, err)
@@ -563,7 +563,7 @@ func newTestHandlerWithAuth(t *testing.T, auth AuthProvider) *Handler {
 func newTestHandlerWithGit(t *testing.T, gitSvc GitService) *Handler {
 	t.Helper()
 	st := &mocks.KVStoreMock{
-		ListFunc:          func(context.Context) ([]store.KeyInfo, error) { return nil, nil },
+		ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
 		SetFunc:           func(_ context.Context, key string, value []byte, format string) error { return nil },
 	}

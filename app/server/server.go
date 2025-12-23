@@ -15,6 +15,7 @@ import (
 	"github.com/go-pkgz/rest"
 	"github.com/go-pkgz/routegroup"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/api"
 	"github.com/umputun/stash/app/server/web"
@@ -45,7 +46,8 @@ type KVStore interface {
 	Set(ctx context.Context, key string, value []byte, format string) error
 	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
 	Delete(ctx context.Context, key string) error
-	List(ctx context.Context) ([]store.KeyInfo, error)
+	List(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error)
+	SecretsEnabled() bool
 }
 
 // GitService defines the interface for git operations.

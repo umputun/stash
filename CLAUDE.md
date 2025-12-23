@@ -16,9 +16,10 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `templates/` - Embedded HTML templates (base, index, login, partials)
   - `mocks/` - Generated mocks (moq)
 - **app/store/** - Database storage layer (SQLite/PostgreSQL)
-  - `store.go` - Interface, types (KeyInfo), errors
-  - `sqlite.go` - Unified Store with SQLite and PostgreSQL support
+  - `store.go` - Interface, types (KeyInfo with Secret field), errors
+  - `db.go` - Unified Store with SQLite and PostgreSQL support
   - `cached.go` - Loading cache wrapper using lcw
+  - `crypto.go` - Secrets encryption (NaCl secretbox + Argon2id)
 - **app/git/** - Git versioning for key-value storage
   - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
   - `git_test.go` - Unit tests
@@ -33,6 +34,7 @@ The project uses `github.com/go-pkgz/enum` for type-safe enums defined in `app/e
 - **Theme**: system, light, dark
 - **Permission**: none, r, w, rw
 - **DbType**: sqlite, postgres
+- **SecretsFilter**: all, secrets, keys (for API list filtering)
 
 Enums are generated with `//go:generate` and support String(), MarshalText/UnmarshalText.
 
@@ -44,6 +46,7 @@ Enums are generated with `//go:generate` and support String(), MarshalText/Unmar
 - **Database**: `github.com/jmoiron/sqlx`, `modernc.org/sqlite`, `github.com/jackc/pgx/v5`
 - **Git**: `github.com/go-git/go-git/v5`
 - **Cache**: `github.com/go-pkgz/lcw/v2`
+- **Crypto**: `golang.org/x/crypto` (argon2, nacl/secretbox)
 - **File watching**: `github.com/fsnotify/fsnotify`
 - **Testing**: `github.com/stretchr/testify`
 - **Enums**: `github.com/go-pkgz/enum`
@@ -164,6 +167,9 @@ POST   /logout                   # clear session, redirect to login
 - Auth hot-reload requires `--auth.hot-reload` flag to enable
 - Web handlers check permissions server-side (not just UI conditions)
 - Cache: optional loading cache wrapper, populated on reads, invalidated on writes
+- Secrets: path-based detection (keys with "secrets" as path segment), NaCl secretbox + Argon2id
+- Secrets permissions: explicit grant required (wildcards don't grant secrets), prefixPerm.grantsSecrets()
+- Secrets API: returns 400 if secret path but --secrets.key not configured
 - Changelog: CHANGELOG.md (uppercase) in project root, uses Keep a Changelog format
 - Keep it simple - no over-engineering
 

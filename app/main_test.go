@@ -1478,3 +1478,292 @@ func TestIntegration_SDKClient_WithAuth(t *testing.T) {
 
 	opts.Auth.File = ""
 }
+
+func TestIntegration_WithSecrets(t *testing.T) {
+	// setup options with secrets key
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18496"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	opts.Secrets.Key = "test-secrets-key-at-least-16"
+
+	// start server in background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	// wait for server to start
+	waitForServer(t, "http://127.0.0.1:18496/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("secret path stores encrypted value", func(t *testing.T) {
+		secretValue := "super-secret-password-123"
+
+		// put secret value
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18496/kv/secrets/db/password", bytes.NewBufferString(secretValue))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// get secret value - should return decrypted value
+		resp, err = client.Get("http://127.0.0.1:18496/kv/secrets/db/password")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, secretValue, string(body))
+	})
+
+	t.Run("regular path stores plaintext value", func(t *testing.T) {
+		regularValue := "regular-config-value"
+
+		// put regular value
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18496/kv/config/db", bytes.NewBufferString(regularValue))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// get regular value
+		resp, err = client.Get("http://127.0.0.1:18496/kv/config/db")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, regularValue, string(body))
+	})
+
+	t.Run("list shows secret flag correctly", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18496/kv/")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+
+		// verify response contains both keys with correct secret flags
+		assert.Contains(t, string(body), `"secrets/db/password"`)
+		assert.Contains(t, string(body), `"config/db"`)
+		assert.Contains(t, string(body), `"secret":true`)
+		assert.Contains(t, string(body), `"secret":false`)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Secrets.Key = ""
+}
+
+func TestIntegration_SecretsWithAuth(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18500"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Secrets.Key = "test-secrets-key-at-least-16"
+
+	// create auth config - wildcard does NOT grant secrets, need explicit prefix
+	authContent := `tokens:
+  - token: "wildcard-token"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - token: "secrets-token"
+    permissions:
+      - prefix: "secrets/*"
+        access: rw
+      - prefix: "*"
+        access: r
+  - token: "app-secrets-token"
+    permissions:
+      - prefix: "app/secrets/*"
+        access: rw
+      - prefix: "app/*"
+        access: r
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+	opts.Auth.LoginTTL = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18500/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// helper to make authorized request
+	doRequest := func(method, url, token string, body string) (*http.Response, error) {
+		var bodyReader io.Reader
+		if body != "" {
+			bodyReader = bytes.NewBufferString(body)
+		} else {
+			bodyReader = http.NoBody
+		}
+		req, err := http.NewRequest(method, url, bodyReader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return client.Do(req)
+	}
+
+	t.Run("wildcard token cannot write to secrets", func(t *testing.T) {
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/secrets/db/password", "wildcard-token", "secret-value")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("wildcard token cannot read secrets", func(t *testing.T) {
+		// first, create a secret with the secrets-token
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/secrets/test", "secrets-token", "test-value")
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// wildcard token cannot read it
+		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/secrets/test", "wildcard-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("secrets-token can write and read secrets", func(t *testing.T) {
+		// write
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/secrets/db/conn", "secrets-token", "postgres://localhost")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// read
+		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/secrets/db/conn", "secrets-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "postgres://localhost", string(body))
+	})
+
+	t.Run("app-secrets-token can access app/secrets/* but not secrets/*", func(t *testing.T) {
+		// can write to app/secrets/*
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/app/secrets/apikey", "app-secrets-token", "my-api-key")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// can read from app/secrets/*
+		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/app/secrets/apikey", "app-secrets-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// cannot access secrets/* (different path)
+		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/secrets/db/conn", "app-secrets-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	})
+
+	t.Run("wildcard token can access regular keys", func(t *testing.T) {
+		// write
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/config/db", "wildcard-token", "config-value")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// read
+		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/config/db", "wildcard-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Auth.File = ""
+	opts.Secrets.Key = ""
+}
+
+func TestIntegration_SecretsNotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18501"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	opts.Secrets.Key = "" // secrets NOT configured
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18501/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("write to secrets path returns 400", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18501/kv/secrets/db/password", bytes.NewBufferString("secret-value"))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("read from secrets path returns 400", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18501/kv/secrets/db/password")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+
+	t.Run("regular paths work normally", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18501/kv/config/db", bytes.NewBufferString("config-value"))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+}

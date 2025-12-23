@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -29,8 +30,11 @@ import (
 //			GetWithFormatFunc: func(ctx context.Context, key string) ([]byte, string, error) {
 //				panic("mock out the GetWithFormat method")
 //			},
-//			ListFunc: func(ctx context.Context) ([]store.KeyInfo, error) {
+//			ListFunc: func(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
 //				panic("mock out the List method")
+//			},
+//			SecretsEnabledFunc: func() bool {
+//				panic("mock out the SecretsEnabled method")
 //			},
 //			SetFunc: func(ctx context.Context, key string, value []byte, format string) error {
 //				panic("mock out the Set method")
@@ -58,7 +62,10 @@ type KVStoreMock struct {
 	GetWithFormatFunc func(ctx context.Context, key string) ([]byte, string, error)
 
 	// ListFunc mocks the List method.
-	ListFunc func(ctx context.Context) ([]store.KeyInfo, error)
+	ListFunc func(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error)
+
+	// SecretsEnabledFunc mocks the SecretsEnabled method.
+	SecretsEnabledFunc func() bool
 
 	// SetFunc mocks the Set method.
 	SetFunc func(ctx context.Context, key string, value []byte, format string) error
@@ -100,6 +107,11 @@ type KVStoreMock struct {
 		List []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
+			// Filter is the filter argument value.
+			Filter enum.SecretsFilter
+		}
+		// SecretsEnabled holds details about calls to the SecretsEnabled method.
+		SecretsEnabled []struct {
 		}
 		// Set holds details about calls to the Set method.
 		Set []struct {
@@ -131,6 +143,7 @@ type KVStoreMock struct {
 	lockGetInfo        sync.RWMutex
 	lockGetWithFormat  sync.RWMutex
 	lockList           sync.RWMutex
+	lockSecretsEnabled sync.RWMutex
 	lockSet            sync.RWMutex
 	lockSetWithVersion sync.RWMutex
 }
@@ -280,19 +293,21 @@ func (mock *KVStoreMock) GetWithFormatCalls() []struct {
 }
 
 // List calls ListFunc.
-func (mock *KVStoreMock) List(ctx context.Context) ([]store.KeyInfo, error) {
+func (mock *KVStoreMock) List(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
 	if mock.ListFunc == nil {
 		panic("KVStoreMock.ListFunc: method is nil but KVStore.List was just called")
 	}
 	callInfo := struct {
-		Ctx context.Context
+		Ctx    context.Context
+		Filter enum.SecretsFilter
 	}{
-		Ctx: ctx,
+		Ctx:    ctx,
+		Filter: filter,
 	}
 	mock.lockList.Lock()
 	mock.calls.List = append(mock.calls.List, callInfo)
 	mock.lockList.Unlock()
-	return mock.ListFunc(ctx)
+	return mock.ListFunc(ctx, filter)
 }
 
 // ListCalls gets all the calls that were made to List.
@@ -300,14 +315,43 @@ func (mock *KVStoreMock) List(ctx context.Context) ([]store.KeyInfo, error) {
 //
 //	len(mockedKVStore.ListCalls())
 func (mock *KVStoreMock) ListCalls() []struct {
-	Ctx context.Context
+	Ctx    context.Context
+	Filter enum.SecretsFilter
 } {
 	var calls []struct {
-		Ctx context.Context
+		Ctx    context.Context
+		Filter enum.SecretsFilter
 	}
 	mock.lockList.RLock()
 	calls = mock.calls.List
 	mock.lockList.RUnlock()
+	return calls
+}
+
+// SecretsEnabled calls SecretsEnabledFunc.
+func (mock *KVStoreMock) SecretsEnabled() bool {
+	if mock.SecretsEnabledFunc == nil {
+		panic("KVStoreMock.SecretsEnabledFunc: method is nil but KVStore.SecretsEnabled was just called")
+	}
+	callInfo := struct {
+	}{}
+	mock.lockSecretsEnabled.Lock()
+	mock.calls.SecretsEnabled = append(mock.calls.SecretsEnabled, callInfo)
+	mock.lockSecretsEnabled.Unlock()
+	return mock.SecretsEnabledFunc()
+}
+
+// SecretsEnabledCalls gets all the calls that were made to SecretsEnabled.
+// Check the length with:
+//
+//	len(mockedKVStore.SecretsEnabledCalls())
+func (mock *KVStoreMock) SecretsEnabledCalls() []struct {
+} {
+	var calls []struct {
+	}
+	mock.lockSecretsEnabled.RLock()
+	calls = mock.calls.SecretsEnabled
+	mock.lockSecretsEnabled.RUnlock()
 	return calls
 }
 

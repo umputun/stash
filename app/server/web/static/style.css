@@ -286,6 +286,13 @@ tr.clickable-row {
     color: var(--color-text);
 }
 
+.lock-icon {
+    vertical-align: middle;
+    margin-right: 4px;
+    color: var(--color-accent);
+    flex-shrink: 0;
+}
+
 .size-cell, .date-cell {
     white-space: nowrap;
     color: var(--color-text-muted);
