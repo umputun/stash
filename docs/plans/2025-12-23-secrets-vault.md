@@ -33,7 +33,7 @@ Path-based approach: `secrets` in path = encrypted.
 4. **Encryption:** NaCl secretbox + Argon2id (same as spot)
 5. **Key management:** `--secrets.key` flag or `STASH_SECRETS_KEY` env
 6. **Auth enforcement:** Secrets paths require auth; if no auth configured, secrets disabled
-7. **Permissions:** Standard prefix patterns work naturally (e.g., `app/secrets/*`)
+7. **Permissions:** Secrets require explicit grant - `app/*` does NOT include `app/secrets/*`
 8. **UI:** Lock icon indicator, filter toggle (All/Keys/Secrets)
 
 ## Secret Detection
@@ -168,11 +168,17 @@ DELETE /kv/app/secrets/db    → requires auth (it's a secret path)
 
 ### Iteration 5: Auth Integration
 
-- [ ] Verify permission checking works for secret paths
-  - `app/secrets/*` matches `app/secrets/db`, `app/secrets/foo/bar`
-  - Standard prefix matching, no special logic needed
+- [ ] Update permission checking in `app/server/auth.go`
+  - Secret paths require permission prefix containing "secrets"
+  - `app/*` does NOT match `app/secrets/foo` (no implicit secrets access)
+  - `app/secrets/*` DOES match `app/secrets/foo`
+  - Even `*` wildcard does NOT grant secrets access
 - [ ] Ensure secrets paths always require auth even if auth is optional for regular keys
 - [ ] **Add tests for secrets permission patterns**
+  - Test `app/*` does not grant `app/secrets/db` access
+  - Test `app/secrets/*` grants `app/secrets/db` access
+  - Test `*` does not grant secrets access
+  - Test `*/secrets/*` grants all secrets access
 - [ ] **Run tests - must pass before iteration 6**
 
 ### Iteration 6: Web UI
@@ -221,6 +227,22 @@ Same as spot:
 4. Encrypt with NaCl secretbox
 5. Store as base64(nonce || salt || ciphertext)
 
+### Permission Model - Secrets Require Explicit Grant
+
+**Key principle:** Secrets are NEVER implicitly granted. Regular wildcards do NOT match secret paths.
+
+- `app/*` matches `app/config`, `app/settings` but NOT `app/secrets/db`
+- To access secrets, must have explicit permission containing `secrets` in prefix
+- Even `*` (full wildcard) does NOT grant secrets access
+
+**Permission matching for secrets:**
+```go
+// if key is a secret path, permission prefix must also contain "secrets"
+if IsSecret(key) && !strings.Contains(permissionPrefix, "secrets") {
+    return false  // deny - no implicit secrets access
+}
+```
+
 ### Permission Examples
 
 ```yaml
@@ -229,33 +251,37 @@ users:
     password: "$2a$..."
     permissions:
       - prefix: "*"
-        access: rw              # all keys including secrets
+        access: rw              # all regular keys, NOT secrets
+      - prefix: "*/secrets/*"
+        access: rw              # explicitly grant all secrets
 
   - name: app-user
     password: "$2a$..."
     permissions:
       - prefix: "app/*"
-        access: rw              # app/* including app/secrets/*
+        access: rw              # app/config, app/settings - NOT app/secrets/*
+      - prefix: "app/secrets/*"
+        access: rw              # must explicitly grant app secrets
 
   - name: app-readonly
     password: "$2a$..."
     permissions:
       - prefix: "app/*"
-        access: r
-      - prefix: "app/secrets/*"
-        access: none            # explicitly deny secrets
+        access: r               # regular keys only, secrets denied by default
 
-  - name: secrets-only
+  - name: secrets-reader
     password: "$2a$..."
     permissions:
       - prefix: "*/secrets/*"
-        access: r               # read any secrets path
+        access: r               # read any secrets, no regular keys
 
 tokens:
   - token: "deploy-xxx"
     permissions:
+      - prefix: "deploy/*"
+        access: r               # regular deploy keys only
       - prefix: "deploy/secrets/*"
-        access: r
+        access: r               # explicitly grant deploy secrets
 ```
 
 ### Dependencies
