@@ -3,13 +3,13 @@
 ## Overview
 
 Add encrypted secrets support to stash - secure storage for sensitive configuration values. Secrets are:
-- Regular keys with `secret=true` flag
+- Keys with `secrets` as a path segment (e.g., `secrets/db/pass`, `app/secrets/key`)
 - Encrypted at rest using NaCl secretbox + Argon2id key derivation
 - Require mandatory authentication (no anonymous access)
-- Use same `/kv/*` API with secret flag
-- Controlled by `secrets/*` permission prefixes in auth.yml
+- Use same `/kv/*` API - encryption is automatic based on path
+- Permissions use standard prefix patterns (e.g., `app/secrets/*`)
 
-Unified approach: same API, same table, per-key encryption flag.
+Path-based approach: `secrets` in path = encrypted.
 
 ## Context
 
@@ -19,47 +19,71 @@ Unified approach: same API, same table, per-key encryption flag.
 - SQLite/PostgreSQL support
 
 **Stash components affected:**
-- `app/store/` - add encryption, secret flag to existing store
-- `app/server/handlers.go` - check secret flag, enforce auth
+- `app/store/` - add encryption, detect secrets by path
+- `app/server/handlers.go` - enforce auth for secrets paths
 - `app/server/web.go` - UI changes for secrets
 - `app/server/templates/` - lock icons, toggle filter
 - `app/main.go` - CLI flag for secrets key
 
 ## Design Decisions
 
-1. **Unified storage:** Same `kv` table with `secret` boolean column
-2. **Same API:** `/kv/*` endpoints, `?secret=true` query param to mark as secret
-3. **Encryption:** NaCl secretbox + Argon2id (same as spot)
-4. **Key management:** `--secrets.key` flag or `STASH_SECRETS_KEY` env
-5. **Auth enforcement:** Secrets require auth; if no auth configured, secrets feature disabled
-6. **Permissions:** `secrets/*` prefix patterns in auth.yml for secret keys
-7. **UI:** Lock icon indicator, filter toggle (All/Keys/Secrets)
+1. **Path-based detection:** Key contains `/secrets/` or starts with `secrets/` → encrypted
+2. **Same API:** `/kv/*` endpoints, encryption automatic based on path
+3. **Same table:** No schema change needed, just encrypt value before storage
+4. **Encryption:** NaCl secretbox + Argon2id (same as spot)
+5. **Key management:** `--secrets.key` flag or `STASH_SECRETS_KEY` env
+6. **Auth enforcement:** Secrets paths require auth; if no auth configured, secrets disabled
+7. **Permissions:** Standard prefix patterns work naturally (e.g., `app/secrets/*`)
+8. **UI:** Lock icon indicator, filter toggle (All/Keys/Secrets)
 
-## API Changes
+## Secret Detection
+
+A key is a secret if it contains `secrets` as a path segment:
 
 ```
-# Create/update regular key
-PUT /kv/{key...}                 → plaintext storage
+secrets/db/password        ✓ encrypted (starts with secrets/)
+app/secrets/db             ✓ encrypted (contains /secrets/)
+blah/secrets/config/foo    ✓ encrypted (contains /secrets/)
+app/secrets                ✓ encrypted (ends with /secrets)
+myapp/config               ✗ plaintext
+my-secrets/foo             ✗ plaintext (not a path segment)
+secretsabc/foo             ✗ plaintext (not a path segment)
+```
 
-# Create/update secret
-PUT /kv/{key...}?secret=true     → encrypted storage, requires auth
+**Detection function:**
+```go
+func IsSecret(key string) bool {
+    return key == "secrets" ||
+           strings.HasPrefix(key, "secrets/") ||
+           strings.Contains(key, "/secrets/") ||
+           strings.HasSuffix(key, "/secrets")
+}
+```
 
-# Get key (auto-detects if secret)
-GET /kv/{key...}                 → decrypts if secret, requires auth for secrets
+## API Behavior
 
-# List keys
-GET /kv/?secrets=true            → only secrets
-GET /kv/?secrets=false           → only regular keys
-GET /kv/                         → all keys (default)
+```
+# Create/update - encryption automatic based on path
+PUT /kv/app/config           → plaintext storage
+PUT /kv/app/secrets/db       → encrypted storage, requires auth
 
-# Delete (same for both)
-DELETE /kv/{key...}              → requires auth if secret
+# Get - decryption automatic based on path
+GET /kv/app/config           → returns plaintext
+GET /kv/app/secrets/db       → decrypts, requires auth
+
+# List
+GET /kv/                     → all keys
+GET /kv/?secrets=true        → only secret keys
+GET /kv/?secrets=false       → only regular keys
+
+# Delete
+DELETE /kv/app/secrets/db    → requires auth (it's a secret path)
 ```
 
 **KeyInfo response includes:**
 ```json
 {
-  "key": "db/password",
+  "key": "app/secrets/db",
   "size": 32,
   "format": "text",
   "secret": true,
@@ -86,32 +110,31 @@ DELETE /kv/{key...}              → requires auth if secret
 
 - [ ] Add encryption helpers to `app/store/`
   - Create `app/store/crypto.go` with encrypt/decrypt functions
+  - `IsSecret(key string) bool` - detect secret paths
   - deriveKey using Argon2id (same params as spot)
   - encrypt/decrypt using NaCl secretbox
 - [ ] Create `app/store/crypto_test.go`
+  - Test IsSecret() with various paths
   - Test encryption/decryption roundtrip
   - Test with various value sizes (empty, small, large)
   - Test wrong key returns error
 - [ ] **Run tests - must pass before iteration 2**
 
-### Iteration 2: Store Layer - Secret Flag
+### Iteration 2: Store Layer - Secret Handling
 
-- [ ] Add `secret` column to database schema
-  - SQLite: `ALTER TABLE kv ADD COLUMN secret INTEGER DEFAULT 0`
-  - PostgreSQL: `ALTER TABLE kv ADD COLUMN secret BOOLEAN DEFAULT FALSE`
-  - Update schema creation in `app/store/sqlite.go`
-- [ ] Update `KeyInfo` struct with `Secret bool` field
-- [ ] Update Store methods to handle secret flag
-  - `Set()` accepts secret flag, encrypts if true
-  - `Get()` decrypts if secret flag is set
-  - `GetInfo()` returns secret flag
-  - `List()` supports filtering by secret flag
 - [ ] Add `secretKey []byte` field to Store, set via option
+- [ ] Add `WithSecretKey(key []byte) Option` function
+- [ ] Update Store methods to handle secrets
+  - `Set()` encrypts if IsSecret(key) and secretKey configured
+  - `Get()` decrypts if IsSecret(key)
+  - `GetInfo()` sets Secret field based on IsSecret(key)
+  - `List()` supports filtering by secret flag
+- [ ] Add `Secret bool` field to KeyInfo struct
 - [ ] **Update `app/store/sqlite_test.go`**
-  - Test CRUD with secret=true
-  - Test CRUD with secret=false
+  - Test CRUD with secret paths
+  - Test CRUD with regular paths
   - Test list filtering
-  - Test secret requires key configured
+  - Test secret path without key configured returns error
 - [ ] **Run tests - must pass before iteration 3**
 
 ### Iteration 3: CLI and Configuration
@@ -120,35 +143,35 @@ DELETE /kv/{key...}              → requires auth if secret
   - `--secrets.key` / `STASH_SECRETS_KEY` env
   - Minimum key length validation (16 chars)
 - [ ] Pass secrets key to Store initialization
-- [ ] Add `SecretsEnabled() bool` method to check if secrets are available
+- [ ] Add `SecretsEnabled() bool` method to Store
 - [ ] **Add tests for key validation**
 - [ ] **Run tests - must pass before iteration 4**
 
 ### Iteration 4: API Handlers
 
 - [ ] Update `app/server/handlers.go`
-  - `handleSet`: check `?secret=true`, enforce auth for secrets
-  - `handleGet`: auto-detect secret, enforce auth, decrypt
-  - `handleDelete`: enforce auth for secrets
+  - `handleSet`: enforce auth for secret paths
+  - `handleGet`: enforce auth for secret paths
+  - `handleDelete`: enforce auth for secret paths
   - `handleList`: support `?secrets=true/false` filter
-- [ ] Add middleware/helper to check secrets permission
-  - Return 404 if secrets not configured (no key or no auth)
-  - Return 401 if not authenticated for secret access
-  - Return 403 if no `secrets/*` permission for the key
+- [ ] Add helper to check secrets access
+  - Return 400 if secret path but secrets not configured
+  - Return 401 if not authenticated for secret path
+  - Return 403 if no permission for secret path
 - [ ] **Update `app/server/handlers_test.go`**
-  - Test secret CRUD with auth
-  - Test secret access without auth (401)
-  - Test secret access without permission (403)
-  - Test secrets disabled returns 404
+  - Test secret path CRUD with auth
+  - Test secret path access without auth (401)
+  - Test secret path access without permission (403)
+  - Test secrets not configured returns 400
   - Test list filtering
 - [ ] **Run tests - must pass before iteration 5**
 
 ### Iteration 5: Auth Integration
 
-- [ ] Update permission checking for `secrets/*` prefix patterns
-  - Secret keys require matching `secrets/{key}` permission
-  - Example: key `db/password` with secret=true needs `secrets/db/*` or `secrets/*`
-- [ ] Update `app/server/auth.go` if needed
+- [ ] Verify permission checking works for secret paths
+  - `app/secrets/*` matches `app/secrets/db`, `app/secrets/foo/bar`
+  - Standard prefix matching, no special logic needed
+- [ ] Ensure secrets paths always require auth even if auth is optional for regular keys
 - [ ] **Add tests for secrets permission patterns**
 - [ ] **Run tests - must pass before iteration 6**
 
@@ -157,18 +180,19 @@ DELETE /kv/{key...}              → requires auth if secret
 - [ ] Add lock icon (🔒) indicator in templates
   - Update `partials/keys_table.html` - lock icon in key cell
   - Update `partials/keys_cards.html` - lock icon on card header
+  - Check `KeyInfo.Secret` to decide icon
 - [ ] Add filter toggle in header
   - Three states: All / Keys / Secrets
   - Only visible when secrets enabled AND user has any secrets permission
-  - HTMX: updates key list with filter param
+  - HTMX: updates key list with `?secrets=` filter param
   - Persists selection in session cookie
 - [ ] Update view modal for secrets
   - Masked value by default (••••••••)
   - "Reveal" button to show actual value
   - Visual indicator that it's a secret
-- [ ] Update create/edit form
-  - Checkbox: "Store as secret" (encrypted)
-  - Only visible when secrets enabled AND user has write permission for secrets
+- [ ] Create form handles secret paths naturally
+  - If user types `app/secrets/foo` as key name → becomes secret
+  - Show hint/warning when path contains "secrets"
 - [ ] **Add web handler tests**
 - [ ] **Run tests - must pass before iteration 7**
 
@@ -184,15 +208,9 @@ DELETE /kv/{key...}              → requires auth if secret
 
 ## Technical Details
 
-### Database Schema Change
+### No Schema Change Needed
 
-```sql
--- SQLite
-ALTER TABLE kv ADD COLUMN secret INTEGER DEFAULT 0;
-
--- PostgreSQL
-ALTER TABLE kv ADD COLUMN secret BOOLEAN DEFAULT FALSE;
-```
+Secrets are detected by path, values are encrypted before storage. Existing `value` column stores encrypted blob (base64).
 
 ### Encryption Format
 
@@ -203,7 +221,7 @@ Same as spot:
 4. Encrypt with NaCl secretbox
 5. Store as base64(nonce || salt || ciphertext)
 
-### Permission Model
+### Permission Examples
 
 ```yaml
 users:
@@ -211,22 +229,32 @@ users:
     password: "$2a$..."
     permissions:
       - prefix: "*"
-        access: rw
-      - prefix: "secrets/*"    # can access all secrets
-        access: rw
+        access: rw              # all keys including secrets
 
   - name: app-user
     password: "$2a$..."
     permissions:
       - prefix: "app/*"
-        access: rw
-      - prefix: "secrets/app/*"  # can only access app/* secrets
+        access: rw              # app/* including app/secrets/*
+
+  - name: app-readonly
+    password: "$2a$..."
+    permissions:
+      - prefix: "app/*"
         access: r
+      - prefix: "app/secrets/*"
+        access: none            # explicitly deny secrets
+
+  - name: secrets-only
+    password: "$2a$..."
+    permissions:
+      - prefix: "*/secrets/*"
+        access: r               # read any secrets path
 
 tokens:
   - token: "deploy-xxx"
     permissions:
-      - prefix: "secrets/deploy/*"
+      - prefix: "deploy/secrets/*"
         access: r
 ```
 
