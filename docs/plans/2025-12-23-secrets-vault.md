@@ -183,7 +183,14 @@ DELETE /kv/app/secrets/db    → requires auth (it's a secret path)
 
 ### Iteration 6: Web UI
 
-- [ ] Add lock icon (🔒) indicator in templates
+- [ ] Add lock icon indicator in templates
+  - SVG matching existing style (Feather/Lucide):
+    ```svg
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
+    ```
   - Update `partials/keys_table.html` - lock icon in key cell
   - Update `partials/keys_cards.html` - lock icon on card header
   - Check `KeyInfo.Secret` to decide icon
