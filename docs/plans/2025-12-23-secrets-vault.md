@@ -2,41 +2,75 @@
 
 ## Overview
 
-Add encrypted secrets storage to stash - a secure vault for sensitive configuration values. Unlike regular KV storage, secrets are:
+Add encrypted secrets support to stash - secure storage for sensitive configuration values. Secrets are:
+- Regular keys with `secret=true` flag
 - Encrypted at rest using NaCl secretbox + Argon2id key derivation
 - Require mandatory authentication (no anonymous access)
-- Accessible via separate `/secrets/*` API endpoints
-- Controlled by explicit `secrets/*` permission prefixes in auth.yml
+- Use same `/kv/*` API with secret flag
+- Controlled by `secrets/*` permission prefixes in auth.yml
 
-This is modeled after the spot project's `pkg/secrets` implementation.
+Unified approach: same API, same table, per-key encryption flag.
 
 ## Context
 
 **Reference implementation:** `../spot/pkg/secrets/spot.go`
 - NaCl secretbox encryption
 - Argon2id key derivation (memory-hard, resistant to GPU attacks)
-- SQLite/PostgreSQL support with parameterized queries
+- SQLite/PostgreSQL support
 
 **Stash components affected:**
-- `app/store/` - new secrets store
-- `app/server/` - handlers, routes, auth middleware
-- `app/server/templates/` - web UI for secrets
-- `app/main.go` - CLI flags for secrets key
-- `auth.yml` - secrets/* permission prefixes
+- `app/store/` - add encryption, secret flag to existing store
+- `app/server/handlers.go` - check secret flag, enforce auth
+- `app/server/web.go` - UI changes for secrets
+- `app/server/templates/` - lock icons, toggle filter
+- `app/main.go` - CLI flag for secrets key
 
 ## Design Decisions
 
-1. **Separate storage:** New `secrets` table, not mixed with `kv`
-2. **Encryption:** NaCl secretbox + Argon2id (same as spot)
-3. **Key management:** `--secrets.key` flag or `STASH_SECRETS_KEY` env
-4. **Auth enforcement:** Secrets disabled if auth not configured
-5. **Permissions:** Reuse auth.yml with `secrets/*` prefix patterns
-6. **Web UI:** Masked values with reveal button
+1. **Unified storage:** Same `kv` table with `secret` boolean column
+2. **Same API:** `/kv/*` endpoints, `?secret=true` query param to mark as secret
+3. **Encryption:** NaCl secretbox + Argon2id (same as spot)
+4. **Key management:** `--secrets.key` flag or `STASH_SECRETS_KEY` env
+5. **Auth enforcement:** Secrets require auth; if no auth configured, secrets feature disabled
+6. **Permissions:** `secrets/*` prefix patterns in auth.yml for secret keys
+7. **UI:** Lock icon indicator, filter toggle (All/Keys/Secrets)
+
+## API Changes
+
+```
+# Create/update regular key
+PUT /kv/{key...}                 → plaintext storage
+
+# Create/update secret
+PUT /kv/{key...}?secret=true     → encrypted storage, requires auth
+
+# Get key (auto-detects if secret)
+GET /kv/{key...}                 → decrypts if secret, requires auth for secrets
+
+# List keys
+GET /kv/?secrets=true            → only secrets
+GET /kv/?secrets=false           → only regular keys
+GET /kv/                         → all keys (default)
+
+# Delete (same for both)
+DELETE /kv/{key...}              → requires auth if secret
+```
+
+**KeyInfo response includes:**
+```json
+{
+  "key": "db/password",
+  "size": 32,
+  "format": "text",
+  "secret": true,
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
 
 ## Iterative Development Approach
 
 - Complete each step fully before moving to the next
-- Make small, focused changes
 - **CRITICAL: every iteration must end with adding/updating tests**
 - **CRITICAL: all tests must pass before starting next iteration**
 
@@ -48,84 +82,97 @@ This is modeled after the spot project's `pkg/secrets` implementation.
 
 ## Implementation Steps
 
-### Iteration 1: Secrets Store Layer
+### Iteration 1: Store Layer - Encryption
 
-- [ ] Create `app/store/secrets.go` with SecretsStore struct
-  - encrypt/decrypt helpers using NaCl secretbox
-  - deriveKey using Argon2id
-  - Get, Set, Delete, List methods
-  - Support for SQLite and PostgreSQL (reuse dbType detection)
-- [ ] Create `app/store/secrets_test.go`
+- [ ] Add encryption helpers to `app/store/`
+  - Create `app/store/crypto.go` with encrypt/decrypt functions
+  - deriveKey using Argon2id (same params as spot)
+  - encrypt/decrypt using NaCl secretbox
+- [ ] Create `app/store/crypto_test.go`
   - Test encryption/decryption roundtrip
-  - Test CRUD operations
-  - Test with empty/invalid keys
-  - Test list with prefix filter
+  - Test with various value sizes (empty, small, large)
+  - Test wrong key returns error
 - [ ] **Run tests - must pass before iteration 2**
 
-### Iteration 2: CLI and Configuration
+### Iteration 2: Store Layer - Secret Flag
 
-- [ ] Add secrets flags to `app/main.go`
-  - `--secrets.key` / `STASH_SECRETS_KEY` env
-  - Minimum key length validation (16 chars)
-- [ ] Initialize SecretsStore in server if key provided
-- [ ] Add SecretsStore field to server.Server
-- [ ] **Add tests for key validation**
+- [ ] Add `secret` column to database schema
+  - SQLite: `ALTER TABLE kv ADD COLUMN secret INTEGER DEFAULT 0`
+  - PostgreSQL: `ALTER TABLE kv ADD COLUMN secret BOOLEAN DEFAULT FALSE`
+  - Update schema creation in `app/store/sqlite.go`
+- [ ] Update `KeyInfo` struct with `Secret bool` field
+- [ ] Update Store methods to handle secret flag
+  - `Set()` accepts secret flag, encrypts if true
+  - `Get()` decrypts if secret flag is set
+  - `GetInfo()` returns secret flag
+  - `List()` supports filtering by secret flag
+- [ ] Add `secretKey []byte` field to Store, set via option
+- [ ] **Update `app/store/sqlite_test.go`**
+  - Test CRUD with secret=true
+  - Test CRUD with secret=false
+  - Test list filtering
+  - Test secret requires key configured
 - [ ] **Run tests - must pass before iteration 3**
 
-### Iteration 3: API Handlers
+### Iteration 3: CLI and Configuration
 
-- [ ] Create `app/server/secrets_handlers.go`
-  - GET /secrets/ - list keys (no values)
-  - GET /secrets/{key...} - get decrypted value
-  - PUT /secrets/{key...} - set (encrypts automatically)
-  - DELETE /secrets/{key...} - delete
-- [ ] Add middleware to enforce auth on all /secrets/* routes
-  - Return 404 if secrets not configured (no key or no auth)
-  - Return 401 if not authenticated
-  - Return 403 if no secrets/* permission
-- [ ] Register routes in `app/server/server.go`
-- [ ] **Create `app/server/secrets_handlers_test.go`**
-  - Test all CRUD endpoints
-  - Test auth enforcement (401/403/404 cases)
-  - Test permission checking for secrets/* prefixes
+- [ ] Add secrets key flag to `app/main.go`
+  - `--secrets.key` / `STASH_SECRETS_KEY` env
+  - Minimum key length validation (16 chars)
+- [ ] Pass secrets key to Store initialization
+- [ ] Add `SecretsEnabled() bool` method to check if secrets are available
+- [ ] **Add tests for key validation**
 - [ ] **Run tests - must pass before iteration 4**
 
-### Iteration 4: Auth Integration
+### Iteration 4: API Handlers
 
-- [ ] Update permission checking to support `secrets/*` prefixes
-- [ ] Update `app/server/auth.go` if needed for secrets prefix matching
-- [ ] Document auth.yml format for secrets permissions
-- [ ] **Add tests for secrets permission patterns**
+- [ ] Update `app/server/handlers.go`
+  - `handleSet`: check `?secret=true`, enforce auth for secrets
+  - `handleGet`: auto-detect secret, enforce auth, decrypt
+  - `handleDelete`: enforce auth for secrets
+  - `handleList`: support `?secrets=true/false` filter
+- [ ] Add middleware/helper to check secrets permission
+  - Return 404 if secrets not configured (no key or no auth)
+  - Return 401 if not authenticated for secret access
+  - Return 403 if no `secrets/*` permission for the key
+- [ ] **Update `app/server/handlers_test.go`**
+  - Test secret CRUD with auth
+  - Test secret access without auth (401)
+  - Test secret access without permission (403)
+  - Test secrets disabled returns 404
+  - Test list filtering
 - [ ] **Run tests - must pass before iteration 5**
 
-### Iteration 5: Web UI
+### Iteration 5: Auth Integration
 
-- [ ] Create `app/server/templates/partials/secrets_*.html` templates
-  - secrets_list.html - table of secrets (no values shown)
-  - secrets_view.html - masked value with reveal button
-  - secrets_form.html - create/edit form
-- [ ] Add secrets handlers in `app/server/web.go`
-  - GET /web/secrets - secrets page
-  - GET /web/secrets/keys - HTMX partial
-  - GET /web/secrets/view/{key...} - view modal
-  - GET /web/secrets/edit/{key...} - edit form
-  - POST /web/secrets - create
-  - PUT /web/secrets/{key...} - update
-  - DELETE /web/secrets/{key...} - delete
-- [ ] Add KV/Secrets toggle button in header
-  - Only visible when secrets enabled AND user has any secrets/* permission
-  - Toggle switches between /web/keys and /web/secrets/keys views
-  - Visual indicator showing current mode (e.g., icon change, active state)
-  - Persists selection in session/cookie like theme preference
-- [ ] Add lock icon (🔒) indicator for secrets in grid/cards view
-  - Display lock icon next to key name in table rows
-  - Display lock icon on card header
-  - Consistent styling across both view modes
-- [ ] Add CSS for masked values, reveal button, mode toggle, and lock icons
-- [ ] **Add web handler tests**
+- [ ] Update permission checking for `secrets/*` prefix patterns
+  - Secret keys require matching `secrets/{key}` permission
+  - Example: key `db/password` with secret=true needs `secrets/db/*` or `secrets/*`
+- [ ] Update `app/server/auth.go` if needed
+- [ ] **Add tests for secrets permission patterns**
 - [ ] **Run tests - must pass before iteration 6**
 
-### Iteration 6: Documentation & Cleanup
+### Iteration 6: Web UI
+
+- [ ] Add lock icon (🔒) indicator in templates
+  - Update `partials/keys_table.html` - lock icon in key cell
+  - Update `partials/keys_cards.html` - lock icon on card header
+- [ ] Add filter toggle in header
+  - Three states: All / Keys / Secrets
+  - Only visible when secrets enabled AND user has any secrets permission
+  - HTMX: updates key list with filter param
+  - Persists selection in session cookie
+- [ ] Update view modal for secrets
+  - Masked value by default (••••••••)
+  - "Reveal" button to show actual value
+  - Visual indicator that it's a secret
+- [ ] Update create/edit form
+  - Checkbox: "Store as secret" (encrypted)
+  - Only visible when secrets enabled AND user has write permission for secrets
+- [ ] **Add web handler tests**
+- [ ] **Run tests - must pass before iteration 7**
+
+### Iteration 7: Documentation & Cleanup
 
 - [ ] Update README.md with secrets feature documentation
 - [ ] Update CLAUDE.md with secrets-related info
@@ -137,15 +184,14 @@ This is modeled after the spot project's `pkg/secrets` implementation.
 
 ## Technical Details
 
-### Database Schema
+### Database Schema Change
 
 ```sql
-CREATE TABLE secrets (
-    skey VARCHAR(255) PRIMARY KEY,
-    sval TEXT NOT NULL,           -- base64-encoded encrypted value
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- SQLite
+ALTER TABLE kv ADD COLUMN secret INTEGER DEFAULT 0;
+
+-- PostgreSQL
+ALTER TABLE kv ADD COLUMN secret BOOLEAN DEFAULT FALSE;
 ```
 
 ### Encryption Format
@@ -157,16 +203,7 @@ Same as spot:
 4. Encrypt with NaCl secretbox
 5. Store as base64(nonce || salt || ciphertext)
 
-### API Responses
-
-```
-GET /secrets/        → [{"key": "db/password", "created_at": "...", "updated_at": "..."}]
-GET /secrets/db/pass → raw decrypted value (Content-Type based on stored format)
-PUT /secrets/db/pass → 200 OK
-DELETE /secrets/key  → 204 No Content
-```
-
-### Auth.yml Example
+### Permission Model
 
 ```yaml
 users:
@@ -175,19 +212,19 @@ users:
     permissions:
       - prefix: "*"
         access: rw
-      - prefix: "secrets/*"    # explicit secrets access
+      - prefix: "secrets/*"    # can access all secrets
         access: rw
 
-  - name: app-reader
+  - name: app-user
     password: "$2a$..."
     permissions:
       - prefix: "app/*"
-        access: r
-      - prefix: "secrets/app/*"  # can read only app secrets
+        access: rw
+      - prefix: "secrets/app/*"  # can only access app/* secrets
         access: r
 
 tokens:
-  - token: "deploy-token-xxx"
+  - token: "deploy-xxx"
     permissions:
       - prefix: "secrets/deploy/*"
         access: r
@@ -196,4 +233,4 @@ tokens:
 ### Dependencies
 
 Add to go.mod:
-- `golang.org/x/crypto` (for argon2, nacl/secretbox) - already in use via spot pattern
+- `golang.org/x/crypto` (for argon2, nacl/secretbox)
