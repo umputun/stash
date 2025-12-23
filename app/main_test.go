@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -1624,7 +1625,7 @@ func TestIntegration_SecretsWithAuth(t *testing.T) {
 		}
 		req, err := http.NewRequest(method, url, bodyReader)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("create request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		return client.Do(req)
