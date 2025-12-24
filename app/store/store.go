@@ -58,7 +58,7 @@ type KeyInfo struct {
 	Key       string    `json:"key" db:"key"`
 	Size      int       `json:"size" db:"size"`
 	Format    string    `json:"format" db:"format"`
-	Secret    bool      `json:"secret"`
+	Secret    bool      `json:"secret" db:"-"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }

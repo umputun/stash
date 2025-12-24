@@ -35,67 +35,9 @@ Web UI available at http://localhost:8080
 - Optional git versioning with full audit trail and point-in-time recovery
 - Optional in-memory cache for read operations
 
-## Secrets Vault
-
-Stash supports encrypted secrets storage. Keys containing `secrets` as a path segment are automatically encrypted at rest using NaCl secretbox with Argon2id key derivation.
-
-### Enabling Secrets
-
-```bash
-# set a secret key (minimum 16 characters)
-stash server --secrets.key="your-secret-key-min-16-chars"
-
-# or via environment variable
-export STASH_SECRETS_KEY="your-secret-key-min-16-chars"
-stash server
-```
-
-### Path-Based Detection
-
-Secrets are detected by path pattern. Any key with `secrets` as a path segment is encrypted:
-
-| Key Path | Encrypted? |
-|----------|------------|
-| `secrets/db/password` | ✓ Yes |
-| `app/secrets/api-key` | ✓ Yes |
-| `config/secrets` | ✓ Yes |
-| `app/config` | No (regular key) |
-| `my-secrets/key` | No (not a path segment) |
-
-### Explicit Permissions
-
-Secrets require explicit permission grants. Wildcards do NOT grant secrets access:
-
-```yaml
-# ❌ This does NOT grant access to app/secrets/*
-- prefix: "app/*"
-  access: rw
-
-# ✓ This grants access to app/secrets/*
-- prefix: "app/secrets/*"
-  access: rw
-
-# ❌ Wildcard does NOT grant secrets
-- prefix: "*"
-  access: rw
-
-# ✓ Explicitly grant all secrets
-- prefix: "secrets/*"
-  access: rw
-```
-
-### Web UI
-
-Secrets are displayed with a lock icon (🔒) in the key list. Use the filter toggle to view All keys, Secrets only, or regular Keys only. The API is identical - encryption is transparent.
-
-### API Behavior
-
-- **400 Bad Request**: Returned when accessing a secret path but `--secrets.key` is not configured
-- **403 Forbidden**: Returned when user/token lacks explicit secrets permission
-
 ## Security Note
 
-Regular keys (non-secrets) are stored in plaintext. For sensitive credentials, use the secrets feature described above, or consider:
+Regular keys are stored in plaintext. For sensitive credentials, use the [Secrets Vault](#secrets-vault) feature, or consider:
 
 - [HashiCorp Vault](https://www.vaultproject.io/) for enterprise secrets management
 - Client-side encryption before storing values
@@ -456,6 +398,64 @@ The restore command:
 2. Checks out the specified revision
 3. Clears all keys from the database
 4. Restores all keys from the git repository
+
+## Secrets Vault
+
+Optional encrypted storage for sensitive values. Keys containing `secrets` as a path segment are automatically encrypted at rest using NaCl secretbox with Argon2id key derivation.
+
+### Enabling Secrets
+
+```bash
+# set a secret key (minimum 16 characters)
+stash server --secrets.key="your-secret-key-min-16-chars"
+
+# or via environment variable
+export STASH_SECRETS_KEY="your-secret-key-min-16-chars"
+stash server
+```
+
+### Path-Based Detection
+
+Any key with `secrets` as a path segment is encrypted:
+
+| Key Path | Encrypted? |
+|----------|------------|
+| `secrets/db/password` | ✓ Yes |
+| `app/secrets/api-key` | ✓ Yes |
+| `config/secrets` | ✓ Yes |
+| `app/config` | No (regular key) |
+| `my-secrets/key` | No (not a path segment) |
+
+### Explicit Permissions
+
+Secrets require explicit permission grants. Wildcards do NOT grant secrets access:
+
+```yaml
+# ❌ This does NOT grant access to app/secrets/*
+- prefix: "app/*"
+  access: rw
+
+# ✓ This grants access to app/secrets/*
+- prefix: "app/secrets/*"
+  access: rw
+
+# ❌ Wildcard does NOT grant secrets
+- prefix: "*"
+  access: rw
+
+# ✓ Explicitly grant all secrets
+- prefix: "secrets/*"
+  access: rw
+```
+
+### Web UI
+
+Secrets are displayed with a lock icon (🔒) in the key list. Use the filter toggle to view All keys, Secrets only, or regular Keys only. The API is identical - encryption is transparent.
+
+### API Behavior
+
+- **400 Bad Request**: Returned when accessing a secret path but `--secrets.key` is not configured
+- **403 Forbidden**: Returned when user/token lacks explicit secrets permission
 
 ## API
 
