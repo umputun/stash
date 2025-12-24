@@ -94,9 +94,12 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	// parse secrets filter query param
 	filter := enum.SecretsFilterAll
 	if filterParam := r.URL.Query().Get("filter"); filterParam != "" {
-		if parsed, err := enum.ParseSecretsFilter(filterParam); err == nil {
-			filter = parsed
+		parsed, err := enum.ParseSecretsFilter(filterParam)
+		if err != nil {
+			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "invalid filter parameter")
+			return
 		}
+		filter = parsed
 	}
 
 	keys, err := h.store.List(r.Context(), filter)

@@ -1,5 +1,7 @@
 # Secrets Vault Implementation Plan
 
+**Status: Completed**
+
 ## Overview
 
 Add encrypted secrets support to stash - secure storage for sensitive configuration values. Secrets are:
@@ -193,6 +195,14 @@ DELETE /kv/app/secrets/db    → requires auth (it's a secret path)
   - `TestSecrets_CardViewLockIcon` - lock icon in card view
   - `TestSecrets_ScopedSecretsAccess` - scoped permission verification
 - [x] **All 29 e2e tests pass**
+
+### Iteration 9: Secrets Filter Toggle ✓
+
+- [x] Added secrets filter toggle buttons in web UI (All/Secrets/Keys)
+- [x] Added `?filter=secrets|keys` query parameter to API list endpoint
+- [x] Invalid filter returns 400 Bad Request (not silent fallback)
+- [x] Added E2E tests for filter toggle functionality
+- [x] **All tests pass**
 
 ## Technical Details
 

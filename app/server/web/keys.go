@@ -54,21 +54,25 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	pr := h.paginate(filteredKeys, page, h.pageSize)
 
 	data := templateData{
-		Keys:           pr.keys,
-		Search:         search,
-		Theme:          h.getTheme(r),
-		ViewMode:       params.viewMode,
-		SortMode:       params.sortMode,
-		BaseURL:        h.baseURL,
-		CanWrite:       h.auth.UserCanWrite(username),
-		Username:       username,
-		Page:           pr.page,
-		TotalPages:     pr.totalPages,
-		TotalKeys:      totalKeys,
-		HasPrev:        pr.hasPrev,
-		HasNext:        pr.hasNext,
-		SecretsFilter:  params.secretsFilter,
-		SecretsEnabled: h.store.SecretsEnabled(),
+		Keys:     pr.keys,
+		Search:   search,
+		Theme:    h.getTheme(r),
+		ViewMode: params.viewMode,
+		SortMode: params.sortMode,
+		BaseURL:  h.baseURL,
+		CanWrite: h.auth.UserCanWrite(username),
+		Username: username,
+		paginationData: paginationData{
+			Page:       pr.page,
+			TotalPages: pr.totalPages,
+			TotalKeys:  totalKeys,
+			HasPrev:    pr.hasPrev,
+			HasNext:    pr.hasNext,
+		},
+		secretsData: secretsData{
+			SecretsFilter:  params.secretsFilter,
+			SecretsEnabled: h.store.SecretsEnabled(),
+		},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "keys-table", data); err != nil {
@@ -112,6 +116,10 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 
 	value, format, err := h.store.GetWithFormat(r.Context(), key)
 	if err != nil {
+		if errors.Is(err, store.ErrSecretsNotConfigured) {
+			http.Error(w, "secrets not configured", http.StatusBadRequest)
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
@@ -144,7 +152,7 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		TextareaHeight: textareaHeight,
 		CanWrite:       h.auth.CheckUserPermission(username, key, true),
 		Username:       username,
-		GitEnabled:     h.git != nil,
+		historyData:    historyData{GitEnabled: h.git != nil},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "view", data); err != nil {
@@ -165,6 +173,10 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 
 	value, format, err := h.store.GetWithFormat(r.Context(), key)
 	if err != nil {
+		if errors.Is(err, store.ErrSecretsNotConfigured) {
+			http.Error(w, "secrets not configured", http.StatusBadRequest)
+			return
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
@@ -194,7 +206,7 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		TextareaHeight: textareaHeight,
 		CanWrite:       true,
 		Username:       username,
-		UpdatedAt:      updatedAt,
+		conflictData:   conflictData{UpdatedAt: updatedAt},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "form", data); err != nil {
@@ -248,6 +260,10 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	// check if key already exists
 	_, _, getErr := h.store.GetWithFormat(r.Context(), key)
 	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+		if errors.Is(getErr, store.ErrSecretsNotConfigured) {
+			http.Error(w, "secrets not configured", http.StatusBadRequest)
+			return
+		}
 		// unexpected store error
 		log.Printf("[ERROR] failed to check key existence: %v", getErr)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -307,21 +323,17 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+		if errors.Is(err, store.ErrSecretsNotConfigured) {
+			http.Error(w, "secrets not configured", http.StatusBadRequest)
+			return
+		}
 		log.Printf("[ERROR] failed to set key: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	log.Printf("[INFO] create %q (%d bytes, format=%s) by %s", key, len(value), format, h.getIdentityForLog(r))
-
-	// commit to git if enabled
-	if h.git != nil {
-		req := git.CommitRequest{Key: key, Value: value, Operation: "set", Format: format, Author: h.getAuthor(username)}
-		if err := h.git.Commit(req); err != nil {
-			log.Printf("[WARN] git commit failed for %s: %v", key, err)
-		}
-	}
-
+	h.commitToGit(key, value, "set", format, username)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -395,6 +407,10 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.SetWithVersion(r.Context(), key, value, format, expectedVersion); err != nil {
+		if errors.Is(err, store.ErrSecretsNotConfigured) {
+			http.Error(w, "secrets not configured", http.StatusBadRequest)
+			return
+		}
 		var conflictErr *store.ConflictError
 		if errors.As(err, &conflictErr) {
 			// conflict detected - render form with server's current value
@@ -403,22 +419,24 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("HX-Reswap", "innerHTML")
 			modalWidth, textareaHeight := h.calculateModalDimensions(valueStr)
 			data := templateData{
-				Key:             key,
-				Value:           valueStr,
-				Format:          format,
-				Formats:         h.validator.SupportedFormats(),
-				IsBinary:        isBinary,
-				IsNew:           false,
-				BaseURL:         h.baseURL,
-				ModalWidth:      modalWidth,
-				TextareaHeight:  textareaHeight,
-				CanWrite:        true,
-				Username:        username,
-				Conflict:        true,
-				ServerValue:     serverDisplayValue,
-				ServerFormat:    conflictErr.Info.CurrentFormat,
-				ServerUpdatedAt: conflictErr.Info.CurrentVersion.UnixNano(),
-				UpdatedAt:       formUpdatedAt,
+				Key:            key,
+				Value:          valueStr,
+				Format:         format,
+				Formats:        h.validator.SupportedFormats(),
+				IsBinary:       isBinary,
+				IsNew:          false,
+				BaseURL:        h.baseURL,
+				ModalWidth:     modalWidth,
+				TextareaHeight: textareaHeight,
+				CanWrite:       true,
+				Username:       username,
+				conflictData: conflictData{
+					Conflict:        true,
+					ServerValue:     serverDisplayValue,
+					ServerFormat:    conflictErr.Info.CurrentFormat,
+					ServerUpdatedAt: conflictErr.Info.CurrentVersion.UnixNano(),
+					UpdatedAt:       formUpdatedAt,
+				},
 			}
 			if tmplErr := h.tmpl.ExecuteTemplate(w, "form", data); tmplErr != nil {
 				log.Printf("[ERROR] failed to execute template: %v", tmplErr)
@@ -433,15 +451,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[INFO] update %q (%d bytes, format=%s) by %s", key, len(value), format, h.getIdentityForLog(r))
-
-	// commit to git if enabled
-	if h.git != nil {
-		req := git.CommitRequest{Key: key, Value: value, Operation: "set", Format: format, Author: h.getAuthor(username)}
-		if err := h.git.Commit(req); err != nil {
-			log.Printf("[WARN] git commit failed for %s: %v", key, err)
-		}
-	}
-
+	h.commitToGit(key, value, "set", format, username)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -503,13 +513,12 @@ func (h *Handler) handleKeyHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := templateData{
-		Key:        key,
-		History:    history,
-		GitEnabled: true,
-		Theme:      h.getTheme(r),
-		BaseURL:    h.baseURL,
-		CanWrite:   h.auth.CheckUserPermission(username, key, true),
-		Username:   username,
+		Key:         key,
+		Theme:       h.getTheme(r),
+		BaseURL:     h.baseURL,
+		CanWrite:    h.auth.CheckUserPermission(username, key, true),
+		Username:    username,
+		historyData: historyData{History: history, GitEnabled: true},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "history", data); err != nil {
@@ -567,8 +576,7 @@ func (h *Handler) handleKeyRevision(w http.ResponseWriter, r *http.Request) {
 		TextareaHeight: textareaHeight,
 		CanWrite:       h.auth.CheckUserPermission(username, key, true),
 		Username:       username,
-		GitEnabled:     true,
-		RevHash:        rev,
+		historyData:    historyData{GitEnabled: true, RevHash: rev},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "revision", data); err != nil {
@@ -609,19 +617,17 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 
 	// save to store
 	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+		if errors.Is(err, store.ErrSecretsNotConfigured) {
+			http.Error(w, "secrets not configured", http.StatusBadRequest)
+			return
+		}
 		log.Printf("[ERROR] failed to set key %s: %v", key, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	log.Printf("[INFO] restore %q to revision %s by %s", key, rev, h.getIdentityForLog(r))
-
-	// commit to git
-	req := git.CommitRequest{Key: key, Value: value, Operation: "restore", Format: format, Author: h.getAuthor(username)}
-	if err := h.git.Commit(req); err != nil {
-		log.Printf("[WARN] git commit failed for %s: %v", key, err)
-	}
-
+	h.commitToGit(key, value, "restore", format, username)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -694,9 +700,20 @@ func (h *Handler) renderValidationError(w http.ResponseWriter, p validationError
 		TextareaHeight: textareaHeight,
 		CanWrite:       true,
 		Username:       p.Username,
-		UpdatedAt:      p.UpdatedAt,
+		conflictData:   conflictData{UpdatedAt: p.UpdatedAt},
 	}
 	if err := h.tmpl.ExecuteTemplate(w, "form", data); err != nil {
 		log.Printf("[ERROR] failed to execute template: %v", err)
+	}
+}
+
+// commitToGit commits a key change to git if git is enabled.
+func (h *Handler) commitToGit(key string, value []byte, op, format, username string) {
+	if h.git == nil {
+		return
+	}
+	req := git.CommitRequest{Key: key, Value: value, Operation: op, Format: format, Author: h.getAuthor(username)}
+	if err := h.git.Commit(req); err != nil {
+		log.Printf("[WARN] git commit failed for %s: %v", key, err)
 	}
 }

@@ -14,17 +14,17 @@ import (
 	"github.com/umputun/stash/app/enum"
 )
 
-func TestNewSQLite(t *testing.T) {
+func TestNew(t *testing.T) {
 	t.Run("creates database successfully", func(t *testing.T) {
 		dbPath := filepath.Join(t.TempDir(), "test.db")
-		store, err := NewSQLite(dbPath)
+		store, err := New(dbPath)
 		require.NoError(t, err)
 		defer store.Close()
 		assert.NotNil(t, store.db)
 	})
 
 	t.Run("fails with invalid path", func(t *testing.T) {
-		_, err := NewSQLite("/nonexistent/dir/test.db")
+		_, err := New("/nonexistent/dir/test.db")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to connect")
 	})
@@ -238,7 +238,7 @@ func TestStore_GetInfo(t *testing.T) {
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := NewSQLite(dbPath)
+	store, err := New(dbPath)
 	require.NoError(t, err)
 	return store
 }
@@ -1079,6 +1079,18 @@ func TestStore_Secrets_WithoutEncryptor(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, []byte("value"), value)
 	})
+
+	t.Run("get info for secret returns error", func(t *testing.T) {
+		_, err := store.GetInfo(ctx, "secrets/test")
+		assert.ErrorIs(t, err, ErrSecretsNotConfigured)
+	})
+
+	t.Run("delete secret works without encryptor", func(t *testing.T) {
+		// delete doesn't require decryption, so it should work even without encryptor
+		// first verify the key doesn't exist
+		err := store.Delete(ctx, "secrets/nonexistent")
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
 }
 
 func TestStore_Secrets_ListFilter(t *testing.T) {
@@ -1154,5 +1166,32 @@ func TestStore_Secrets_SetWithVersion(t *testing.T) {
 
 		err := storeNoEnc.SetWithVersion(ctx, "secrets/test", []byte("v"), "text", time.Now())
 		assert.ErrorIs(t, err, ErrSecretsNotConfigured)
+	})
+
+	t.Run("conflict returns decrypted secret value", func(t *testing.T) {
+		secretValue := "super-secret-password"
+		err := store.Set(ctx, "secrets/conflict-key", []byte(secretValue), "text")
+		require.NoError(t, err)
+
+		// get initial version
+		info1, err := store.GetInfo(ctx, "secrets/conflict-key")
+		require.NoError(t, err)
+
+		// simulate concurrent update
+		time.Sleep(1100 * time.Millisecond) // ensure timestamp differs
+		concurrentValue := "concurrent-secret-value"
+		err = store.Set(ctx, "secrets/conflict-key", []byte(concurrentValue), "yaml")
+		require.NoError(t, err)
+
+		// try to update with old version - should get conflict
+		err = store.SetWithVersion(ctx, "secrets/conflict-key", []byte("my-attempt"), "json", info1.UpdatedAt)
+		require.ErrorIs(t, err, ErrConflict)
+
+		// verify ConflictError returns decrypted value, not encrypted ciphertext
+		var conflictErr *ConflictError
+		require.ErrorAs(t, err, &conflictErr)
+		assert.Equal(t, []byte(concurrentValue), conflictErr.Info.CurrentValue,
+			"conflict error should contain decrypted secret value, not encrypted ciphertext")
+		assert.Equal(t, "yaml", conflictErr.Info.CurrentFormat)
 	})
 }

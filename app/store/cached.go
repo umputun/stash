@@ -34,7 +34,17 @@ func NewCached(store Interface, maxKeys int) (*Cached, error) {
 }
 
 // Get retrieves the value for a key, using cache with load-through.
+// Secrets are never cached to avoid storing decrypted values in memory.
 func (c *Cached) Get(ctx context.Context, key string) ([]byte, error) {
+	// bypass cache for secrets - don't store decrypted values in memory
+	if IsSecret(key) {
+		val, err := c.store.Get(ctx, key)
+		if err != nil {
+			return nil, fmt.Errorf("store get: %w", err)
+		}
+		return val, nil
+	}
+
 	entry, err := c.cache.Get(key, func() (cacheEntry, error) {
 		val, format, loadErr := c.store.GetWithFormat(ctx, key)
 		if loadErr != nil {
@@ -49,7 +59,17 @@ func (c *Cached) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 // GetWithFormat retrieves the value and format for a key, using cache with load-through.
+// Secrets are never cached to avoid storing decrypted values in memory.
 func (c *Cached) GetWithFormat(ctx context.Context, key string) ([]byte, string, error) {
+	// bypass cache for secrets - don't store decrypted values in memory
+	if IsSecret(key) {
+		val, format, err := c.store.GetWithFormat(ctx, key)
+		if err != nil {
+			return nil, "", fmt.Errorf("store get with format: %w", err)
+		}
+		return val, format, nil
+	}
+
 	entry, err := c.cache.Get(key, func() (cacheEntry, error) {
 		val, format, loadErr := c.store.GetWithFormat(ctx, key)
 		if loadErr != nil {

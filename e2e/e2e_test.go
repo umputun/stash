@@ -202,7 +202,9 @@ func createKeyWithFormat(t *testing.T, page playwright.Page, key, value, format 
 func updateKey(t *testing.T, page playwright.Page, key, value string) {
 	t.Helper()
 	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, key))
-	require.NoError(t, row.Locator(".btn-edit").Click())
+	editBtn := row.Locator(".btn-edit")
+	waitVisible(t, editBtn) // ensure button is ready after HTMX swap
+	require.NoError(t, editBtn.Click())
 	modal := page.Locator("#main-modal.active")
 	waitVisible(t, modal)
 
@@ -373,7 +375,9 @@ func TestKV_EditKey(t *testing.T) {
 
 	// click edit
 	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, keyName))
-	require.NoError(t, row.Locator(".btn-edit").Click())
+	editBtn := row.Locator(".btn-edit")
+	waitVisible(t, editBtn) // ensure button is ready after HTMX swap
+	require.NoError(t, editBtn.Click())
 	modal := page.Locator("#main-modal.active")
 	waitVisible(t, modal)
 

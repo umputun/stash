@@ -207,3 +207,44 @@ func TestHandler_HandleSortToggle(t *testing.T) {
 		})
 	}
 }
+
+func TestHandler_HandleSecretsFilterToggle(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		SecretsEnabledFunc: func() bool { return true },
+	}
+	h := newTestHandlerWithStore(t, st)
+
+	tests := []struct {
+		name     string
+		current  string
+		expected string
+	}{
+		{name: "all to secrets", current: "all", expected: "secretsonly"},
+		{name: "secrets to keys", current: "secretsonly", expected: "keysonly"},
+		{name: "keys to all", current: "keysonly", expected: "all"},
+		{name: "no cookie to secrets", current: "", expected: "secretsonly"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/web/secrets-filter", http.NoBody)
+			if tc.current != "" {
+				req.AddCookie(&http.Cookie{Name: "secrets_filter", Value: tc.current})
+			}
+			rec := httptest.NewRecorder()
+			h.handleSecretsFilterToggle(rec, req)
+
+			assert.Equal(t, http.StatusOK, rec.Code)
+			var filterCookie *http.Cookie
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == "secrets_filter" {
+					filterCookie = c
+					break
+				}
+			}
+			require.NotNil(t, filterCookie, "secrets_filter cookie should be set")
+			assert.Equal(t, tc.expected, filterCookie.Value)
+		})
+	}
+}

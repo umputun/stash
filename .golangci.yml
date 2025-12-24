@@ -133,6 +133,10 @@ linters:
           - usestdlibvars
         path: _test\.go$
       - linters:
+          - gosec
+        path: e2e/
+        text: "G101: Potential hardcoded credentials"
+      - linters:
           - goconst
         text: "string `text` has"
       - linters:

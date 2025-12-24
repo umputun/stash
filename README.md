@@ -86,7 +86,7 @@ Secrets require explicit permission grants. Wildcards do NOT grant secrets acces
 
 ### Web UI
 
-Secrets are displayed with a lock icon (🔒) in the key list. The API is identical - encryption is transparent.
+Secrets are displayed with a lock icon (🔒) in the key list. Use the filter toggle to view All keys, Secrets only, or regular Keys only. The API is identical - encryption is transparent.
 
 ### API Behavior
 
@@ -503,14 +503,20 @@ curl http://localhost:8080/kv/
 
 # list keys with prefix filter
 curl "http://localhost:8080/kv/?prefix=app/config"
+
+# filter to secrets only (requires --secrets.key configured)
+curl "http://localhost:8080/kv/?filter=secrets"
+
+# filter to non-secrets only
+curl "http://localhost:8080/kv/?filter=keys"
 ```
 
 Returns JSON array of key metadata with status 200:
 
 ```json
 [
-  {"Key": "app/config/db", "Size": 128, "Format": "json", "CreatedAt": "...", "UpdatedAt": "..."},
-  {"Key": "app/config/redis", "Size": 64, "Format": "yaml", "CreatedAt": "...", "UpdatedAt": "..."}
+  {"key": "app/config/db", "size": 128, "format": "json", "secret": false, "created_at": "...", "updated_at": "..."},
+  {"key": "app/secrets/api-key", "size": 64, "format": "text", "secret": true, "created_at": "...", "updated_at": "..."}
 ]
 ```
 

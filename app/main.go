@@ -149,14 +149,11 @@ func runServer(ctx context.Context) error {
 
 	// configure secrets encryption if key is provided
 	var storeOpts []store.Option
-	if opts.Secrets.Key != "" {
-		if len(opts.Secrets.Key) < 16 {
-			return errors.New("secrets key must be at least 16 characters")
-		}
-		encryptor, encErr := store.NewCrypto([]byte(opts.Secrets.Key))
-		if encErr != nil {
-			return fmt.Errorf("failed to initialize secrets encryption: %w", encErr)
-		}
+	encryptor, encErr := initSecretsEncryptor(opts.Secrets.Key)
+	if encErr != nil {
+		return encErr
+	}
+	if encryptor != nil {
 		storeOpts = append(storeOpts, store.WithEncryptor(encryptor))
 		log.Printf("[INFO] secrets encryption enabled")
 	}
@@ -257,14 +254,11 @@ func runRestore(ctx context.Context) error {
 
 	// configure secrets encryption if key is provided
 	var storeOpts []store.Option
-	if opts.Secrets.Key != "" {
-		if len(opts.Secrets.Key) < 16 {
-			return errors.New("secrets key must be at least 16 characters")
-		}
-		encryptor, encErr := store.NewCrypto([]byte(opts.Secrets.Key))
-		if encErr != nil {
-			return fmt.Errorf("failed to initialize secrets encryption: %w", encErr)
-		}
+	encryptor, encErr := initSecretsEncryptor(opts.Secrets.Key)
+	if encErr != nil {
+		return encErr
+	}
+	if encryptor != nil {
 		storeOpts = append(storeOpts, store.WithEncryptor(encryptor))
 		log.Printf("[INFO] secrets encryption enabled")
 	}
@@ -301,6 +295,23 @@ func runRestore(ctx context.Context) error {
 	log.Printf("[INFO] restored %d keys from revision %s", restored, opts.RestoreCmd.Rev)
 	fmt.Printf("restored %d keys from revision %s\n", restored, opts.RestoreCmd.Rev)
 	return nil
+}
+
+// initSecretsEncryptor creates a secrets encryptor from the given key.
+// Returns nil, nil if key is empty (secrets disabled).
+// Returns error if key is too short.
+func initSecretsEncryptor(key string) (*store.Crypto, error) {
+	if key == "" {
+		return nil, nil //nolint:nilnil // nil encryptor is valid when secrets disabled
+	}
+	if len(key) < 16 {
+		return nil, errors.New("secrets key must be at least 16 characters")
+	}
+	enc, err := store.NewCrypto([]byte(key))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create secrets encryptor: %w", err)
+	}
+	return enc, nil
 }
 
 // validateBaseURL validates and normalizes the base URL.

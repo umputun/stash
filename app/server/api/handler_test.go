@@ -113,6 +113,19 @@ func TestHandler_HandleList(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "app/config")
 	})
 
+	t.Run("invalid filter parameter", func(t *testing.T) {
+		st := &mocks.KVStoreMock{}
+		auth := &mocks.AuthProviderMock{}
+		h := newTestHandler(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/?filter=invalid", http.NoBody)
+		rec := httptest.NewRecorder()
+		h.handleList(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "invalid filter parameter")
+	})
+
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {

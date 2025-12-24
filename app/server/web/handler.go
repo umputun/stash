@@ -235,8 +235,40 @@ type keyWithPermission struct {
 	CanWrite bool // user has write permission for this specific key
 }
 
+// conflictData holds conflict detection fields for optimistic locking.
+type conflictData struct {
+	UpdatedAt       int64  // unix timestamp when key was loaded (for optimistic locking)
+	Conflict        bool   // true when a conflict was detected on save
+	ServerValue     string // current server value (shown during conflict)
+	ServerFormat    string // current server format (shown during conflict)
+	ServerUpdatedAt int64  // server's updated_at timestamp (for retry after conflict)
+}
+
+// paginationData holds pagination state.
+type paginationData struct {
+	Page       int  // current page (1-based)
+	TotalPages int  // total number of pages
+	TotalKeys  int  // total keys after filtering (before pagination)
+	HasPrev    bool // has previous page
+	HasNext    bool // has next page
+}
+
+// secretsData holds secrets filter state.
+type secretsData struct {
+	SecretsFilter  enum.SecretsFilter // current filter mode (all/secrets/keys)
+	SecretsEnabled bool               // secrets feature enabled
+}
+
+// historyData holds git history state.
+type historyData struct {
+	GitEnabled bool               // git integration enabled
+	History    []git.HistoryEntry // commit history entries
+	RevHash    string             // specific revision hash being viewed
+}
+
 // templateData holds data passed to templates.
 type templateData struct {
+	// key display fields
 	Keys           []keyWithPermission
 	Key            string
 	Value          string
@@ -245,41 +277,32 @@ type templateData struct {
 	Formats        []string      // available format options
 	IsBinary       bool
 	IsNew          bool
-	Theme          enum.Theme
-	ViewMode       enum.ViewMode
-	SortMode       enum.SortMode
-	Search         string
-	Error          string
-	CanForce       bool // allow force submit despite error (for validation errors, not conflicts)
-	AuthEnabled    bool
-	BaseURL        string
+
+	// display settings
+	Theme    enum.Theme
+	ViewMode enum.ViewMode
+	SortMode enum.SortMode
+
+	// form state
+	Search   string
+	Error    string
+	CanForce bool // allow force submit despite error (for validation errors, not conflicts)
+
+	// auth and permissions
+	AuthEnabled bool
+	BaseURL     string
+	CanWrite    bool   // user has write permission (for showing edit controls)
+	Username    string // current logged-in username
+
+	// modal sizing
 	ModalWidth     int
 	TextareaHeight int
-	CanWrite       bool   // user has write permission (for showing edit controls)
-	Username       string // current logged-in username
 
-	// conflict detection fields
-	UpdatedAt       int64  // unix timestamp when key was loaded (for optimistic locking)
-	Conflict        bool   // true when a conflict was detected on save
-	ServerValue     string // current server value (shown during conflict)
-	ServerFormat    string // current server format (shown during conflict)
-	ServerUpdatedAt int64  // server's updated_at timestamp (for retry after conflict)
-
-	// pagination fields
-	Page       int  // current page (1-based)
-	TotalPages int  // total number of pages
-	TotalKeys  int  // total keys after filtering (before pagination)
-	HasPrev    bool // has previous page
-	HasNext    bool // has next page
-
-	// secrets filter fields
-	SecretsFilter  enum.SecretsFilter // current filter mode (all/secrets/keys)
-	SecretsEnabled bool               // secrets feature enabled
-
-	// history fields
-	GitEnabled bool               // git integration enabled
-	History    []git.HistoryEntry // commit history entries
-	RevHash    string             // specific revision hash being viewed
+	// embedded groups
+	conflictData
+	paginationData
+	secretsData
+	historyData
 }
 
 // getTheme returns the current theme from cookie, defaulting to system.

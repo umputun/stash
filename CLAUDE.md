@@ -57,6 +57,7 @@ Enums are generated with `//go:generate` and support String(), MarshalText/Unmar
 make build    # build binary
 make test     # run tests
 make lint     # run linter
+make e2e      # run e2e UI tests (acceptance testing)
 make run      # run with logging enabled
 ```
 
@@ -84,6 +85,10 @@ make build
 
 # with git enabled
 ./stash server --dbg --server.address=:18080 --db=/tmp/stash-test.db --git.enabled --git.path=/tmp/stash-git &
+
+# with secrets enabled (min 16 chars key)
+./stash server --dbg --server.address=:18080 --db=/tmp/stash-test.db \
+  --secrets.key="test-secret-key-min-16-chars" &
 
 # verify running (run after server start)
 sleep 2; curl -s http://localhost:18080/ping
@@ -124,6 +129,7 @@ POST   /web/keys/restore/{key...}     # restore key to revision (requires git)
 POST   /web/theme                     # toggle theme (light/dark)
 POST   /web/view-mode                 # toggle view mode (grid/cards)
 POST   /web/sort                      # cycle sort order
+POST   /web/secrets-filter            # cycle secrets filter (all/secrets/keys)
 ```
 
 ## Web UI Structure
@@ -170,6 +176,7 @@ POST   /logout                   # clear session, redirect to login
 - Secrets: path-based detection (keys with "secrets" as path segment), NaCl secretbox + Argon2id
 - Secrets permissions: explicit grant required (wildcards don't grant secrets), prefixPerm.grantsSecrets()
 - Secrets API: returns 400 if secret path but --secrets.key not configured
+- Secrets size: GetInfo returns encrypted storage size (larger than plaintext due to salt, nonce, auth tag)
 - Changelog: CHANGELOG.md (uppercase) in project root, uses Keep a Changelog format
 - Keep it simple - no over-engineering
 

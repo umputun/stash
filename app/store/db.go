@@ -92,11 +92,6 @@ func New(dbURL string, opts ...Option) (*Store, error) {
 	return s, nil
 }
 
-// NewSQLite creates a new SQLite store (backward compatibility).
-func NewSQLite(dbPath string) (*Store, error) {
-	return New(dbPath)
-}
-
 // detectDBType determines database type from URL.
 func detectDBType(url string) DBType {
 	lower := strings.ToLower(url)
@@ -340,9 +335,15 @@ func (s *Store) GetWithFormat(ctx context.Context, key string) ([]byte, string, 
 
 // GetInfo retrieves metadata for the given key without loading the value.
 // Returns ErrNotFound if the key does not exist.
+// Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
 func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// check if trying to access secret without key configured
+	if IsSecret(key) && !s.SecretsEnabled() {
+		return KeyInfo{}, ErrSecretsNotConfigured
+	}
 
 	var info KeyInfo
 	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv WHERE key = ?`)
@@ -468,9 +469,19 @@ func (s *Store) buildConflictError(ctx context.Context, key string, attemptedVer
 		return fmt.Errorf("failed to get current state for conflict: %w", err)
 	}
 
+	// decrypt value if this is a secret key
+	currentValue := result.Value
+	if IsSecret(key) && s.encryptor != nil {
+		if decrypted, decErr := s.encryptor.Decrypt(result.Value); decErr == nil {
+			currentValue = decrypted
+		} else {
+			log.Printf("[WARN] failed to decrypt secret value for conflict on key %q: %v", key, decErr)
+		}
+	}
+
 	return &ConflictError{
 		Info: ConflictInfo{
-			CurrentValue:     result.Value,
+			CurrentValue:     currentValue,
 			CurrentFormat:    result.Format,
 			CurrentVersion:   result.UpdatedAt,
 			AttemptedVersion: attemptedVersion,

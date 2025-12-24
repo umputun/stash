@@ -878,6 +878,124 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 	})
 }
 
+func TestHandler_SecretsNotConfigured(t *testing.T) {
+	// tests that handlers return 400 when operating on secret paths without secrets configured
+
+	t.Run("handleKeyView", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) {
+				return nil, "", store.ErrSecretsNotConfigured
+			},
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+		}
+		auth := &mocks.AuthProviderMock{CheckUserPermissionFunc: func(string, string, bool) bool { return true }}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/view/secrets/mykey", http.NoBody)
+		req.SetPathValue("key", "secrets/mykey")
+		rec := httptest.NewRecorder()
+		h.handleKeyView(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
+	})
+
+	t.Run("handleKeyEdit", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) {
+				return nil, "", store.ErrSecretsNotConfigured
+			},
+			GetInfoFunc:        func(context.Context, string) (store.KeyInfo, error) { return store.KeyInfo{}, nil },
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+		}
+		auth := &mocks.AuthProviderMock{CheckUserPermissionFunc: func(string, string, bool) bool { return true }}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/secrets/mykey", http.NoBody)
+		req.SetPathValue("key", "secrets/mykey")
+		rec := httptest.NewRecorder()
+		h.handleKeyEdit(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
+	})
+
+	t.Run("handleKeyCreate", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			SetFunc: func(context.Context, string, []byte, string) error {
+				return store.ErrSecretsNotConfigured
+			},
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(string, string, bool) bool { return true },
+			UserCanWriteFunc:        func(string) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		body := "key=secrets/mykey&value=secret-value&format=text"
+		req := httptest.NewRequest(http.MethodPost, "/web/keys", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.handleKeyCreate(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
+	})
+
+	t.Run("handleKeyUpdate", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error {
+				return store.ErrSecretsNotConfigured
+			},
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+		}
+		auth := &mocks.AuthProviderMock{CheckUserPermissionFunc: func(string, string, bool) bool { return true }}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		body := "value=new-secret&format=text"
+		req := httptest.NewRequest(http.MethodPut, "/web/keys/secrets/mykey", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("key", "secrets/mykey")
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
+	})
+
+	t.Run("handleKeyRestore", func(t *testing.T) {
+		gitSvc := &mocks.GitServiceMock{
+			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
+		}
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) error {
+				return store.ErrSecretsNotConfigured
+			},
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+		}
+		auth := &mocks.AuthProviderMock{CheckUserPermissionFunc: func(string, string, bool) bool { return true }}
+		h, err := New(st, auth, defaultValidatorMock(), gitSvc, Config{})
+		require.NoError(t, err)
+
+		body := "rev=abc123"
+		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/secrets/mykey", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.SetPathValue("key", "secrets/mykey")
+		rec := httptest.NewRecorder()
+		h.handleKeyRestore(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "secrets not configured")
+	})
+}
+
 // newTestHandlerWithStoreAndAuth creates a test handler with custom store and auth.
 func newTestHandlerWithStoreAndAuth(t *testing.T, st KVStore, auth AuthProvider) *Handler {
 	t.Helper()

@@ -34,21 +34,25 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	pr := h.paginate(filteredKeys, page, h.pageSize)
 
 	data := templateData{
-		Keys:           pr.keys,
-		Theme:          h.getTheme(r),
-		ViewMode:       h.getViewMode(r),
-		SortMode:       sortMode,
-		AuthEnabled:    h.auth.Enabled(),
-		BaseURL:        h.baseURL,
-		CanWrite:       h.auth.UserCanWrite(username),
-		Username:       username,
-		Page:           pr.page,
-		TotalPages:     pr.totalPages,
-		TotalKeys:      totalKeys,
-		HasPrev:        pr.hasPrev,
-		HasNext:        pr.hasNext,
-		SecretsFilter:  secretsFilter,
-		SecretsEnabled: h.store.SecretsEnabled(),
+		Keys:        pr.keys,
+		Theme:       h.getTheme(r),
+		ViewMode:    h.getViewMode(r),
+		SortMode:    sortMode,
+		AuthEnabled: h.auth.Enabled(),
+		BaseURL:     h.baseURL,
+		CanWrite:    h.auth.UserCanWrite(username),
+		Username:    username,
+		paginationData: paginationData{
+			Page:       pr.page,
+			TotalPages: pr.totalPages,
+			TotalKeys:  totalKeys,
+			HasPrev:    pr.hasPrev,
+			HasNext:    pr.hasNext,
+		},
+		secretsData: secretsData{
+			SecretsFilter:  secretsFilter,
+			SecretsEnabled: h.store.SecretsEnabled(),
+		},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "base.html", data); err != nil {

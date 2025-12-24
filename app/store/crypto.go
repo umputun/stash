@@ -127,8 +127,7 @@ func (c *Crypto) Decrypt(encrypted []byte) ([]byte, error) {
 	if !ok {
 		return nil, ErrDecryptionFailed
 	}
-
-	// return empty slice instead of nil for empty values
+	// normalize nil to empty slice for consistency
 	if plaintext == nil {
 		return []byte{}, nil
 	}

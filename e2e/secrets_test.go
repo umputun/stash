@@ -178,8 +178,9 @@ func TestSecrets_UserWithoutSecretsPermissionCannotSee(t *testing.T) {
 	require.NoError(t, page.Locator(`button[type="submit"]`).Click())
 	waitVisible(t, page.Locator(`h1:has-text("Stash")`))
 
-	// wait for page to stabilize
-	time.Sleep(500 * time.Millisecond)
+	// wait for key list container to be visible (page stabilized)
+	// note: when no keys visible, there's no table - just empty state in #keys-table div
+	waitVisible(t, page.Locator("#keys-table"))
 
 	// user without secrets permission should NOT see the secret key
 	keyCellNoSecrets := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, secretKeyName))
@@ -426,4 +427,146 @@ func TestSecrets_ScopedSecretsAccess(t *testing.T) {
 		// wait for row to disappear before next iteration
 		waitHidden(t, row)
 	}
+}
+
+func TestSecrets_EditSecretValue(t *testing.T) {
+	cleanup := startSecretsServer(t)
+	defer cleanup()
+
+	page := newPage(t)
+	_, err := page.Goto(secretsBaseURL + "/login")
+	require.NoError(t, err)
+
+	require.NoError(t, page.Locator("#username").Fill("admin"))
+	require.NoError(t, page.Locator("#password").Fill("testpass"))
+	require.NoError(t, page.Locator(`button[type="submit"]`).Click())
+	waitVisible(t, page.Locator(`h1:has-text("Stash")`))
+
+	// create a secret key
+	secretKeyName := "secrets/e2e-edit-test"
+	originalValue := "original-secret-value"
+	require.NoError(t, page.Locator(`button:has-text("New Key")`).Click())
+	modal := page.Locator("#main-modal.active")
+	waitVisible(t, modal)
+
+	require.NoError(t, page.Locator(`input[name="key"]`).Fill(secretKeyName))
+	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(originalValue))
+	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	waitHidden(t, modal)
+
+	// wait for key to appear
+	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, secretKeyName))
+	waitVisible(t, row)
+
+	// click edit button
+	editBtn := row.Locator(".btn-edit")
+	waitVisible(t, editBtn)
+	require.NoError(t, editBtn.Click())
+	waitVisible(t, modal)
+
+	// verify original value is shown
+	textarea := page.Locator(`textarea[name="value"]`)
+	val, err := textarea.InputValue()
+	require.NoError(t, err)
+	assert.Equal(t, originalValue, val, "edit form should show original decrypted value")
+
+	// update the value
+	updatedValue := "updated-secret-value"
+	require.NoError(t, textarea.Fill(updatedValue))
+	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	waitHidden(t, modal)
+
+	// verify update by clicking the key cell to open view modal
+	keyCell := row.Locator("td.key-cell")
+	require.NoError(t, keyCell.Click())
+	waitVisible(t, modal)
+
+	// check the displayed value contains updated value
+	modalContent := page.Locator("#modal-content")
+	text, err := modalContent.TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, text, updatedValue, "view modal should show updated secret value")
+
+	// close modal
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, modal)
+
+	// cleanup
+	require.NoError(t, row.Locator(".btn-danger").Click())
+	confirmModal := page.Locator("#confirm-modal")
+	waitVisible(t, confirmModal)
+	require.NoError(t, page.Locator("#confirm-delete-btn").Click())
+	waitHidden(t, confirmModal)
+}
+
+func TestSecrets_History(t *testing.T) {
+	cleanup := startSecretsServer(t)
+	defer cleanup()
+
+	page := newPage(t)
+	_, err := page.Goto(secretsBaseURL + "/login")
+	require.NoError(t, err)
+
+	require.NoError(t, page.Locator("#username").Fill("admin"))
+	require.NoError(t, page.Locator("#password").Fill("testpass"))
+	require.NoError(t, page.Locator(`button[type="submit"]`).Click())
+	waitVisible(t, page.Locator(`h1:has-text("Stash")`))
+
+	// create a secret key with initial value
+	secretKeyName := "secrets/e2e-history-test"
+	initialValue := "initial-secret"
+	require.NoError(t, page.Locator(`button:has-text("New Key")`).Click())
+	modal := page.Locator("#main-modal.active")
+	waitVisible(t, modal)
+
+	require.NoError(t, page.Locator(`input[name="key"]`).Fill(secretKeyName))
+	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(initialValue))
+	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	waitHidden(t, modal)
+
+	// wait for key to appear
+	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, secretKeyName))
+	waitVisible(t, row)
+
+	// update the secret to create history
+	editBtn := row.Locator(".btn-edit")
+	waitVisible(t, editBtn)
+	require.NoError(t, editBtn.Click())
+	waitVisible(t, modal)
+
+	updatedValue := "updated-secret"
+	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(updatedValue))
+	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	waitHidden(t, modal)
+
+	// open view modal by clicking the key cell
+	keyCell := row.Locator("td.key-cell")
+	require.NoError(t, keyCell.Click())
+	waitVisible(t, modal)
+
+	// click history button
+	historyBtn := page.Locator(`button:has-text("History")`)
+	waitVisible(t, historyBtn)
+	require.NoError(t, historyBtn.Click())
+
+	// wait for history table to load
+	historyTable := page.Locator(".history-table")
+	waitVisible(t, historyTable)
+
+	// verify history shows multiple entries (at least 2 - create and update)
+	historyEntries := page.Locator(".history-table tbody tr")
+	count, err := historyEntries.Count()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, count, 2, "should have at least 2 history entries (create + update)")
+
+	// close modal
+	require.NoError(t, page.Keyboard().Press("Escape"))
+	waitHidden(t, modal)
+
+	// cleanup
+	require.NoError(t, row.Locator(".btn-danger").Click())
+	confirmModal := page.Locator("#confirm-modal")
+	waitVisible(t, confirmModal)
+	require.NoError(t, page.Locator("#confirm-delete-btn").Click())
+	waitHidden(t, confirmModal)
 }
