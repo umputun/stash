@@ -11,13 +11,13 @@ require (
 	github.com/go-pkgz/lcw/v2 v2.0.0
 	github.com/go-pkgz/lgr v0.12.1
 	github.com/go-pkgz/requester v0.4.0
-	github.com/go-pkgz/rest v1.20.5
+	github.com/go-pkgz/rest v1.20.6
 	github.com/go-pkgz/routegroup v1.6.0
 	github.com/go-pkgz/testutils v0.5.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/invopop/jsonschema v0.13.0
-	github.com/jackc/pgx/v5 v5.7.6
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/playwright-community/playwright-go v0.5200.1
@@ -26,7 +26,7 @@ require (
 	golang.org/x/crypto v0.46.0
 	gopkg.in/ini.v1 v1.67.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.41.0
+	modernc.org/sqlite v1.42.2
 )
 
 require (
