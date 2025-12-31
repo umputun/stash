@@ -34,6 +34,8 @@ func isZKEncrypted(value []byte) bool {
 }
 
 // zkCrypto handles client-side zero-knowledge encryption using AES-256-GCM with Argon2id key derivation.
+// note: this implementation is intentionally duplicated in app/store/zkcrypto.go (server-side detection)
+// to maintain package independence. TestZKCrypto_CrossCompatibility verifies both are compatible.
 type zkCrypto struct {
 	passphrase []byte
 }
@@ -147,6 +149,8 @@ func (z *zkCrypto) deriveKey(salt []byte) []byte {
 }
 
 // clear securely clears the passphrase from memory.
+// note: this is best-effort; Go's GC may have copied the data and the compiler
+// may optimize away the zeroing if it determines the memory won't be read again.
 func (z *zkCrypto) clear() {
 	for i := range z.passphrase {
 		z.passphrase[i] = 0

@@ -419,8 +419,8 @@ func TestSecrets_ScopedSecretsAccess(t *testing.T) {
 	for _, key := range []string{appSecretKey, globalSecretKey} {
 		row := adminPage.Locator(fmt.Sprintf(`tr:has-text(%q)`, key))
 		deleteBtn := row.Locator(".btn-danger")
-		vis, _ := deleteBtn.IsVisible()
-		if !vis {
+		vis, err := deleteBtn.IsVisible()
+		if err != nil || !vis {
 			continue // key might already be deleted or not visible
 		}
 		require.NoError(t, deleteBtn.Click())

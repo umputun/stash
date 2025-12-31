@@ -142,7 +142,8 @@ func newPage(t *testing.T) playwright.Page {
 func waitVisible(t *testing.T, loc playwright.Locator) {
 	t.Helper()
 	require.NoError(t, loc.WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateVisible,
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(5000),
 	}))
 }
 
@@ -150,7 +151,8 @@ func waitVisible(t *testing.T, loc playwright.Locator) {
 func waitHidden(t *testing.T, loc playwright.Locator) {
 	t.Helper()
 	require.NoError(t, loc.WaitFor(playwright.LocatorWaitForOptions{
-		State: playwright.WaitForSelectorStateHidden,
+		State:   playwright.WaitForSelectorStateHidden,
+		Timeout: playwright.Float(5000),
 	}))
 }
 
@@ -253,27 +255,17 @@ func viewKey(t *testing.T, page playwright.Page, key string) playwright.Locator 
 	return modal
 }
 
-// viewKeyByText opens the view modal for a key using text content matching.
-// use this for keys with icons (ZK, secrets) where :has-text() CSS selector may fail
-// due to trailing whitespace from icon SVG elements.
+// viewKeyByText opens the view modal for a key using row text matching.
+// use this for keys with icons (ZK, secrets) where td.key-cell:has-text() may fail
+// due to trailing whitespace from icon SVG elements. tr:has-text() does partial matching
+// on the entire row, avoiding the whitespace issue.
 func viewKeyByText(t *testing.T, page playwright.Page, key string) playwright.Locator {
 	t.Helper()
-	// wait for table to load
-	table := page.Locator("table tbody")
-	waitVisible(t, table)
-
-	// find cell by text content (more reliable than :has-text with trailing whitespace)
-	allCells, err := page.Locator("td.key-cell").All()
-	require.NoError(t, err)
-	var keyCell playwright.Locator
-	for _, cell := range allCells {
-		text, _ := cell.TextContent()
-		if strings.Contains(text, key) {
-			keyCell = cell
-			break
-		}
-	}
-	require.NotNil(t, keyCell, "key cell not found for %s", key)
+	// find row by text content (tr:has-text does partial match, works with icon whitespace)
+	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, key))
+	waitVisible(t, row)
+	// click the key cell within the row
+	keyCell := row.Locator("td.key-cell")
 	require.NoError(t, keyCell.Click())
 	modal := page.Locator("#main-modal.active")
 	waitVisible(t, modal)
@@ -603,7 +595,8 @@ func TestPermissions_AdminFullAccess(t *testing.T) {
 	// delete
 	deleteKey(t, page, keyName)
 
-	visible, _ := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, keyName)).IsVisible()
+	visible, err := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, keyName)).IsVisible()
+	require.NoError(t, err)
 	assert.False(t, visible)
 }
 
@@ -631,12 +624,15 @@ func TestPermissions_ReadonlyCannotEditDelete(t *testing.T) {
 	waitVisible(t, keyCell)
 
 	// key should be visible
-	visible, _ := keyCell.IsVisible()
+	visible, err := keyCell.IsVisible()
+	require.NoError(t, err)
 	assert.True(t, visible, "readonly user should see the key")
 
 	// but no edit/delete buttons
-	editVisible, _ := page.Locator(".btn-edit").First().IsVisible()
-	deleteVisible, _ := page.Locator(".btn-danger").First().IsVisible()
+	editVisible, err := page.Locator(".btn-edit").First().IsVisible()
+	require.NoError(t, err)
+	deleteVisible, err := page.Locator(".btn-danger").First().IsVisible()
+	require.NoError(t, err)
 	assert.False(t, editVisible, "readonly user should not see edit buttons")
 	assert.False(t, deleteVisible, "readonly user should not see delete buttons")
 
@@ -662,11 +658,13 @@ func TestPermissions_ScopedUserPrefix(t *testing.T) {
 	waitVisible(t, insideCell)
 
 	// should see app/* key
-	insideVisible, _ := insideCell.IsVisible()
+	insideVisible, err := insideCell.IsVisible()
+	require.NoError(t, err)
 	assert.True(t, insideVisible, "scoped user should see app/* key")
 
 	// should not see key outside prefix
-	outsideVisible, _ := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, outsideKey)).IsVisible()
+	outsideVisible, err := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, outsideKey)).IsVisible()
+	require.NoError(t, err)
 	assert.False(t, outsideVisible, "scoped user should not see key outside app/* prefix")
 
 	// cleanup
@@ -693,7 +691,8 @@ func TestSearch_FiltersKeyList(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond, "beta should be filtered out")
 
 	// alpha should be visible
-	alphaVisible, _ := page.Locator(`td.key-cell:has-text("e2e-search/alpha")`).IsVisible()
+	alphaVisible, err := page.Locator(`td.key-cell:has-text("e2e-search/alpha")`).IsVisible()
+	require.NoError(t, err)
 	assert.True(t, alphaVisible, "alpha should be visible")
 
 	// cleanup - clear search and wait for all keys to appear
@@ -726,8 +725,10 @@ func TestSearch_ClearShowsAll(t *testing.T) {
 	}, 5*time.Second, 100*time.Millisecond)
 
 	// both should be visible
-	oneVisible, _ := page.Locator(`td.key-cell:has-text("e2e-search2/one")`).IsVisible()
-	twoVisible, _ := page.Locator(`td.key-cell:has-text("e2e-search2/two")`).IsVisible()
+	oneVisible, err := page.Locator(`td.key-cell:has-text("e2e-search2/one")`).IsVisible()
+	require.NoError(t, err)
+	twoVisible, err := page.Locator(`td.key-cell:has-text("e2e-search2/two")`).IsVisible()
+	require.NoError(t, err)
 	assert.True(t, oneVisible)
 	assert.True(t, twoVisible)
 
@@ -905,7 +906,8 @@ func TestUI_SyntaxHighlighting(t *testing.T) {
 	waitVisible(t, highlightedCode)
 
 	// should have highlighted code
-	highlighted, _ := highlightedCode.IsVisible()
+	highlighted, err := highlightedCode.IsVisible()
+	require.NoError(t, err)
 	assert.True(t, highlighted, "should have syntax highlighting for JSON")
 
 	// cleanup
@@ -966,6 +968,18 @@ func createZKKeyViaAPI(t *testing.T, key, zkValue string) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
+// createKeyViaAPI creates a regular key via API (for comparison tests)
+func createKeyViaAPI(t *testing.T, key, value string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, baseURL+"/kv/"+key, strings.NewReader(value))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 // deleteKeyViaAPI deletes a key via API
 func deleteKeyViaAPI(t *testing.T, key string) {
 	t.Helper()
@@ -984,6 +998,11 @@ func TestZK_ShowsDistinctIcon(t *testing.T) {
 	createZKKeyViaAPI(t, keyName, zkValue)
 	defer deleteKeyViaAPI(t, keyName)
 
+	// create regular key for comparison
+	regularKeyName := "e2e-zk/regular-icon-test"
+	createKeyViaAPI(t, regularKeyName, "regular value")
+	defer deleteKeyViaAPI(t, regularKeyName)
+
 	page := newPage(t)
 	login(t, page, "admin", "testpass")
 
@@ -996,6 +1015,14 @@ func TestZK_ShowsDistinctIcon(t *testing.T) {
 	visible, err := zkIcon.IsVisible()
 	require.NoError(t, err)
 	assert.True(t, visible, "ZK-encrypted key should show lock icon")
+
+	// regular key should NOT have ZK icon
+	regularRow := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, regularKeyName))
+	waitVisible(t, regularRow)
+	regularZkIcon := regularRow.Locator(".zk-lock-icon")
+	regularIconVisible, err := regularZkIcon.IsVisible()
+	require.NoError(t, err)
+	assert.False(t, regularIconVisible, "regular key should NOT show ZK lock icon")
 }
 
 func TestZK_EditButtonHidden(t *testing.T) {
@@ -1004,6 +1031,11 @@ func TestZK_EditButtonHidden(t *testing.T) {
 	zkValue := createValidZKValue(t, "edit-hidden-test-value")
 	createZKKeyViaAPI(t, keyName, zkValue)
 	defer deleteKeyViaAPI(t, keyName)
+
+	// create regular key for comparison
+	regularKeyName := "e2e-zk/regular-edit-test"
+	createKeyViaAPI(t, regularKeyName, "regular value")
+	defer deleteKeyViaAPI(t, regularKeyName)
 
 	page := newPage(t)
 	login(t, page, "admin", "testpass")
@@ -1023,6 +1055,14 @@ func TestZK_EditButtonHidden(t *testing.T) {
 	deleteVisible, err := deleteBtn.IsVisible()
 	require.NoError(t, err)
 	assert.True(t, deleteVisible, "delete button should still be visible")
+
+	// regular key should have edit button visible
+	regularRow := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, regularKeyName))
+	waitVisible(t, regularRow)
+	regularEditBtn := regularRow.Locator(".btn-edit")
+	regularEditVisible, err := regularEditBtn.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, regularEditVisible, "regular key should have edit button visible")
 }
 
 func TestZK_ViewModalShowsBadge(t *testing.T) {

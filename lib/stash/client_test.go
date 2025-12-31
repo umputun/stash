@@ -658,3 +658,55 @@ func TestClient_ZKEncryption(t *testing.T) {
 		assert.Equal(t, "my secret data", val)
 	})
 }
+
+func TestClient_Close(t *testing.T) {
+	t.Run("with ZK enabled", func(t *testing.T) {
+		c, err := New("http://test", WithRetry(0, 0), WithZKKey("test-passphrase-16"))
+		require.NoError(t, err)
+		c.Close() // should not panic
+	})
+
+	t.Run("without ZK", func(t *testing.T) {
+		c, err := New("http://test", WithRetry(0, 0))
+		require.NoError(t, err)
+		c.Close() // should not panic with nil zkCrypto
+	})
+}
+
+func TestClient_SetWithFormat_ZKEncryption(t *testing.T) {
+	passphrase := "test-passphrase-min-16"
+
+	var storedValue []byte
+	var storedFormat string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			storedValue, _ = io.ReadAll(r.Body)
+			storedFormat = r.Header.Get("X-Stash-Format")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(storedValue)
+			return
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, WithRetry(0, 0), WithZKKey(passphrase))
+	require.NoError(t, err)
+	defer c.Close()
+
+	// set a value with format
+	err = c.SetWithFormat(context.Background(), "config/db", `{"host":"localhost"}`, FormatJSON)
+	require.NoError(t, err)
+
+	// verify stored value is encrypted
+	assert.True(t, len(storedValue) > 4 && string(storedValue[:4]) == "$ZK$", "value should be ZK-encrypted")
+	assert.Equal(t, "json", storedFormat, "format should be passed to server")
+
+	// get it back
+	val, err := c.Get(context.Background(), "config/db")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"host":"localhost"}`, val, "decrypted value should match original")
+}

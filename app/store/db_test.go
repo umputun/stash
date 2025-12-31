@@ -1073,6 +1073,12 @@ func TestStore_ZKPayload_Validation(t *testing.T) {
 					})
 				}
 			})
+
+			t.Run("SetWithVersion rejects invalid ZK payload in secrets path", func(t *testing.T) {
+				err := store.SetWithVersion(ctx, prefix+"secrets/invalid-zk",
+					[]byte("$ZK$invalid!!!"), "text", time.Now())
+				assert.ErrorIs(t, err, ErrInvalidZKPayload)
+			})
 		})
 	}
 }
