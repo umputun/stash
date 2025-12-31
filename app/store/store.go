@@ -16,6 +16,9 @@ var ErrNotFound = errors.New("key not found")
 // ErrConflict is returned when optimistic locking fails due to concurrent modification.
 var ErrConflict = errors.New("version conflict")
 
+// ErrInvalidZKPayload is returned when a ZK-prefixed value has invalid format.
+var ErrInvalidZKPayload = errors.New("invalid ZK payload: must be $ZK$ followed by valid base64 of encrypted data")
+
 // ConflictInfo holds details about a detected version conflict.
 type ConflictInfo struct {
 	CurrentValue     []byte

@@ -384,7 +384,12 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 		format = "text"
 	}
 
-	// encrypt if this is a secret (skip if already ZK-encrypted)
+	// reject invalid ZK payloads in secrets paths
+	if IsSecret(key) && IsZKEncrypted(value) && !IsValidZKPayload(value) {
+		return ErrInvalidZKPayload
+	}
+
+	// encrypt secrets (skip if already ZK-encrypted)
 	storeValue := value
 	if IsSecret(key) && !IsZKEncrypted(value) {
 		encrypted, err := s.encryptor.Encrypt(value)
@@ -426,7 +431,12 @@ func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, fo
 		format = "text"
 	}
 
-	// encrypt if this is a secret (skip if already ZK-encrypted)
+	// reject invalid ZK payloads in secrets paths
+	if IsSecret(key) && IsZKEncrypted(value) && !IsValidZKPayload(value) {
+		return ErrInvalidZKPayload
+	}
+
+	// encrypt secrets (skip if already ZK-encrypted)
 	storeValue := value
 	if IsSecret(key) && !IsZKEncrypted(value) {
 		encrypted, err := s.encryptor.Encrypt(value)

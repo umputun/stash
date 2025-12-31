@@ -29,6 +29,25 @@ func IsZKEncrypted(value []byte) bool {
 	return len(value) > len(zkPrefix) && string(value[:len(zkPrefix)]) == zkPrefix
 }
 
+// IsValidZKPayload checks if a ZK value has valid format.
+// Returns true if value has $ZK$ prefix followed by valid base64 of sufficient length.
+// This validates format only, not cryptographic correctness (zero-knowledge preserved).
+func IsValidZKPayload(value []byte) bool {
+	if !IsZKEncrypted(value) {
+		return false
+	}
+	encoded := value[len(zkPrefix):]
+
+	// decode base64
+	decoded, err := base64.StdEncoding.DecodeString(string(encoded))
+	if err != nil {
+		return false
+	}
+
+	// check minimum size: salt(16) + nonce(12) + tag(16) = 44 bytes
+	return len(decoded) >= zkMinDataSize
+}
+
 // ZKCrypto handles client-side zero-knowledge encryption using AES-256-GCM with Argon2id key derivation.
 type ZKCrypto struct {
 	passphrase []byte

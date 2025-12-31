@@ -543,6 +543,17 @@ The web UI detects ZK-encrypted values by the `$ZK$` prefix and:
 
 Use Zero-Knowledge when the server should never have access to plaintext (e.g., third-party credentials, sensitive tokens). Use Secrets Vault when you need server-side access but want encryption at rest.
 
+### Combining ZK with Secrets Paths
+
+You can store ZK-encrypted values in secrets paths (e.g., `secrets/api-key`). In this case:
+
+- ZK encryption takes precedence (no double-encryption)
+- The key shows both lock icon (secrets path) and shield icon (ZK-encrypted)
+- Server validates ZK payload format in secrets paths only (rejects malformed `$ZK$` values)
+- Both `Secret` and `ZKEncrypted` flags are set in API responses
+
+This provides the best of both worlds: permission-based access control from secrets paths plus client-side encryption from ZK.
+
 ## API
 
 ### Get value

@@ -31,6 +31,37 @@ func TestIsZKEncrypted(t *testing.T) {
 	}
 }
 
+func TestIsValidZKPayload(t *testing.T) {
+	// create a real ZK encrypted value for valid case
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
+	require.NoError(t, err)
+	validEncrypted, err := zk.Encrypt([]byte("test data"))
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		value    []byte
+		expected bool
+	}{
+		{"empty value", []byte{}, false},
+		{"nil value", nil, false},
+		{"plain text", []byte("hello world"), false},
+		{"zk prefix only", []byte("$ZK$"), false},
+		{"zk prefix with plain text", []byte("$ZK$plaintext"), false},
+		{"zk prefix with short base64", []byte("$ZK$aGVsbG8="), false}, // "hello" = 5 bytes, too short
+		{"zk prefix with invalid base64", []byte("$ZK$not-valid-base64!!!"), false},
+		{"zk prefix with newlines", []byte("$ZK$aGVs\nbG8="), false},
+		{"valid zk encrypted value", validEncrypted, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsValidZKPayload(tc.value)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
 func TestZKCrypto_Encrypt(t *testing.T) {
 	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)

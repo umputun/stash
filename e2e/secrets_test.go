@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/store"
 )
 
 // secrets tests run on separate server with --secrets.key enabled
@@ -579,9 +581,15 @@ func TestZK_InSecretsPath(t *testing.T) {
 	cleanup := startSecretsServer(t)
 	defer cleanup()
 
+	// create a valid ZK-encrypted value using ZKCrypto
+	zk, err := store.NewZKCrypto([]byte("e2e-test-passphrase"))
+	require.NoError(t, err)
+	zkValueBytes, err := zk.Encrypt([]byte("my-api-key-value"))
+	require.NoError(t, err)
+
 	// create a ZK-encrypted key via API using token auth
 	zkKey := "secrets/zk-api-key"
-	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU=" // base64 encoded ZK value
+	zkValue := string(zkValueBytes)
 
 	req, err := http.NewRequest(http.MethodPut, secretsBaseURL+"/kv/"+zkKey, strings.NewReader(zkValue))
 	require.NoError(t, err)

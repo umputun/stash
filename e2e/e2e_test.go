@@ -15,6 +15,8 @@ import (
 	"github.com/playwright-community/playwright-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/store"
 )
 
 const (
@@ -915,6 +917,16 @@ func TestUI_SecretsNotConfiguredError(t *testing.T) {
 
 const apiToken = "e2e-admin-token-12345"
 
+// createValidZKValue creates a valid ZK-encrypted value using ZKCrypto
+func createValidZKValue(t *testing.T, plaintext string) string {
+	t.Helper()
+	zk, err := store.NewZKCrypto([]byte("e2e-test-passphrase"))
+	require.NoError(t, err)
+	encrypted, err := zk.Encrypt([]byte(plaintext))
+	require.NoError(t, err)
+	return string(encrypted)
+}
+
 // createZKKeyViaAPI creates a ZK-encrypted key via API (simulates client-side encryption)
 func createZKKeyViaAPI(t *testing.T, key, zkValue string) {
 	t.Helper()
@@ -941,7 +953,7 @@ func deleteKeyViaAPI(t *testing.T, key string) {
 func TestZK_ShowsDistinctIcon(t *testing.T) {
 	// create ZK-encrypted key via API (with $ZK$ prefix)
 	keyName := "e2e-zk/icon-test"
-	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU=" // $ZK$ prefix + base64
+	zkValue := createValidZKValue(t, "test-encrypted-value")
 	createZKKeyViaAPI(t, keyName, zkValue)
 	defer deleteKeyViaAPI(t, keyName)
 
@@ -962,7 +974,7 @@ func TestZK_ShowsDistinctIcon(t *testing.T) {
 func TestZK_EditButtonHidden(t *testing.T) {
 	// create ZK-encrypted key via API
 	keyName := "e2e-zk/edit-hidden-test"
-	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU="
+	zkValue := createValidZKValue(t, "edit-hidden-test-value")
 	createZKKeyViaAPI(t, keyName, zkValue)
 	defer deleteKeyViaAPI(t, keyName)
 
@@ -989,7 +1001,7 @@ func TestZK_EditButtonHidden(t *testing.T) {
 func TestZK_ViewModalShowsBadge(t *testing.T) {
 	// create ZK-encrypted key via API
 	keyName := "e2e-zk/badge-test"
-	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU="
+	zkValue := createValidZKValue(t, "badge-test-value")
 	createZKKeyViaAPI(t, keyName, zkValue)
 	defer deleteKeyViaAPI(t, keyName)
 

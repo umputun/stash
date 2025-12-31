@@ -297,6 +297,12 @@ func TestStore_GetInfo(t *testing.T) {
 }
 
 func TestStore_ZKEncrypted(t *testing.T) {
+	// create valid ZK payload
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
+	require.NoError(t, err)
+	zkValue, err := zk.Encrypt([]byte("encrypted-data"))
+	require.NoError(t, err)
+
 	for _, engine := range testEngines {
 		t.Run(engine, func(t *testing.T) {
 			st := newTestStore(t, engine)
@@ -304,7 +310,7 @@ func TestStore_ZKEncrypted(t *testing.T) {
 			// create a regular key and a ZK-encrypted key
 			err := st.Set(t.Context(), "zk/regular", []byte("plain value"), "text")
 			require.NoError(t, err)
-			err = st.Set(t.Context(), "zk/encrypted", []byte("$ZK$somefakebase64data"), "text")
+			err = st.Set(t.Context(), "zk/encrypted", zkValue, "text")
 			require.NoError(t, err)
 
 			t.Run("GetInfo returns ZKEncrypted=true for $ZK$ values", func(t *testing.T) {
@@ -930,6 +936,11 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 	// ZK-encrypted values in secrets paths should NOT be double-encrypted.
 	// ZK encryption takes precedence over server-side encryption.
+
+	// create valid ZK payloads using ZKCrypto
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
+	require.NoError(t, err)
+
 	for _, engine := range testEngines {
 		t.Run(engine, func(t *testing.T) {
 			store := newTestStoreWithEncryptor(t, engine)
@@ -937,10 +948,11 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 			prefix := "zk-prec/" + engine + "/"
 
 			t.Run("ZK value in secrets path is not double-encrypted", func(t *testing.T) {
-				zkValue := []byte("$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU=")
+				zkValue, err := zk.Encrypt([]byte("api-key-value"))
+				require.NoError(t, err)
 				key := prefix + "secrets/zk-api-key"
 
-				err := store.Set(ctx, key, zkValue, "text")
+				err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				// get should return the ZK value as-is (not decrypted by server)
@@ -950,10 +962,11 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 			})
 
 			t.Run("GetInfo shows both Secret and ZKEncrypted for ZK in secrets path", func(t *testing.T) {
-				zkValue := []byte("$ZK$YW5vdGhlci16ay12YWx1ZQ==")
+				zkValue, err := zk.Encrypt([]byte("another-zk-value"))
+				require.NoError(t, err)
 				key := prefix + "app/secrets/zk-creds"
 
-				err := store.Set(ctx, key, zkValue, "text")
+				err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(ctx, key)
@@ -963,10 +976,11 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 			})
 
 			t.Run("raw storage has $ZK$ prefix for ZK values in secrets path", func(t *testing.T) {
-				zkValue := []byte("$ZK$cmF3LXN0b3JhZ2UtdGVzdA==")
+				zkValue, err := zk.Encrypt([]byte("raw-storage-test"))
+				require.NoError(t, err)
 				key := prefix + "secrets/raw-check"
 
-				err := store.Set(ctx, key, zkValue, "text")
+				err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				// check raw value in database - should have $ZK$ prefix, not encrypted
@@ -975,6 +989,50 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, IsZKEncrypted(rawValue), "raw stored value should have $ZK$ prefix")
 				assert.Equal(t, zkValue, rawValue, "raw value should match original ZK value")
+			})
+		})
+	}
+}
+
+func TestStore_ZKPayload_Validation(t *testing.T) {
+	// invalid ZK payloads should be rejected only in secrets paths
+	for _, engine := range testEngines {
+		t.Run(engine, func(t *testing.T) {
+			store := newTestStoreWithEncryptor(t, engine)
+			ctx := t.Context()
+			prefix := "zk-valid/" + engine + "/"
+
+			invalidPayloads := []struct {
+				name  string
+				value []byte
+			}{
+				{"plaintext with ZK prefix", []byte("$ZK$plaintext")},
+				{"short base64 with ZK prefix", []byte("$ZK$aGVsbG8=")},
+				{"invalid base64 with ZK prefix", []byte("$ZK$not-valid!!!")},
+			}
+
+			t.Run("rejected in secrets paths", func(t *testing.T) {
+				for _, tc := range invalidPayloads {
+					t.Run(tc.name, func(t *testing.T) {
+						err := store.Set(ctx, prefix+"secrets/key", tc.value, "text")
+						assert.ErrorIs(t, err, ErrInvalidZKPayload)
+					})
+				}
+			})
+
+			t.Run("allowed in non-secrets paths", func(t *testing.T) {
+				for _, tc := range invalidPayloads {
+					t.Run(tc.name, func(t *testing.T) {
+						key := prefix + "regular/" + tc.name
+						err := store.Set(ctx, key, tc.value, "text")
+						require.NoError(t, err, "invalid ZK should be allowed in non-secrets paths")
+
+						// verify it's stored as-is
+						value, err := store.Get(ctx, key)
+						require.NoError(t, err)
+						assert.Equal(t, tc.value, value)
+					})
+				}
 			})
 		})
 	}
