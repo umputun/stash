@@ -35,7 +35,7 @@ Web UI available at http://localhost:8080
 - Optional client-side zero-knowledge encryption (server never sees plaintext)
 - Optional git versioning with full audit trail and point-in-time recovery
 - Optional in-memory cache for read operations
-- Go, Python, and TypeScript/JavaScript client libraries with full API support and client-side, zero-knowledge encryption
+- Go, Python, TypeScript/JavaScript, and Java client libraries with full API support and client-side, zero-knowledge encryption
 
 ## Security Note
 
@@ -814,6 +814,50 @@ await zkClient.set('app/secrets/api-key', 'secret-value');  // encrypted client-
 ```
 
 Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go and Python clients). See [lib/stash-js/README.md](lib/stash-js/README.md) for full documentation.
+
+## Java Client Library
+
+A Java client library is available via GitHub Packages:
+
+```gradle
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/umputun/stash")
+        credentials {
+            username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+            password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+        }
+    }
+}
+
+dependencies {
+    implementation("com.github.umputun:stash-client:0.1.0")
+}
+```
+
+```java
+import com.github.umputun.stash.Client;
+import com.github.umputun.stash.Format;
+
+try (Client client = Client.builder("http://localhost:8080")
+        .token("your-api-token")
+        .build()) {
+    // get/set/delete/list operations
+    String value = client.get("app/config");
+    client.set("app/config", "{\"debug\": true}", Format.JSON);
+    client.delete("app/config");
+    List<KeyInfo> keys = client.list("app/");
+}
+
+// with zero-knowledge encryption (server never sees plaintext)
+try (Client zkClient = Client.builder("http://localhost:8080")
+        .zkKey("your-secret-passphrase")
+        .build()) {
+    zkClient.set("app/secrets/api-key", "secret-value");  // encrypted client-side
+}
+```
+
+Features: builder pattern, automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go, Python, and TypeScript clients). See [lib/stash-java/README.md](lib/stash-java/README.md) for full documentation.
 
 ## Docker
 

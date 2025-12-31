@@ -1,0 +1,15 @@
+# gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ide
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# misc
+*.log
+*.tmp
+.DS_Store

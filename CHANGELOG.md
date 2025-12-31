@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+- Java SDK client library
+  - Java 11+ support with modern builder pattern API
+  - Published to GitHub Packages
+  - Cross-compatible ZK encryption with Go, Python, and TypeScript clients
+
 ## [0.16.0] - 2025-12-30
 
 ### Added
@@ -16,7 +24,7 @@ All notable changes to this project are documented in this file.
   - Context manager support for automatic cleanup
   - Dict-like access (`client["key"] = value`)
   - Cross-compatible ZK encryption with Go client
-- TypeScript/JavaScript SDK client library
+- TypeScript/JavaScript SDK client library (#49)
   - Node.js 18+ and browser support
   - Modern TypeScript with strict mode
   - ESM and CJS dual output
