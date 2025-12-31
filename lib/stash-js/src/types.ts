@@ -101,7 +101,7 @@ export interface ClientOptions {
   readonly timeout?: number;
   /** Number of retry attempts for failed requests (default: 3). */
   readonly retries?: number;
-  /** Passphrase for zero-knowledge encryption (minimum 16 characters). */
+  /** Passphrase for zero-knowledge encryption (minimum 16 bytes UTF-8). */
   readonly zkKey?: string;
 }
 

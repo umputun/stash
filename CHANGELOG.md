@@ -11,6 +11,16 @@ All notable changes to this project are documented in this file.
   - AES-256-GCM encryption with Argon2id key derivation
   - Green shield icon and "Zero-Knowledge Encrypted" badge in web UI
   - Edit disabled for ZK-encrypted keys (server cannot decrypt)
+- Python SDK client library (#48)
+  - Same API as Go SDK with Pythonic patterns
+  - Context manager support for automatic cleanup
+  - Dict-like access (`client["key"] = value`)
+  - Cross-compatible ZK encryption with Go client
+- TypeScript/JavaScript SDK client library
+  - Node.js 18+ and browser support
+  - Modern TypeScript with strict mode
+  - ESM and CJS dual output
+  - Cross-compatible ZK encryption with Go and Python clients
 
 ### Changed
 - Dependencies: bump go-modules group with 3 updates (#46)

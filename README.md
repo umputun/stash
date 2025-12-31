@@ -35,7 +35,7 @@ Web UI available at http://localhost:8080
 - Optional client-side zero-knowledge encryption (server never sees plaintext)
 - Optional git versioning with full audit trail and point-in-time recovery
 - Optional in-memory cache for read operations
-- Go and Python client libraries with full API support and client-side, zero-knowledge encryption
+- Go, Python, and TypeScript/JavaScript client libraries with full API support and client-side, zero-knowledge encryption
 
 ## Security Note
 
@@ -788,6 +788,32 @@ zk_client.set("app/secrets/api-key", "secret-value")  # encrypted client-side
 ```
 
 Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go client). See [lib/stash-python/README.md](lib/stash-python/README.md) for full documentation.
+
+## TypeScript/JavaScript Client Library
+
+A TypeScript/JavaScript client library is available for Node.js and browser environments:
+
+```bash
+npm install @umputun/stash-client
+```
+
+```typescript
+import { Client, Format } from '@umputun/stash-client';
+
+const client = new Client('http://localhost:8080', { token: 'your-api-token' });
+
+// get/set/delete/list operations
+const value = await client.get('app/config');
+await client.set('app/config', '{"debug": true}', Format.Json);
+await client.delete('app/config');
+const keys = await client.list('app/');
+
+// with zero-knowledge encryption (server never sees plaintext)
+const zkClient = new Client('http://localhost:8080', { zkKey: 'your-secret-passphrase' });
+await zkClient.set('app/secrets/api-key', 'secret-value');  // encrypted client-side
+```
+
+Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go and Python clients). See [lib/stash-js/README.md](lib/stash-js/README.md) for full documentation.
 
 ## Docker
 

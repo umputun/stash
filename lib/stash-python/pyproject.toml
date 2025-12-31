@@ -1,7 +1,7 @@
 [project]
 name = "stash-client"
 version = "0.1.0"
-description = "Python client library for Stash KV service"
+description = "Python client library for Stash - a simple key-value configuration service"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

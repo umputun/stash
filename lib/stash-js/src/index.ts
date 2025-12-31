@@ -34,6 +34,17 @@ export type {
 // client
 export { Client } from './client.js';
 
+// zero-knowledge encryption
+export {
+  ZKCrypto,
+  isZkEncrypted,
+  ZK_PREFIX,
+  ZK_SALT_SIZE,
+  ZK_NONCE_SIZE,
+  ZK_KEY_SIZE,
+  ZK_MIN_PASSPHRASE_LENGTH,
+} from './zk.js';
+
 // errors
 export {
   StashError,

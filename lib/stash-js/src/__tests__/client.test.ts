@@ -34,7 +34,7 @@ describe('Client', () => {
 
     it('throws if zkKey is too short', () => {
       expect(() => new Client('http://localhost:8080', { zkKey: 'short' })).toThrow(
-        'zkKey must be at least 16 characters'
+        'passphrase must be at least 16 bytes'
       );
     });
 
@@ -281,6 +281,33 @@ describe('Client', () => {
       expect(() => {
         client.close();
       }).not.toThrow();
+    });
+  });
+
+  describe('empty key validation', () => {
+    it('throws on empty key for get', async () => {
+      const client = new Client('http://localhost:8080');
+      await expect(client.get('')).rejects.toThrow('key cannot be empty');
+    });
+
+    it('throws on empty key for getBytes', async () => {
+      const client = new Client('http://localhost:8080');
+      await expect(client.getBytes('')).rejects.toThrow('key cannot be empty');
+    });
+
+    it('throws on empty key for set', async () => {
+      const client = new Client('http://localhost:8080');
+      await expect(client.set('', 'value')).rejects.toThrow('key cannot be empty');
+    });
+
+    it('throws on empty key for delete', async () => {
+      const client = new Client('http://localhost:8080');
+      await expect(client.delete('')).rejects.toThrow('key cannot be empty');
+    });
+
+    it('throws on empty key for info', async () => {
+      const client = new Client('http://localhost:8080');
+      await expect(client.info('')).rejects.toThrow('key cannot be empty');
     });
   });
 });

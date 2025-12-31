@@ -110,3 +110,39 @@ jobs:
       - name: run linter
         working-directory: lib/stash-python
         run: uv run ruff check .
+
+  typescript-sdk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: lib/stash-js/package-lock.json
+
+      - name: install dependencies
+        working-directory: lib/stash-js
+        run: npm ci
+
+      - name: run type checking
+        working-directory: lib/stash-js
+        run: npm run typecheck
+
+      - name: run tests
+        working-directory: lib/stash-js
+        run: npm test
+
+      - name: run linter
+        working-directory: lib/stash-js
+        run: npm run lint
+
+      - name: build
+        working-directory: lib/stash-js
+        run: npm run build

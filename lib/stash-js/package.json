@@ -1,7 +1,7 @@
 {
   "name": "@umputun/stash-client",
   "version": "0.1.0",
-  "description": "TypeScript client library for Stash KV service",
+  "description": "TypeScript client library for Stash - a simple key-value configuration service",
   "type": "module",
   "exports": {
     ".": {

@@ -8,6 +8,7 @@ import {
   StashError,
   UnauthorizedError,
 } from './errors.js';
+import { isZkEncrypted, ZKCrypto } from './zk.js';
 
 /**
  * HTTP client for Stash KV service.
@@ -24,7 +25,7 @@ export class Client {
   readonly #token: string | undefined;
   readonly #timeout: number;
   readonly #retries: number;
-  readonly #zkKey: string | undefined;
+  #zkCrypto: ZKCrypto | undefined;
 
   /**
    * Create a new Stash client.
@@ -38,10 +39,10 @@ export class Client {
     this.#token = options?.token ?? undefined;
     this.#timeout = options?.timeout ?? DEFAULT_OPTIONS.timeout;
     this.#retries = options?.retries ?? DEFAULT_OPTIONS.retries;
-    this.#zkKey = options?.zkKey ?? undefined;
 
-    if (this.#zkKey !== undefined && this.#zkKey.length < 16) {
-      throw new StashError('zkKey must be at least 16 characters');
+    // create ZK crypto if passphrase provided (validates length internally)
+    if (options?.zkKey !== undefined) {
+      this.#zkCrypto = new ZKCrypto(options.zkKey);
     }
   }
 
@@ -59,10 +60,12 @@ export class Client {
 
   /**
    * Get a value by key.
+   * If ZK encryption is enabled and value is encrypted, it will be decrypted.
    *
    * @param key - Key path (e.g., "app/config")
    * @returns Value as string
    * @throws {NotFoundError} If key does not exist
+   * @throws {DecryptionError} If ZK decryption fails
    */
   async get(key: string): Promise<string> {
     const bytes = await this.getBytes(key);
@@ -71,15 +74,27 @@ export class Client {
 
   /**
    * Get a value as raw bytes.
+   * If ZK encryption is enabled and value is encrypted, it will be decrypted.
    *
    * @param key - Key path
    * @returns Value as Uint8Array
    * @throws {NotFoundError} If key does not exist
+   * @throws {DecryptionError} If ZK decryption fails
    */
   async getBytes(key: string): Promise<Uint8Array> {
+    if (key === '') {
+      throw new StashError('key cannot be empty');
+    }
     const response = await this.#fetch(`/kv/${this.#encodeKey(key)}`);
     const buffer = await response.arrayBuffer();
-    return new Uint8Array(buffer);
+    let data: Uint8Array = new Uint8Array(buffer);
+
+    // decrypt if ZK crypto is configured and value is encrypted
+    if (this.#zkCrypto !== undefined && isZkEncrypted(data)) {
+      data = await this.#zkCrypto.decrypt(data);
+    }
+
+    return data;
   }
 
   /**
@@ -102,19 +117,33 @@ export class Client {
 
   /**
    * Set a value.
+   * If ZK encryption is enabled, the value will be encrypted before sending.
    *
    * @param key - Key path
    * @param value - Value to store
    * @param format - Value format for syntax highlighting (default: "text")
    */
   async set(key: string, value: string, format: Format = Format.Text): Promise<void> {
+    if (key === '') {
+      throw new StashError('key cannot be empty');
+    }
+    let body: string = value;
+
+    // encrypt if ZK crypto is configured
+    if (this.#zkCrypto !== undefined) {
+      const plaintext = new TextEncoder().encode(value);
+      const encrypted = await this.#zkCrypto.encrypt(plaintext);
+      // convert to string for HTTP body (ZK format is ASCII-safe)
+      body = new TextDecoder().decode(encrypted);
+    }
+
     await this.#fetch(`/kv/${this.#encodeKey(key)}`, {
       method: 'PUT',
       headers: {
         'X-Stash-Format': format,
         'Content-Type': 'text/plain',
       },
-      body: value,
+      body,
     });
   }
 
@@ -125,6 +154,9 @@ export class Client {
    * @throws {NotFoundError} If key does not exist
    */
   async delete(key: string): Promise<void> {
+    if (key === '') {
+      throw new StashError('key cannot be empty');
+    }
     await this.#fetch(`/kv/${this.#encodeKey(key)}`, {
       method: 'DELETE',
     });
@@ -151,6 +183,9 @@ export class Client {
    * @throws {NotFoundError} If key does not exist
    */
   async info(key: string): Promise<KeyInfo> {
+    if (key === '') {
+      throw new StashError('key cannot be empty');
+    }
     // list with exact key as prefix, find exact match
     const keys = await this.list(key);
     const found = keys.find((k) => k.key === key);
@@ -165,8 +200,10 @@ export class Client {
    * Call this when done with the client if using ZK encryption.
    */
   close(): void {
-    // zkKey is readonly, can't be cleared in JS
-    // this method exists for API compatibility with Go/Python SDKs
+    if (this.#zkCrypto !== undefined) {
+      this.#zkCrypto.clear();
+      this.#zkCrypto = undefined;
+    }
   }
 
   /**
@@ -193,12 +230,12 @@ export class Client {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= this.#retries; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => {
-          controller.abort();
-        }, this.#timeout);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, this.#timeout);
 
+      try {
         const response = await fetch(url, {
           ...init,
           headers,
@@ -214,6 +251,7 @@ export class Client {
 
         return response;
       } catch (error) {
+        clearTimeout(timeoutId);
         lastError = error instanceof Error ? error : new Error(String(error));
 
         // don't retry on HTTP errors (they're thrown synchronously by #handleHttpError)
