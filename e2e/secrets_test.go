@@ -120,8 +120,12 @@ func TestSecrets_RegularKeyNoLockIcon(t *testing.T) {
 
 	require.NoError(t, page.Locator(`input[name="key"]`).Fill(keyName))
 	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill("regular value"))
-	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
+	waitVisible(t, submitBtn)
+	require.NoError(t, submitBtn.Click())
 	waitHidden(t, modal)
+	// wait for key to appear in table (positive confirmation HTMX swap completed)
+	waitVisible(t, page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, keyName)))
 
 	// verify no lock icon
 	keyCell := page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, keyName))
@@ -525,10 +529,11 @@ func TestSecrets_History(t *testing.T) {
 
 	require.NoError(t, page.Locator(`input[name="key"]`).Fill(secretKeyName))
 	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(initialValue))
-	require.NoError(t, page.Locator(`#modal-content button[type="submit"]`).Click())
+	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
+	waitVisible(t, submitBtn)
+	require.NoError(t, submitBtn.Click())
 	waitHidden(t, modal)
-
-	// wait for key to appear
+	// wait for key to appear in table (positive confirmation HTMX swap completed)
 	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, secretKeyName))
 	waitVisible(t, row)
 
