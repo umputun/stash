@@ -527,7 +527,7 @@ $ZK$<base64(salt ∥ nonce ∥ ciphertext ∥ auth_tag)>
 
 The web UI detects ZK-encrypted values by the `$ZK$` prefix and:
 
-- Shows a green shield icon (🛡️) next to encrypted keys
+- Shows a green shield icon next to encrypted keys
 - Displays "Zero-Knowledge Encrypted" badge in the view modal
 - Hides the Edit button (server cannot decrypt to show editable content)
 
