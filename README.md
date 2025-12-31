@@ -543,6 +543,16 @@ The web UI detects ZK-encrypted values by the `$ZK$` prefix and:
 
 Use Zero-Knowledge when the server should never have access to plaintext (e.g., third-party credentials, sensitive tokens). Use Secrets Vault when you need server-side access but want encryption at rest.
 
+### Security Considerations
+
+**Passphrase requirements**: Security depends on passphrase entropy. Use strong passphrases (16+ characters with mixed case, numbers, symbols). The Argon2id KDF provides protection against brute-force attacks but cannot compensate for weak passphrases.
+
+**Threat model**: ZK encryption protects data confidentiality from the server and database. It does not protect against:
+- A malicious server swapping encrypted blobs between keys (ciphertext is not bound to key path)
+- Clients storing well-formed but cryptographically invalid `$ZK$` payloads (server validates format, not decryptability)
+
+If your threat model requires protection against an actively malicious server, consider additional integrity checks at the application layer.
+
 ### Combining ZK with Secrets Paths
 
 You can store ZK-encrypted values in secrets paths (e.g., `secrets/api-key`). In this case:
