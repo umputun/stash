@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# test coverage
+coverage/
+
+# ide
+.idea/
+.vscode/
+*.swp
+
+# os
+.DS_Store
+
+# npm
+*.tgz

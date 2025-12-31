@@ -1,0 +1,60 @@
+{
+  "name": "@umputun/stash-client",
+  "version": "0.1.0",
+  "description": "TypeScript client library for Stash KV service",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "stash",
+    "kv",
+    "key-value",
+    "configuration",
+    "client"
+  ],
+  "author": "Umputun",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/umputun/stash.git",
+    "directory": "lib/stash-js"
+  },
+  "bugs": {
+    "url": "https://github.com/umputun/stash/issues"
+  },
+  "homepage": "https://github.com/umputun/stash/tree/master/lib/stash-js#readme",
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.11.0"
+  }
+}
