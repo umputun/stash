@@ -146,6 +146,7 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		HighlightedVal: highlightedVal,
 		Format:         format,
 		IsBinary:       isBinary,
+		ZKEncrypted:    store.IsZKEncrypted(value),
 		Theme:          h.getTheme(r),
 		BaseURL:        h.baseURL,
 		ModalWidth:     modalWidth,
@@ -183,6 +184,12 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[ERROR] failed to get key: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// block editing of ZK-encrypted keys (must use client library with passphrase)
+	if store.IsZKEncrypted(value) {
+		h.renderError(w, "Cannot edit: this key is encrypted with zero-knowledge encryption. Use the client library with your passphrase to modify it.")
 		return
 	}
 

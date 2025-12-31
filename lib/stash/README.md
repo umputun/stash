@@ -93,6 +93,27 @@ client, err := stash.New("http://localhost:8080",
 )
 ```
 
+### With Zero-Knowledge Encryption
+
+Client-side encryption where the server never sees plaintext values:
+
+```go
+client, err := stash.New("http://localhost:8080",
+    stash.WithZKKey("your-secret-passphrase"), // min 16 characters
+)
+
+// values are encrypted before sending to server
+err = client.Set(ctx, "app/credentials", `{"api_key": "secret123"}`)
+
+// values are decrypted automatically when retrieved
+value, err := client.Get(ctx, "app/credentials")
+// value = `{"api_key": "secret123"}`
+```
+
+The server stores encrypted blobs with `$ZK$` prefix. Without the passphrase, values cannot be decrypted. The web UI shows a lock icon for ZK-encrypted keys and disables editing.
+
+**Algorithm**: AES-256-GCM with Argon2id key derivation.
+
 ## API
 
 ### Constructor
@@ -111,6 +132,7 @@ Creates a new Stash client. The base URL is required; all other options are opti
 | `WithTimeout(duration)` | HTTP request timeout | 30s |
 | `WithRetry(count, delay)` | Retry configuration | 3 retries, 100ms |
 | `WithHTTPClient(client)` | Custom http.Client | default client |
+| `WithZKKey(passphrase)` | Enable client-side ZK encryption (min 16 chars) | none |
 
 ### Methods
 

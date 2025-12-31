@@ -21,3 +21,9 @@ users:
     permissions:
       - prefix: "app/*"
         access: rw
+
+tokens:
+  - token: "e2e-admin-token-12345"
+    permissions:
+      - prefix: "*"
+        access: rw

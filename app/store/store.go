@@ -55,12 +55,13 @@ type Interface interface {
 
 // KeyInfo holds metadata about a stored key.
 type KeyInfo struct {
-	Key       string    `json:"key" db:"key"`
-	Size      int       `json:"size" db:"size"`
-	Format    string    `json:"format" db:"format"`
-	Secret    bool      `json:"secret" db:"-"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	Key         string    `json:"key" db:"key"`
+	Size        int       `json:"size" db:"size"`
+	Format      string    `json:"format" db:"format"`
+	Secret      bool      `json:"secret" db:"-"`
+	ZKEncrypted bool      `json:"zk_encrypted" db:"-"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // DBType is an alias for enum.DbType for compatibility.

@@ -32,6 +32,7 @@ Web UI available at http://localhost:8080
 - Optional authentication with username/password login and API tokens
 - Prefix-based access control for both users and API tokens (read/write permissions)
 - Optional encrypted secrets storage with NaCl secretbox + Argon2id
+- Optional client-side zero-knowledge encryption (server never sees plaintext)
 - Optional git versioning with full audit trail and point-in-time recovery
 - Optional in-memory cache for read operations
 
@@ -489,6 +490,59 @@ The master key (`--secrets.key`) is held in memory during server operation. If c
 
 </details>
 
+## Zero-Knowledge Encryption
+
+Optional client-side encryption where the server never sees plaintext values. Encryption and decryption happen entirely in the Go client library - the server stores and serves opaque encrypted blobs unchanged.
+
+### How It Works
+
+```go
+client, err := stash.New("http://localhost:8080",
+    stash.WithZKKey("your-secret-passphrase"), // min 16 characters
+)
+
+// values are encrypted before sending to server
+err = client.Set(ctx, "app/credentials", `{"api_key": "secret123"}`)
+
+// values are decrypted automatically when retrieved
+value, err := client.Get(ctx, "app/credentials")
+// value = `{"api_key": "secret123"}`
+```
+
+### Encrypted Storage Format
+
+Values are stored with `$ZK$` prefix followed by base64-encoded encrypted data:
+
+```
+$ZK$<base64(salt ∥ nonce ∥ ciphertext ∥ auth_tag)>
+```
+
+- **Algorithm**: AES-256-GCM (authenticated encryption)
+- **Key derivation**: Argon2id (64MB memory, 1 iteration, 4 threads)
+- **Salt**: 16 bytes per encryption (unique)
+- **Nonce**: 12 bytes per encryption (unique)
+- **Auth tag**: 16 bytes (GCM authentication)
+
+### Web UI Behavior
+
+The web UI detects ZK-encrypted values by the `$ZK$` prefix and:
+
+- Shows a green shield icon (🛡️) next to encrypted keys
+- Displays "Zero-Knowledge Encrypted" badge in the view modal
+- Hides the Edit button (server cannot decrypt to show editable content)
+
+### vs Secrets Vault
+
+| Feature | Zero-Knowledge | Secrets Vault |
+|---------|---------------|---------------|
+| Encryption | Client-side | Server-side |
+| Key holder | Client only | Server |
+| Server sees | Encrypted blob | Plaintext (briefly) |
+| Web UI edit | Disabled | Enabled |
+| Use case | Maximum security | Convenience |
+
+Use Zero-Knowledge when the server should never have access to plaintext (e.g., third-party credentials, sensitive tokens). Use Secrets Vault when you need server-side access but want encryption at rest.
+
 ## API
 
 ### Get value
@@ -677,9 +731,15 @@ value, err := client.Get(ctx, "app/config")
 err = client.SetWithFormat(ctx, "app/config", `{"debug": true}`, stash.FormatJSON)
 err = client.Delete(ctx, "app/config")
 keys, err := client.List(ctx, "app/")
+
+// with zero-knowledge encryption (server never sees plaintext)
+zkClient, err := stash.New("http://localhost:8080",
+    stash.WithZKKey("your-secret-passphrase"),
+)
+err = zkClient.Set(ctx, "app/secrets/api-key", "secret-value") // encrypted client-side
 ```
 
-Features: automatic retries, configurable timeout, Bearer token auth. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
+Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
 
 ## Docker
 

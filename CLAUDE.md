@@ -16,10 +16,11 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `templates/` - Embedded HTML templates (base, index, login, partials)
   - `mocks/` - Generated mocks (moq)
 - **app/store/** - Database storage layer (SQLite/PostgreSQL)
-  - `store.go` - Interface, types (KeyInfo with Secret field), errors
+  - `store.go` - Interface, types (KeyInfo with Secret/ZKEncrypted fields), errors
   - `db.go` - Unified Store with SQLite and PostgreSQL support
   - `cached.go` - Loading cache wrapper using lcw
   - `crypto.go` - Secrets encryption (NaCl secretbox + Argon2id)
+  - `zkcrypto.go` - Zero-knowledge encryption detection (AES-256-GCM + Argon2id)
 - **app/git/** - Git versioning for key-value storage
   - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
   - `git_test.go` - Unit tests
@@ -177,6 +178,10 @@ POST   /logout                   # clear session, redirect to login
 - Secrets permissions: explicit grant required (wildcards don't grant secrets), prefixPerm.grantsSecrets()
 - Secrets API: returns 400 if secret path but --secrets.key not configured
 - Secrets size: GetInfo returns encrypted storage size (larger than plaintext due to salt, nonce, auth tag)
+- ZK encryption: client-side encryption, server stores opaque `$ZK$<base64>` blobs unchanged
+- ZK detection: `IsZKEncrypted()` in zkcrypto.go, `ZKEncrypted` field in KeyInfo (db.go uses SUBSTR)
+- ZK web UI: green shield icon, "Zero-Knowledge Encrypted" badge, edit disabled (server can't decrypt)
+- ZK client library: `lib/stash/zk.go` with `WithZKKey(passphrase)` option, auto encrypt/decrypt
 - Changelog: CHANGELOG.md (uppercase) in project root, uses Keep a Changelog format
 - Keep it simple - no over-engineering
 
@@ -218,3 +223,7 @@ POST   /logout                   # clear session, redirect to login
 - `button[hx-post="/web/view-mode"]` - view mode toggle
 - `.sort-button` - sort toggle
 - `input[name="search"]` - search input (300ms debounce)
+
+**ZK Encryption Indicators:**
+- `.zk-lock-icon` - green shield icon in table/card row (svg)
+- `.zk-badge` - "Zero-Knowledge Encrypted" badge in view modal

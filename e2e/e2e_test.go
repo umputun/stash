@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -904,6 +905,113 @@ func TestUI_SecretsNotConfiguredError(t *testing.T) {
 	errorText, err := errorMsg.TextContent()
 	require.NoError(t, err)
 	assert.Contains(t, errorText, "Secrets not configured", "should show secrets not configured error")
+
+	// close modal
+	require.NoError(t, page.Locator("#main-modal .modal-close").Click())
+	waitHidden(t, modal)
+}
+
+// ==================== Zero-Knowledge Encryption Tests ====================
+
+const apiToken = "e2e-admin-token-12345"
+
+// createZKKeyViaAPI creates a ZK-encrypted key via API (simulates client-side encryption)
+func createZKKeyViaAPI(t *testing.T, key, zkValue string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, baseURL+"/kv/"+key, strings.NewReader(zkValue))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// deleteKeyViaAPI deletes a key via API
+func deleteKeyViaAPI(t *testing.T, key string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, baseURL+"/kv/"+key, http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+}
+
+func TestZK_ShowsDistinctIcon(t *testing.T) {
+	// create ZK-encrypted key via API (with $ZK$ prefix)
+	keyName := "e2e-zk/icon-test"
+	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU=" // $ZK$ prefix + base64
+	createZKKeyViaAPI(t, keyName, zkValue)
+	defer deleteKeyViaAPI(t, keyName)
+
+	page := newPage(t)
+	login(t, page, "admin", "testpass")
+
+	// find the row with ZK key
+	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, keyName))
+	waitVisible(t, row)
+
+	// should have ZK lock icon (green shield)
+	zkIcon := row.Locator(".zk-lock-icon")
+	visible, err := zkIcon.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, visible, "ZK-encrypted key should show lock icon")
+}
+
+func TestZK_EditButtonHidden(t *testing.T) {
+	// create ZK-encrypted key via API
+	keyName := "e2e-zk/edit-hidden-test"
+	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU="
+	createZKKeyViaAPI(t, keyName, zkValue)
+	defer deleteKeyViaAPI(t, keyName)
+
+	page := newPage(t)
+	login(t, page, "admin", "testpass")
+
+	// find the row with ZK key
+	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, keyName))
+	waitVisible(t, row)
+
+	// edit button should NOT be visible for ZK-encrypted keys
+	editBtn := row.Locator(".btn-edit")
+	visible, err := editBtn.IsVisible()
+	require.NoError(t, err)
+	assert.False(t, visible, "edit button should be hidden for ZK-encrypted keys")
+
+	// delete button should still be visible
+	deleteBtn := row.Locator(".btn-danger")
+	deleteVisible, err := deleteBtn.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, deleteVisible, "delete button should still be visible")
+}
+
+func TestZK_ViewModalShowsBadge(t *testing.T) {
+	// create ZK-encrypted key via API
+	keyName := "e2e-zk/badge-test"
+	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU="
+	createZKKeyViaAPI(t, keyName, zkValue)
+	defer deleteKeyViaAPI(t, keyName)
+
+	page := newPage(t)
+	login(t, page, "admin", "testpass")
+
+	// view the key
+	modal := viewKey(t, page, keyName)
+
+	// should show ZK badge in modal header
+	zkBadge := page.Locator(".zk-badge")
+	waitVisible(t, zkBadge)
+
+	badgeText, err := zkBadge.TextContent()
+	require.NoError(t, err)
+	assert.Contains(t, badgeText, "Zero-Knowledge Encrypted")
+
+	// edit button should NOT be visible in modal footer
+	editBtn := modal.Locator(`button:has-text("Edit")`)
+	editVisible, err := editBtn.IsVisible()
+	require.NoError(t, err)
+	assert.False(t, editVisible, "edit button should be hidden in modal for ZK-encrypted keys")
 
 	// close modal
 	require.NoError(t, page.Locator("#main-modal .modal-close").Click())

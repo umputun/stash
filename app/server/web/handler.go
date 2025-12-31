@@ -277,6 +277,7 @@ type templateData struct {
 	Formats        []string      // available format options
 	IsBinary       bool
 	IsNew          bool
+	ZKEncrypted    bool // true if value is ZK-encrypted (client-side encryption)
 
 	// display settings
 	Theme    enum.Theme

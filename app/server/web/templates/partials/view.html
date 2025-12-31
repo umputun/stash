@@ -2,6 +2,7 @@
 <div class="modal-header">
     <h2>View Key</h2>
     <div class="modal-header-right">
+        {{if .ZKEncrypted}}<span class="zk-badge">Zero-Knowledge Encrypted</span>{{end}}
         {{if and .Format (ne .Format "text")}}<span class="format-badge">{{.Format}}</span>{{end}}
         <button class="modal-close" onclick="hideModal('main-modal')">&times;</button>
     </div>
@@ -29,7 +30,7 @@
             hx-swap="innerHTML"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History</button>
     {{end}}
     <button class="btn btn-secondary" onclick="hideModal('main-modal')">Close</button>
-    {{if .CanWrite}}
+    {{if and .CanWrite (not .ZKEncrypted)}}
     <button class="btn btn-primary"
             hx-get="{{.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
             hx-target="#modal-content"

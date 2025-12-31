@@ -296,6 +296,52 @@ func TestStore_GetInfo(t *testing.T) {
 	}
 }
 
+func TestStore_ZKEncrypted(t *testing.T) {
+	for _, engine := range testEngines {
+		t.Run(engine, func(t *testing.T) {
+			st := newTestStore(t, engine)
+
+			// create a regular key and a ZK-encrypted key
+			err := st.Set(t.Context(), "zk/regular", []byte("plain value"), "text")
+			require.NoError(t, err)
+			err = st.Set(t.Context(), "zk/encrypted", []byte("$ZK$somefakebase64data"), "text")
+			require.NoError(t, err)
+
+			t.Run("GetInfo returns ZKEncrypted=true for $ZK$ values", func(t *testing.T) {
+				info, err := st.GetInfo(t.Context(), "zk/encrypted")
+				require.NoError(t, err)
+				assert.True(t, info.ZKEncrypted, "ZKEncrypted should be true for $ZK$ prefix")
+			})
+
+			t.Run("GetInfo returns ZKEncrypted=false for regular values", func(t *testing.T) {
+				info, err := st.GetInfo(t.Context(), "zk/regular")
+				require.NoError(t, err)
+				assert.False(t, info.ZKEncrypted, "ZKEncrypted should be false for regular values")
+			})
+
+			t.Run("List returns ZKEncrypted flag correctly", func(t *testing.T) {
+				keys, err := st.List(t.Context(), enum.SecretsFilterAll)
+				require.NoError(t, err)
+
+				var regularInfo, encryptedInfo *KeyInfo
+				for i := range keys {
+					if keys[i].Key == "zk/regular" {
+						regularInfo = &keys[i]
+					}
+					if keys[i].Key == "zk/encrypted" {
+						encryptedInfo = &keys[i]
+					}
+				}
+				require.NotNil(t, regularInfo, "regular key not found")
+				require.NotNil(t, encryptedInfo, "encrypted key not found")
+
+				assert.False(t, regularInfo.ZKEncrypted, "ZKEncrypted should be false for regular key")
+				assert.True(t, encryptedInfo.ZKEncrypted, "ZKEncrypted should be true for $ZK$ key")
+			})
+		})
+	}
+}
+
 func TestDetectDBType(t *testing.T) {
 	tests := []struct {
 		url    string

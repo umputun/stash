@@ -345,9 +345,13 @@ func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 		return KeyInfo{}, ErrSecretsNotConfigured
 	}
 
-	var info KeyInfo
-	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv WHERE key = ?`)
-	err := s.db.GetContext(ctx, &info, query, key)
+	var result struct {
+		KeyInfo
+		ValuePrefix []byte `db:"value_prefix"`
+	}
+	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at,
+		SUBSTR(value, 1, 5) as value_prefix FROM kv WHERE key = ?`)
+	err := s.db.GetContext(ctx, &result, query, key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return KeyInfo{}, ErrNotFound
 	}
@@ -356,9 +360,11 @@ func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 	}
 
 	// set secret flag based on key path
-	info.Secret = IsSecret(key)
+	result.Secret = IsSecret(key)
+	// set ZK encrypted flag based on value prefix
+	result.ZKEncrypted = IsZKEncrypted(result.ValuePrefix)
 
-	return info, nil
+	return result.KeyInfo, nil
 }
 
 // Set stores the value for the given key with the specified format.
@@ -520,16 +526,22 @@ func (s *Store) List(ctx context.Context, filter enum.SecretsFilter) ([]KeyInfo,
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var keys []KeyInfo
-	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at FROM kv ORDER BY updated_at DESC`)
+	type keyWithPrefix struct {
+		KeyInfo
+		ValuePrefix []byte `db:"value_prefix"`
+	}
+	var keys []keyWithPrefix
+	query := s.adoptQuery(`SELECT key, length(value) as size, format, created_at, updated_at,
+		SUBSTR(value, 1, 5) as value_prefix FROM kv ORDER BY updated_at DESC`)
 	if err := s.db.SelectContext(ctx, &keys, query); err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
-	// set secret flag and filter if needed
+	// set secret/ZK flags and filter if needed
 	result := make([]KeyInfo, 0, len(keys))
 	for i := range keys {
 		keys[i].Secret = IsSecret(keys[i].Key)
+		keys[i].ZKEncrypted = IsZKEncrypted(keys[i].ValuePrefix)
 
 		switch filter {
 		case enum.SecretsFilterSecretsOnly:
@@ -541,7 +553,7 @@ func (s *Store) List(ctx context.Context, filter enum.SecretsFilter) ([]KeyInfo,
 				continue // want non-secrets only, this is a secret
 			}
 		}
-		result = append(result, keys[i])
+		result = append(result, keys[i].KeyInfo)
 	}
 
 	log.Printf("[DEBUG] list keys: %d keys (filter=%s)", len(result), filter)

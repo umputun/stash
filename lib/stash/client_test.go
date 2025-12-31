@@ -523,3 +523,138 @@ func TestClient_Set_DefaultFormat(t *testing.T) {
 	err = c.Set(context.Background(), "key", "value")
 	require.NoError(t, err)
 }
+
+func TestClient_ZKEncryption(t *testing.T) {
+	const passphrase = "test-passphrase-16"
+
+	t.Run("WithZKKey creates client with encryption", func(t *testing.T) {
+		c, err := New("http://localhost", WithZKKey(passphrase))
+		require.NoError(t, err)
+		assert.NotNil(t, c.zkCrypto)
+	})
+
+	t.Run("WithZKKey rejects short passphrase", func(t *testing.T) {
+		_, err := New("http://localhost", WithZKKey("short"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "passphrase")
+	})
+
+	t.Run("Set encrypts value before sending", func(t *testing.T) {
+		var receivedBody string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			receivedBody = string(body)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		c, err := New(srv.URL, WithRetry(0, 0), WithZKKey(passphrase))
+		require.NoError(t, err)
+
+		err = c.Set(context.Background(), "secret/key", "plaintext value")
+		require.NoError(t, err)
+
+		// verify body starts with $ZK$ prefix
+		assert.Greater(t, len(receivedBody), 4, "body should not be empty")
+		assert.Equal(t, "$ZK$", receivedBody[:4], "body should start with $ZK$ prefix")
+		assert.NotEqual(t, "plaintext value", receivedBody, "value should be encrypted")
+	})
+
+	t.Run("Get decrypts $ZK$ value", func(t *testing.T) {
+		// first encrypt a value
+		zk, err := newZKCrypto(passphrase)
+		require.NoError(t, err)
+		encrypted, err := zk.encrypt([]byte("secret message"))
+		require.NoError(t, err)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(encrypted)
+		}))
+		defer srv.Close()
+
+		c, err := New(srv.URL, WithRetry(0, 0), WithZKKey(passphrase))
+		require.NoError(t, err)
+
+		val, err := c.Get(context.Background(), "secret/key")
+		require.NoError(t, err)
+		assert.Equal(t, "secret message", val)
+	})
+
+	t.Run("Get returns raw value when no ZK key configured", func(t *testing.T) {
+		// create encrypted value
+		zk, err := newZKCrypto(passphrase)
+		require.NoError(t, err)
+		encrypted, err := zk.encrypt([]byte("secret message"))
+		require.NoError(t, err)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(encrypted)
+		}))
+		defer srv.Close()
+
+		// client WITHOUT ZK key
+		c, err := New(srv.URL, WithRetry(0, 0))
+		require.NoError(t, err)
+
+		val, err := c.Get(context.Background(), "secret/key")
+		require.NoError(t, err)
+		// should return raw $ZK$ prefixed value
+		assert.True(t, len(val) > 4 && val[:4] == "$ZK$", "should return raw encrypted value")
+	})
+
+	t.Run("Get fails with wrong passphrase", func(t *testing.T) {
+		// encrypt with one passphrase
+		zk, err := newZKCrypto(passphrase)
+		require.NoError(t, err)
+		encrypted, err := zk.encrypt([]byte("secret message"))
+		require.NoError(t, err)
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(encrypted)
+		}))
+		defer srv.Close()
+
+		// client with DIFFERENT passphrase
+		c, err := New(srv.URL, WithRetry(0, 0), WithZKKey("different-pass-16"))
+		require.NoError(t, err)
+
+		_, err = c.Get(context.Background(), "secret/key")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decrypt")
+	})
+
+	t.Run("round-trip Set then Get", func(t *testing.T) {
+		var storedValue []byte
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut {
+				storedValue, _ = io.ReadAll(r.Body)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.Method == http.MethodGet {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(storedValue)
+				return
+			}
+		}))
+		defer srv.Close()
+
+		c, err := New(srv.URL, WithRetry(0, 0), WithZKKey(passphrase))
+		require.NoError(t, err)
+
+		// set a value
+		err = c.Set(context.Background(), "test/key", "my secret data")
+		require.NoError(t, err)
+
+		// verify stored value is encrypted
+		assert.True(t, len(storedValue) > 4 && string(storedValue[:4]) == "$ZK$")
+
+		// get it back
+		val, err := c.Get(context.Background(), "test/key")
+		require.NoError(t, err)
+		assert.Equal(t, "my secret data", val)
+	})
+}

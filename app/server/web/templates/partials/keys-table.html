@@ -8,7 +8,7 @@
          hx-target="#modal-content"
          hx-swap="innerHTML">
         <div class="key-card-header">
-            <span class="key-card-name">{{.Key}}{{if .Secret}} <svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</span>
+            <span class="key-card-name">{{.Key}}{{if .Secret}} <svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}{{if .ZKEncrypted}} <svg class="zk-lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Zero-Knowledge Encrypted"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>{{end}}</span>
         </div>
         <div class="key-card-meta">
             <span>{{.Size | formatSize}}</span>
@@ -16,11 +16,13 @@
         </div>
         {{if .CanWrite}}
         <div class="key-card-actions">
+            {{if not .ZKEncrypted}}
             <button class="btn btn-edit btn-small"
                     onclick="event.stopPropagation()"
                     hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
                     hx-target="#modal-content"
                     hx-swap="innerHTML">Edit</button>
+            {{end}}
             <button class="btn btn-danger btn-small"
                     onclick="event.stopPropagation(); showConfirmDelete('{{.Key | js}}', '{{$.BaseURL}}/web/keys/{{.Key | urlEncode}}')">Delete</button>
         </div>
@@ -46,17 +48,19 @@
             hx-target="#modal-content"
             hx-swap="innerHTML"
             hx-trigger="click target:td:not(.actions-cell)">
-            <td class="key-cell">{{.Key}}{{if .Secret}} <svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}</td>
+            <td class="key-cell">{{.Key}}{{if .Secret}} <svg class="lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>{{end}}{{if .ZKEncrypted}} <svg class="zk-lock-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Zero-Knowledge Encrypted"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>{{end}}</td>
             <td class="size-cell">{{.Size | formatSize}}</td>
             <td class="date-cell">{{.UpdatedAt | formatTime}}</td>
             <td class="date-cell">{{.CreatedAt | formatTime}}</td>
             {{if $.CanWrite}}
             <td class="actions-cell">
                 {{if .CanWrite}}
+                {{if not .ZKEncrypted}}
                 <button class="btn btn-edit btn-small"
                         hx-get="{{$.BaseURL}}/web/keys/edit/{{.Key | urlEncode}}"
                         hx-target="#modal-content"
                         hx-swap="innerHTML">Edit</button>
+                {{end}}
                 <button class="btn btn-danger btn-small"
                         onclick="showConfirmDelete('{{.Key | js}}', '{{$.BaseURL}}/web/keys/{{.Key | urlEncode}}')">Delete</button>
                 {{end}}

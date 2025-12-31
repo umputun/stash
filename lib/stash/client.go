@@ -26,15 +26,17 @@ const (
 type Client struct {
 	baseURL   string
 	requester *requester.Requester
+	zkCrypto  *zkCrypto // for client-side ZK encryption (nil = disabled)
 }
 
 // clientConfig holds configuration options during client construction.
 type clientConfig struct {
-	token      string
-	timeout    time.Duration
-	retryCount int
-	retryDelay time.Duration
-	httpClient *http.Client
+	token        string
+	timeout      time.Duration
+	retryCount   int
+	retryDelay   time.Duration
+	httpClient   *http.Client
+	zkPassphrase string // for client-side ZK encryption
 }
 
 // Option is a functional option for configuring the client.
@@ -68,6 +70,17 @@ func WithRetry(count int, delay time.Duration) Option {
 func WithHTTPClient(client *http.Client) Option {
 	return func(cfg *clientConfig) {
 		cfg.httpClient = client
+	}
+}
+
+// WithZKKey enables client-side zero-knowledge encryption with the given passphrase.
+// When enabled, all values stored via Set/SetWithFormat will be encrypted before sending
+// to the server, and values retrieved via Get/GetBytes will be decrypted if they have
+// the $ZK$ prefix. The server never sees plaintext values.
+// Passphrase must be at least 16 characters.
+func WithZKKey(passphrase string) Option {
+	return func(cfg *clientConfig) {
+		cfg.zkPassphrase = passphrase
 	}
 }
 
@@ -114,9 +127,20 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		httpClient = &http.Client{Timeout: cfg.timeout}
 	}
 
+	// initialize ZK encryption if passphrase provided
+	var zk *zkCrypto
+	if cfg.zkPassphrase != "" {
+		var err error
+		zk, err = newZKCrypto(cfg.zkPassphrase)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ZK passphrase: %w", err)
+		}
+	}
+
 	return &Client{
 		baseURL:   baseURL,
 		requester: requester.New(*httpClient, middlewares...),
+		zkCrypto:  zk,
 	}, nil
 }
 
@@ -169,6 +193,15 @@ func (c *Client) GetBytes(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	// decrypt if ZK-encrypted and we have the key
+	if c.zkCrypto != nil && isZKEncrypted(body) {
+		decrypted, err := c.zkCrypto.decrypt(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt ZK value: %w", err)
+		}
+		return decrypted, nil
+	}
+
 	return body, nil
 }
 
@@ -211,7 +244,17 @@ func (c *Client) SetWithFormat(ctx context.Context, key, value string, format Fo
 		return fmt.Errorf("failed to build URL: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, strings.NewReader(value))
+	// encrypt if ZK key is configured
+	body := value
+	if c.zkCrypto != nil {
+		encrypted, encErr := c.zkCrypto.encrypt([]byte(value))
+		if encErr != nil {
+			return fmt.Errorf("failed to encrypt value: %w", encErr)
+		}
+		body = string(encrypted)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
