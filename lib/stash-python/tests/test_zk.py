@@ -114,8 +114,11 @@ class TestZKCrypto:
         zk = ZKCrypto("test-passphrase-16chars")
         encrypted = zk.encrypt(b"hello")
 
-        # corrupt the ciphertext by modifying bytes
-        corrupted = encrypted[:20] + b"X" + encrypted[21:]
+        # corrupt by replacing with a different valid base64 char
+        # use 'A' or 'B' - guaranteed different from at least one
+        original_byte = encrypted[20]
+        replacement = b"A" if original_byte != ord("A") else b"B"
+        corrupted = encrypted[:20] + replacement + encrypted[21:]
 
         with pytest.raises(DecryptionError):
             zk.decrypt(corrupted)
