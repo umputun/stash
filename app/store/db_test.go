@@ -990,6 +990,45 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				assert.True(t, IsZKEncrypted(rawValue), "raw stored value should have $ZK$ prefix")
 				assert.Equal(t, zkValue, rawValue, "raw value should match original ZK value")
 			})
+
+			t.Run("GetWithFormat returns ZK value as-is in secrets path", func(t *testing.T) {
+				zkValue, err := zk.Encrypt([]byte("format-test-value"))
+				require.NoError(t, err)
+				key := prefix + "secrets/format-test"
+
+				err = store.Set(ctx, key, zkValue, "json")
+				require.NoError(t, err)
+
+				value, format, err := store.GetWithFormat(ctx, key)
+				require.NoError(t, err)
+				assert.Equal(t, zkValue, value, "ZK value should be returned as-is via GetWithFormat")
+				assert.Equal(t, "json", format)
+			})
+
+			t.Run("SetWithVersion works with ZK values in secrets path", func(t *testing.T) {
+				zkValue, err := zk.Encrypt([]byte("version-test-value"))
+				require.NoError(t, err)
+				key := prefix + "secrets/version-test"
+
+				// first set
+				err = store.Set(ctx, key, zkValue, "text")
+				require.NoError(t, err)
+
+				// get current version
+				info, err := store.GetInfo(ctx, key)
+				require.NoError(t, err)
+
+				// update with version
+				newZKValue, err := zk.Encrypt([]byte("updated-version-value"))
+				require.NoError(t, err)
+				err = store.SetWithVersion(ctx, key, newZKValue, "text", info.UpdatedAt)
+				require.NoError(t, err)
+
+				// verify updated value
+				value, err := store.Get(ctx, key)
+				require.NoError(t, err)
+				assert.Equal(t, newZKValue, value)
+			})
 		})
 	}
 }

@@ -86,11 +86,13 @@ func WithZKKey(passphrase string) Option {
 
 // KeyInfo contains metadata about a stored key.
 type KeyInfo struct {
-	Key       string    `json:"key"`
-	Size      int       `json:"size"`
-	Format    string    `json:"format"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Key         string    `json:"key"`
+	Size        int       `json:"size"`
+	Format      string    `json:"format"`
+	Secret      bool      `json:"secret"`
+	ZKEncrypted bool      `json:"zk_encrypted"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // New creates a new Stash client with the given base URL and options.
@@ -342,6 +344,14 @@ func (c *Client) Ping(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	return c.checkResponse(resp)
+}
+
+// Close clears sensitive data from memory.
+// Call this when the client is no longer needed.
+func (c *Client) Close() {
+	if c.zkCrypto != nil {
+		c.zkCrypto.clear()
+	}
 }
 
 // checkResponse handles HTTP response status codes and returns appropriate errors.

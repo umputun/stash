@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/umputun/stash/app/store"
 )
 
 func TestIsZKEncrypted(t *testing.T) {
@@ -185,4 +187,44 @@ func TestNewZKCrypto_Validation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestZKCrypto_CrossCompatibility(t *testing.T) {
+	// verify lib/stash.zkCrypto can decrypt what app/store.ZKCrypto encrypts (and vice versa)
+	// this ensures both implementations use identical crypto parameters
+
+	passphrase := "test-passphrase-min-16"
+	plaintext := "secret value to encrypt"
+
+	t.Run("lib can decrypt store encrypted value", func(t *testing.T) {
+		// encrypt with store.ZKCrypto
+		storeZK, err := store.NewZKCrypto([]byte(passphrase))
+		require.NoError(t, err)
+		encrypted, err := storeZK.Encrypt([]byte(plaintext))
+		require.NoError(t, err)
+
+		// decrypt with lib.zkCrypto
+		libZK, err := newZKCrypto(passphrase)
+		require.NoError(t, err)
+		decrypted, err := libZK.decrypt(encrypted)
+		require.NoError(t, err)
+
+		assert.Equal(t, plaintext, string(decrypted))
+	})
+
+	t.Run("store can decrypt lib encrypted value", func(t *testing.T) {
+		// encrypt with lib.zkCrypto
+		libZK, err := newZKCrypto(passphrase)
+		require.NoError(t, err)
+		encrypted, err := libZK.encrypt([]byte(plaintext))
+		require.NoError(t, err)
+
+		// decrypt with store.ZKCrypto
+		storeZK, err := store.NewZKCrypto([]byte(passphrase))
+		require.NoError(t, err)
+		decrypted, err := storeZK.Decrypt(encrypted)
+		require.NoError(t, err)
+
+		assert.Equal(t, plaintext, string(decrypted))
+	})
 }

@@ -113,6 +113,30 @@ func TestHandler_HandleList(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "app/config")
 	})
 
+	t.Run("returns ZKEncrypted field in response", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			ListFunc: func(_ context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error) {
+				return []store.KeyInfo{
+					{Key: "regular/key", Size: 50, Secret: false, ZKEncrypted: false},
+					{Key: "secrets/zk-key", Size: 100, Secret: true, ZKEncrypted: true},
+				}, nil
+			},
+		}
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc: func() bool { return false },
+		}
+		h := newTestHandler(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
+		rec := httptest.NewRecorder()
+		h.handleList(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		body := rec.Body.String()
+		assert.Contains(t, body, `"zk_encrypted":false`)
+		assert.Contains(t, body, `"zk_encrypted":true`)
+	})
+
 	t.Run("invalid filter parameter", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{}
@@ -350,6 +374,24 @@ func TestHandler_HandleSet(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 		assert.Contains(t, rec.Body.String(), "secrets not configured")
+	})
+
+	t.Run("invalid ZK payload returns 400", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) error {
+				return store.ErrInvalidZKPayload
+			},
+		}
+		auth := &mocks.AuthProviderMock{}
+		h := New(st, auth, defaultFormatValidator(), nil)
+
+		req := httptest.NewRequest(http.MethodPut, "/kv/secrets/zk-key", strings.NewReader("$ZK$invalid"))
+		req.SetPathValue("key", "secrets/zk-key")
+		rec := httptest.NewRecorder()
+		h.handleSet(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Contains(t, rec.Body.String(), "invalid ZK payload")
 	})
 }
 

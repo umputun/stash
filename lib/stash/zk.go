@@ -42,7 +42,7 @@ type zkCrypto struct {
 // Passphrase must be at least 16 bytes.
 func newZKCrypto(passphrase string) (*zkCrypto, error) {
 	if len(passphrase) < zkMinKeyLen {
-		return nil, errors.New("passphrase must be at least 16 characters")
+		return nil, errors.New("passphrase must be at least 16 bytes")
 	}
 	return &zkCrypto{passphrase: []byte(passphrase)}, nil
 }
@@ -144,4 +144,11 @@ func (z *zkCrypto) decrypt(encrypted []byte) ([]byte, error) {
 // deriveKey derives a 32-byte AES key from passphrase and salt using Argon2id.
 func (z *zkCrypto) deriveKey(salt []byte) []byte {
 	return argon2.IDKey(z.passphrase, salt, argonTime, argonMemory, argonThreads, zkKeySize)
+}
+
+// clear securely clears the passphrase from memory.
+func (z *zkCrypto) clear() {
+	for i := range z.passphrase {
+		z.passphrase[i] = 0
+	}
 }

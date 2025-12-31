@@ -49,6 +49,7 @@ func IsValidZKPayload(value []byte) bool {
 }
 
 // ZKCrypto handles client-side zero-knowledge encryption using AES-256-GCM with Argon2id key derivation.
+// This is exported for test fixture generation; production clients should use lib/stash.WithZKKey().
 type ZKCrypto struct {
 	passphrase []byte
 }

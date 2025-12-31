@@ -212,11 +212,13 @@ Checks server connectivity.
 
 ```go
 type KeyInfo struct {
-    Key       string
-    Size      int
-    Format    string
-    CreatedAt time.Time
-    UpdatedAt time.Time
+    Key         string
+    Size        int
+    Format      string
+    Secret      bool      // true if key is in a secrets path
+    ZKEncrypted bool      // true if value is ZK-encrypted
+    CreatedAt   time.Time
+    UpdatedAt   time.Time
 }
 ```
 

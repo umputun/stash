@@ -200,6 +200,52 @@ func TestHandler_HandleKeyEdit(t *testing.T) {
 
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	})
+
+	t.Run("ZK-encrypted key blocks edit", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) {
+				return []byte("$ZK$dGVzdA=="), "text", nil // ZK-encrypted value
+			},
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+		}
+		auth := &mocks.AuthProviderMock{
+			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		}
+		h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+		req := httptest.NewRequest(http.MethodGet, "/web/keys/edit/zk-key", http.NoBody)
+		req.SetPathValue("key", "zk-key")
+		rec := httptest.NewRecorder()
+		h.handleKeyEdit(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Cannot edit")
+		assert.Contains(t, rec.Body.String(), "zero-knowledge encryption")
+	})
+}
+
+func TestHandler_HandleKeyView_ZKEncrypted(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) {
+			return []byte("$ZK$dGVzdA=="), "text", nil // ZK-encrypted value
+		},
+		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		SecretsEnabledFunc: func() bool { return false },
+	}
+	auth := &mocks.AuthProviderMock{
+		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+	}
+	h := newTestHandlerWithStoreAndAuth(t, st, auth)
+
+	req := httptest.NewRequest(http.MethodGet, "/web/keys/view/zk-key", http.NoBody)
+	req.SetPathValue("key", "zk-key")
+	rec := httptest.NewRecorder()
+	h.handleKeyView(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	// ZK encrypted value should be shown as-is since server can't decrypt
+	assert.Contains(t, rec.Body.String(), "$ZK$")
 }
 
 func TestHandler_HandleKeyCreate(t *testing.T) {

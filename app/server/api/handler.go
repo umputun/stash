@@ -257,6 +257,10 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
 			return
 		}
+		if errors.Is(err, store.ErrInvalidZKPayload) {
+			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "invalid ZK payload")
+			return
+		}
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to set key")
 		return
 	}

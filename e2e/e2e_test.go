@@ -253,6 +253,33 @@ func viewKey(t *testing.T, page playwright.Page, key string) playwright.Locator 
 	return modal
 }
 
+// viewKeyByText opens the view modal for a key using text content matching.
+// use this for keys with icons (ZK, secrets) where :has-text() CSS selector may fail
+// due to trailing whitespace from icon SVG elements.
+func viewKeyByText(t *testing.T, page playwright.Page, key string) playwright.Locator {
+	t.Helper()
+	// wait for table to load
+	table := page.Locator("table tbody")
+	waitVisible(t, table)
+
+	// find cell by text content (more reliable than :has-text with trailing whitespace)
+	allCells, err := page.Locator("td.key-cell").All()
+	require.NoError(t, err)
+	var keyCell playwright.Locator
+	for _, cell := range allCells {
+		text, _ := cell.TextContent()
+		if strings.Contains(text, key) {
+			keyCell = cell
+			break
+		}
+	}
+	require.NotNil(t, keyCell, "key cell not found for %s", key)
+	require.NoError(t, keyCell.Click())
+	modal := page.Locator("#main-modal.active")
+	waitVisible(t, modal)
+	return modal
+}
+
 // cleanupKeys removes all keys with given prefix
 func cleanupKeys(t *testing.T, page playwright.Page, prefix string) {
 	t.Helper()
@@ -1008,8 +1035,8 @@ func TestZK_ViewModalShowsBadge(t *testing.T) {
 	page := newPage(t)
 	login(t, page, "admin", "testpass")
 
-	// view the key
-	modal := viewKey(t, page, keyName)
+	// click the ZK key to view - use viewKeyByText for ZK keys with trailing icon whitespace
+	modal := viewKeyByText(t, page, keyName)
 
 	// should show ZK badge in modal header
 	zkBadge := page.Locator(".zk-badge")
