@@ -35,6 +35,7 @@ Web UI available at http://localhost:8080
 - Optional client-side zero-knowledge encryption (server never sees plaintext)
 - Optional git versioning with full audit trail and point-in-time recovery
 - Optional in-memory cache for read operations
+- Go and Python client libraries with full API support and client-side, zero-knowledge encryption
 
 ## Security Note
 
@@ -761,6 +762,32 @@ err = zkClient.Set(ctx, "app/secrets/api-key", "secret-value") // encrypted clie
 ```
 
 Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
+
+## Python Client Library
+
+A Python client library is available with the same features as the Go client:
+
+```bash
+pip install stash-client
+```
+
+```python
+from stash import Client
+
+client = Client("http://localhost:8080", token="your-api-token")
+
+# get/set/delete/list operations
+value = client.get("app/config")
+client.set("app/config", '{"debug": true}', fmt="json")
+client.delete("app/config")
+keys = client.list("app/")
+
+# with zero-knowledge encryption (server never sees plaintext)
+zk_client = Client("http://localhost:8080", zk_key="your-secret-passphrase")
+zk_client.set("app/secrets/api-key", "secret-value")  # encrypted client-side
+```
+
+Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go client). See [lib/stash-python/README.md](lib/stash-python/README.md) for full documentation.
 
 ## Docker
 
