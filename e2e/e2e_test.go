@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"testing"
 	"time"
 
@@ -193,10 +194,15 @@ func createKey(t *testing.T, page playwright.Page, key, value string) {
 	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(value))
 	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
 	waitVisible(t, submitBtn)
-	require.NoError(t, submitBtn.Click())
 
-	// wait for table to show the new key (positive signal that HTMX swap completed)
-	// this is more reliable than waiting for modal to hide first
+	// click submit and wait for HTMX response to complete
+	resp, err := page.ExpectResponse(baseURL+"/web/keys", func() error {
+		return submitBtn.Click()
+	}, playwright.PageExpectResponseOptions{Timeout: playwright.Float(15000)})
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.Status())
+
+	// now wait for the key to appear in table (DOM updated after response)
 	waitVisible(t, page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, key)))
 }
 
@@ -215,9 +221,15 @@ func createKeyWithFormat(t *testing.T, page playwright.Page, key, value, format 
 	require.NoError(t, err)
 	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
 	waitVisible(t, submitBtn)
-	require.NoError(t, submitBtn.Click())
 
-	// wait for table to show the new key (positive signal that HTMX swap completed)
+	// click submit and wait for HTMX response to complete
+	resp, err := page.ExpectResponse(baseURL+"/web/keys", func() error {
+		return submitBtn.Click()
+	}, playwright.PageExpectResponseOptions{Timeout: playwright.Float(15000)})
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.Status())
+
+	// now wait for the key to appear in table (DOM updated after response)
 	waitVisible(t, page.Locator(fmt.Sprintf(`td.key-cell:has-text(%q)`, key)))
 }
 
@@ -236,10 +248,15 @@ func updateKey(t *testing.T, page playwright.Page, key, value string) {
 	require.NoError(t, textarea.Fill(value))
 	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
 	waitVisible(t, submitBtn)
-	require.NoError(t, submitBtn.Click())
+
+	// click submit and wait for HTMX response to complete
+	resp, err := page.ExpectResponse(regexp.MustCompile(`/web/keys/`), func() error {
+		return submitBtn.Click()
+	}, playwright.PageExpectResponseOptions{Timeout: playwright.Float(15000)})
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.Status())
 
 	// wait for table refresh (edit button reappears after HTMX swap completes)
-	// this is more reliable than waiting for modal .active class removal
 	waitVisible(t, row.Locator(".btn-edit"))
 }
 
