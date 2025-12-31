@@ -4,8 +4,10 @@ package e2e
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -569,4 +571,68 @@ func TestSecrets_History(t *testing.T) {
 	waitVisible(t, confirmModal)
 	require.NoError(t, page.Locator("#confirm-delete-btn").Click())
 	waitHidden(t, confirmModal)
+}
+
+func TestZK_InSecretsPath(t *testing.T) {
+	// ZK-encrypted values in secrets paths should show both lock and shield icons,
+	// and edit button should be hidden (ZK takes precedence over server encryption)
+	cleanup := startSecretsServer(t)
+	defer cleanup()
+
+	// create a ZK-encrypted key via API using token auth
+	zkKey := "secrets/zk-api-key"
+	zkValue := "$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU=" // base64 encoded ZK value
+
+	req, err := http.NewRequest(http.MethodPut, secretsBaseURL+"/kv/"+zkKey, strings.NewReader(zkValue))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer e2e-secrets-token-12345")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "should create ZK key via API")
+
+	// login to UI
+	page := newPage(t)
+	_, err = page.Goto(secretsBaseURL + "/login")
+	require.NoError(t, err)
+
+	require.NoError(t, page.Locator("#username").Fill("admin"))
+	require.NoError(t, page.Locator("#password").Fill("testpass"))
+	require.NoError(t, page.Locator(`button[type="submit"]`).Click())
+	waitVisible(t, page.Locator(`h1:has-text("Stash")`))
+
+	// wait for key to appear in table
+	row := page.Locator(fmt.Sprintf(`tr:has-text(%q)`, zkKey))
+	waitVisible(t, row)
+
+	keyCell := row.Locator("td.key-cell")
+	waitVisible(t, keyCell)
+
+	// verify both icons are visible
+	lockIcon := keyCell.Locator(".lock-icon")
+	lockVisible, err := lockIcon.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, lockVisible, "lock icon should be visible for secrets path")
+
+	zkIcon := keyCell.Locator(".zk-lock-icon")
+	zkVisible, err := zkIcon.IsVisible()
+	require.NoError(t, err)
+	assert.True(t, zkVisible, "ZK shield icon should be visible for ZK-encrypted value")
+
+	// verify edit button is hidden (ZK values cannot be edited on server)
+	editBtn := row.Locator(".btn-edit")
+	editVisible, err := editBtn.IsVisible()
+	require.NoError(t, err)
+	assert.False(t, editVisible, "edit button should be hidden for ZK-encrypted values")
+
+	// cleanup - delete via API
+	req, err = http.NewRequest(http.MethodDelete, secretsBaseURL+"/kv/"+zkKey, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer e2e-secrets-token-12345")
+
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, "should delete ZK key via API")
 }

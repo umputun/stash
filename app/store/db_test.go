@@ -927,6 +927,59 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 	}
 }
 
+func TestStore_Secrets_ZKPrecedence(t *testing.T) {
+	// ZK-encrypted values in secrets paths should NOT be double-encrypted.
+	// ZK encryption takes precedence over server-side encryption.
+	for _, engine := range testEngines {
+		t.Run(engine, func(t *testing.T) {
+			store := newTestStoreWithEncryptor(t, engine)
+			ctx := t.Context()
+			prefix := "zk-prec/" + engine + "/"
+
+			t.Run("ZK value in secrets path is not double-encrypted", func(t *testing.T) {
+				zkValue := []byte("$ZK$dGVzdC1lbmNyeXB0ZWQtdmFsdWU=")
+				key := prefix + "secrets/zk-api-key"
+
+				err := store.Set(ctx, key, zkValue, "text")
+				require.NoError(t, err)
+
+				// get should return the ZK value as-is (not decrypted by server)
+				value, err := store.Get(ctx, key)
+				require.NoError(t, err)
+				assert.Equal(t, zkValue, value, "ZK value should be returned as-is")
+			})
+
+			t.Run("GetInfo shows both Secret and ZKEncrypted for ZK in secrets path", func(t *testing.T) {
+				zkValue := []byte("$ZK$YW5vdGhlci16ay12YWx1ZQ==")
+				key := prefix + "app/secrets/zk-creds"
+
+				err := store.Set(ctx, key, zkValue, "text")
+				require.NoError(t, err)
+
+				info, err := store.GetInfo(ctx, key)
+				require.NoError(t, err)
+				assert.True(t, info.Secret, "Secret flag should be true for secrets path")
+				assert.True(t, info.ZKEncrypted, "ZKEncrypted should be true for $ZK$ value")
+			})
+
+			t.Run("raw storage has $ZK$ prefix for ZK values in secrets path", func(t *testing.T) {
+				zkValue := []byte("$ZK$cmF3LXN0b3JhZ2UtdGVzdA==")
+				key := prefix + "secrets/raw-check"
+
+				err := store.Set(ctx, key, zkValue, "text")
+				require.NoError(t, err)
+
+				// check raw value in database - should have $ZK$ prefix, not encrypted
+				var rawValue []byte
+				err = store.db.Get(&rawValue, store.adoptQuery("SELECT value FROM kv WHERE key = ?"), key)
+				require.NoError(t, err)
+				assert.True(t, IsZKEncrypted(rawValue), "raw stored value should have $ZK$ prefix")
+				assert.Equal(t, zkValue, rawValue, "raw value should match original ZK value")
+			})
+		})
+	}
+}
+
 func TestStore_Secrets_WithoutEncryptor(t *testing.T) {
 	for _, engine := range testEngines {
 		t.Run(engine, func(t *testing.T) {

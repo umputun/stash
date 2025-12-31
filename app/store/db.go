@@ -283,8 +283,8 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to get key %q: %w", key, err)
 	}
 
-	// decrypt if this is a secret
-	if IsSecret(key) {
+	// decrypt if this is a secret (skip if ZK-encrypted - client handles decryption)
+	if IsSecret(key) && !IsZKEncrypted(value) {
 		decrypted, err := s.encryptor.Decrypt(value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt key %q: %w", key, err)
@@ -321,8 +321,8 @@ func (s *Store) GetWithFormat(ctx context.Context, key string) ([]byte, string, 
 		return nil, "", fmt.Errorf("failed to get key %q: %w", key, err)
 	}
 
-	// decrypt if this is a secret
-	if IsSecret(key) {
+	// decrypt if this is a secret (skip if ZK-encrypted - client handles decryption)
+	if IsSecret(key) && !IsZKEncrypted(result.Value) {
 		decrypted, err := s.encryptor.Decrypt(result.Value)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to decrypt key %q: %w", key, err)
@@ -384,9 +384,9 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 		format = "text"
 	}
 
-	// encrypt if this is a secret
+	// encrypt if this is a secret (skip if already ZK-encrypted)
 	storeValue := value
-	if IsSecret(key) {
+	if IsSecret(key) && !IsZKEncrypted(value) {
 		encrypted, err := s.encryptor.Encrypt(value)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt key %q: %w", key, err)
@@ -426,9 +426,9 @@ func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, fo
 		format = "text"
 	}
 
-	// encrypt if this is a secret
+	// encrypt if this is a secret (skip if already ZK-encrypted)
 	storeValue := value
-	if IsSecret(key) {
+	if IsSecret(key) && !IsZKEncrypted(value) {
 		encrypted, err := s.encryptor.Encrypt(value)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt key %q: %w", key, err)
@@ -475,9 +475,9 @@ func (s *Store) buildConflictError(ctx context.Context, key string, attemptedVer
 		return fmt.Errorf("failed to get current state for conflict: %w", err)
 	}
 
-	// decrypt value if this is a secret key
+	// decrypt value if this is a secret key (skip if ZK-encrypted)
 	currentValue := result.Value
-	if IsSecret(key) && s.encryptor != nil {
+	if IsSecret(key) && s.encryptor != nil && !IsZKEncrypted(result.Value) {
 		if decrypted, decErr := s.encryptor.Decrypt(result.Value); decErr == nil {
 			currentValue = decrypted
 		} else {
