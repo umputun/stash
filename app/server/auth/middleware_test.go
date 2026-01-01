@@ -298,7 +298,7 @@ tokens:
 	f := createTempFile(t, content)
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
-	require.NotNil(t, svc.getPublicACL(), "public ACL should be set")
+	require.True(t, svc.Enabled(), "auth should be enabled with public ACL")
 
 	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

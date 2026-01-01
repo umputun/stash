@@ -18,9 +18,11 @@ func (s *Service) SessionMiddleware(loginURL string) func(http.Handler) http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
 			for _, cookieName := range cookie.SessionCookieNames {
-				if c, err := r.Cookie(cookieName); err == nil && s.validateSession(r.Context(), c.Value) {
-					next.ServeHTTP(w, r)
-					return
+				if c, err := r.Cookie(cookieName); err == nil {
+					if _, ok := s.GetSessionUser(r.Context(), c.Value); ok {
+						next.ServeHTTP(w, r)
+						return
+					}
 				}
 			}
 			// no valid session - handle redirect based on request type
@@ -61,25 +63,9 @@ func (s *Service) TokenMiddleware(next http.Handler) http.Handler {
 		}
 
 		// also accept session cookie for API (allows UI to call API)
-		for _, cookieName := range cookie.SessionCookieNames {
-			c, err := r.Cookie(cookieName)
-			if err != nil {
-				continue
-			}
-			username, valid := s.GetSessionUser(r.Context(), c.Value)
-			if !valid {
-				continue
-			}
-			// for list operation, just verify session is valid (handler filters results)
-			if isList {
-				next.ServeHTTP(w, r)
-				return
-			}
-			// check user permissions for the key
-			if !s.CheckUserPermission(username, key, needWrite) {
-				log.Printf("[INFO] user %q denied %s access to key %q", username, r.Method, key)
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
+		if allowed, handled := s.checkSessionAuth(r, key, needWrite, isList, w); handled {
+			if !allowed {
+				return // already wrote error response
 			}
 			next.ServeHTTP(w, r)
 			return
@@ -135,4 +121,33 @@ func ExtractToken(r *http.Request) string {
 		return strings.TrimPrefix(authHeader, "Bearer ")
 	}
 	return ""
+}
+
+// checkSessionAuth checks if request has valid session cookie with appropriate permissions.
+// returns (allowed, handled): handled=true means caller should return (either success or error written).
+// allowed=false with handled=true means error response was written.
+func (s *Service) checkSessionAuth(r *http.Request, key string, needWrite, isList bool,
+	w http.ResponseWriter) (allowed, handled bool) {
+	for _, cookieName := range cookie.SessionCookieNames {
+		c, err := r.Cookie(cookieName)
+		if err != nil {
+			continue
+		}
+		username, valid := s.GetSessionUser(r.Context(), c.Value)
+		if !valid {
+			continue
+		}
+		// for list operation, just verify session is valid (handler filters results)
+		if isList {
+			return true, true
+		}
+		// check user permissions for the key
+		if !s.CheckUserPermission(username, key, needWrite) {
+			log.Printf("[INFO] user %q denied %s access to key %q", username, r.Method, key)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return false, true
+		}
+		return true, true
+	}
+	return false, false // no session found
 }

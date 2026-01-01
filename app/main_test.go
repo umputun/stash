@@ -1770,6 +1770,302 @@ func TestIntegration_SecretsNotConfigured(t *testing.T) {
 	}
 }
 
+func TestIntegration_XAuthTokenHeader(t *testing.T) {
+	// verify X-Auth-Token header works as alternative to Bearer token
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18503"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	authContent := `tokens:
+  - token: "x-auth-token"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18503/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("X-Auth-Token header works for write", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18503/kv/xauth/key1", bytes.NewBufferString("value1"))
+		require.NoError(t, err)
+		req.Header.Set("X-Auth-Token", "x-auth-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	})
+
+	t.Run("X-Auth-Token header works for read", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18503/kv/xauth/key1", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("X-Auth-Token", "x-auth-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "value1", string(body))
+	})
+
+	t.Run("X-Auth-Token takes priority over Bearer", func(t *testing.T) {
+		// use valid X-Auth-Token with invalid Bearer - should succeed
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18503/kv/xauth/key1", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("X-Auth-Token", "x-auth-token")
+		req.Header.Set("Authorization", "Bearer invalid-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Auth.File = ""
+}
+
+func TestIntegration_PublicACL(t *testing.T) {
+	// test public access when token="*" is configured
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18504"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	// public read access to "public/*", write requires token
+	authContent := `tokens:
+  - token: "*"
+    permissions:
+      - prefix: "public/*"
+        access: r
+  - token: "writer-token"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18504/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// setup test data using writer token
+	req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18504/kv/public/data", bytes.NewBufferString("public-value"))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer writer-token")
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+
+	req, err = http.NewRequest(http.MethodPut, "http://127.0.0.1:18504/kv/private/data", bytes.NewBufferString("private-value"))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer writer-token")
+	resp, err = client.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	t.Run("anonymous can read public path", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18504/kv/public/data")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Equal(t, "public-value", string(body))
+	})
+
+	t.Run("anonymous cannot read private path", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18504/kv/private/data")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	t.Run("anonymous cannot write to public path", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18504/kv/public/new", bytes.NewBufferString("new-value"))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	t.Run("anonymous can list and sees only public keys", func(t *testing.T) {
+		resp, err := client.Get("http://127.0.0.1:18504/kv/?prefix=")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		// should see public/data but not private/data
+		assert.Contains(t, string(body), "public/data")
+		assert.NotContains(t, string(body), "private/data")
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Auth.File = ""
+}
+
+func TestIntegration_APIListFiltering(t *testing.T) {
+	// test that API list endpoint filters keys by token permissions
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18505"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	authContent := `tokens:
+  - token: "admin-token"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - token: "app-token"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+  - token: "readonly-token"
+    permissions:
+      - prefix: "config/*"
+        access: r
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18505/ping")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// setup test data using admin token
+	keys := []string{"app/config", "app/db", "config/main", "other/data"}
+	for _, key := range keys {
+		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18505/kv/"+key, bytes.NewBufferString("value"))
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer admin-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+	}
+
+	t.Run("admin sees all keys", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18505/kv/", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer admin-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		for _, key := range keys {
+			assert.Contains(t, string(body), key)
+		}
+	})
+
+	t.Run("app-token sees only app/* keys", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18505/kv/", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer app-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		// should see app/* keys
+		assert.Contains(t, string(body), "app/config")
+		assert.Contains(t, string(body), "app/db")
+		// should NOT see other keys
+		assert.NotContains(t, string(body), "config/main")
+		assert.NotContains(t, string(body), "other/data")
+	})
+
+	t.Run("readonly-token sees only config/* keys", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18505/kv/", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer readonly-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		// should see config/* keys
+		assert.Contains(t, string(body), "config/main")
+		// should NOT see other keys
+		assert.NotContains(t, string(body), "app/config")
+		assert.NotContains(t, string(body), "app/db")
+		assert.NotContains(t, string(body), "other/data")
+	})
+
+	t.Run("list with prefix filter", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:18505/kv/?prefix=app/", http.NoBody)
+		require.NoError(t, err)
+		req.Header.Set("Authorization", "Bearer admin-token")
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		// should see only app/* keys
+		assert.Contains(t, string(body), "app/config")
+		assert.Contains(t, string(body), "app/db")
+		assert.NotContains(t, string(body), "config/main")
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Auth.File = ""
+}
+
 func TestIntegration_AuditTrail(t *testing.T) {
 	tmpDir := t.TempDir()
 	opts.DB = filepath.Join(tmpDir, "test.db")

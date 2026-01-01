@@ -152,7 +152,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
-	require.NotNil(t, svc.getPublicACL())
+	assert.True(t, svc.Enabled()) // public ACL means auth is enabled
 	assert.Empty(t, svc.tokens)
 	assert.Empty(t, svc.users)
 }
@@ -415,10 +415,6 @@ users:
 	assert.NotEmpty(t, token)
 	assert.Len(t, token, 36) // uuid format
 
-	// validate session
-	assert.True(t, svc.validateSession(t.Context(), token))
-	assert.False(t, svc.validateSession(t.Context(), "invalid"))
-
 	// get session user
 	username, valid := svc.GetSessionUser(t.Context(), token)
 	assert.True(t, valid)
@@ -430,7 +426,8 @@ users:
 
 	// invalidate session
 	svc.InvalidateSession(t.Context(), token)
-	assert.False(t, svc.validateSession(t.Context(), token))
+	_, valid = svc.GetSessionUser(t.Context(), token)
+	assert.False(t, valid)
 }
 
 func TestService_SessionExpiry(t *testing.T) {
@@ -450,15 +447,17 @@ users:
 	require.NoError(t, err)
 
 	// session should be valid immediately after creation
-	assert.True(t, svc.validateSession(t.Context(), token))
+	_, valid := svc.GetSessionUser(t.Context(), token)
+	assert.True(t, valid)
 
 	// wait for session to expire using Eventually to avoid flaky timing
 	assert.Eventually(t, func() bool {
-		return !svc.validateSession(t.Context(), token)
+		_, ok := svc.GetSessionUser(t.Context(), token)
+		return !ok
 	}, 200*time.Millisecond, 10*time.Millisecond, "session should expire")
 
 	// GetSessionUser also respects expiry
-	_, valid := svc.GetSessionUser(t.Context(), token)
+	_, valid = svc.GetSessionUser(t.Context(), token)
 	assert.False(t, valid)
 }
 
@@ -601,7 +600,8 @@ tokens:
 	// create a session
 	session, err := svc.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
-	assert.True(t, svc.validateSession(t.Context(), session))
+	_, ok := svc.GetSessionUser(t.Context(), session)
+	assert.True(t, ok)
 
 	// update config file with new token
 	newConfig := `
@@ -634,7 +634,8 @@ tokens:
 	assert.True(t, svc.hasTokenACL("token2"), "new token should exist")
 
 	// verify session is preserved (admin user unchanged)
-	assert.True(t, svc.validateSession(t.Context(), session), "session should be preserved for unchanged user")
+	_, ok = svc.GetSessionUser(t.Context(), session)
+	assert.True(t, ok, "session should be preserved for unchanged user")
 
 	// verify new user exists
 	assert.True(t, svc.CheckUserPermission("viewer", "test", false))
@@ -835,15 +836,15 @@ func TestService_Reload_SelectiveSessionInvalidation(t *testing.T) {
 			// verify expected valid sessions
 			for _, username := range tt.expectValid {
 				token := tokensByUser[username]
-				assert.True(t, svc.validateSession(t.Context(), token),
-					"session for %q should remain valid", username)
+				_, ok := svc.GetSessionUser(t.Context(), token)
+				assert.True(t, ok, "session for %q should remain valid", username)
 			}
 
 			// verify expected invalid sessions
 			for _, username := range tt.expectInvalid {
 				token := tokensByUser[username]
-				assert.False(t, svc.validateSession(t.Context(), token),
-					"session for %q should be invalidated", username)
+				_, ok := svc.GetSessionUser(t.Context(), token)
+				assert.False(t, ok, "session for %q should be invalidated", username)
 			}
 		})
 	}
@@ -1064,14 +1065,38 @@ users:
 	err = svc.startWatcher(ctx)
 	require.NoError(t, err)
 
-	// cancel the context
+	// verify initial state - no "newuser"
+	assert.False(t, svc.CheckUserPermission("newuser", "test", false), "newuser should not exist initially")
+
+	// cancel the context to stop watcher
 	cancel()
 
-	// give the goroutine time to clean up
+	// give the goroutine time to process cancellation
 	time.Sleep(50 * time.Millisecond)
 
-	// further file changes should not trigger reload
-	// (we can't easily verify this, but at least verify no panic/crash)
+	// write a config change that would add newuser
+	newConfig := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: newuser
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+	err = os.WriteFile(f, []byte(newConfig), 0o600)
+	require.NoError(t, err)
+
+	// wait a bit for any potential reload (should not happen)
+	time.Sleep(150 * time.Millisecond)
+
+	// verify newuser was NOT loaded (watcher was stopped)
+	assert.False(t, svc.CheckUserPermission("newuser", "test", false),
+		"newuser should not exist - watcher should be stopped after context cancel")
 }
 
 func TestService_startWatcher_NilService(t *testing.T) {
@@ -1346,7 +1371,7 @@ tokens:
 		req.Header.Set("X-Auth-Token", "api-token-12345678")
 		actorType, actorName := svc.GetRequestActor(req)
 		assert.Equal(t, "token", actorType)
-		assert.Equal(t, "token:api-toke", actorName) // first 8 chars
+		assert.Equal(t, "token:api-****", actorName) // first 4 chars + asterisks (MaskToken format)
 	})
 
 	t.Run("with short token", func(t *testing.T) {
@@ -1365,7 +1390,7 @@ tokens:
 		req.Header.Set("X-Auth-Token", "abc123")
 		actorType, actorName := shortSvc.GetRequestActor(req)
 		assert.Equal(t, "token", actorType)
-		assert.Equal(t, "token:abc123", actorName) // short token not truncated
+		assert.Equal(t, "token:abc1****", actorName) // first 4 chars + asterisks (MaskToken format)
 	})
 
 	t.Run("with session", func(t *testing.T) {

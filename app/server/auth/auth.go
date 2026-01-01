@@ -434,11 +434,7 @@ func (s *Service) GetRequestActor(r *http.Request) (actorType, actorName string)
 
 	// check for API token first
 	if token := ExtractToken(r); token != "" && s.hasTokenACL(token) {
-		masked := token
-		if len(masked) > 8 {
-			masked = masked[:8]
-		}
-		return "token", "token:" + masked
+		return "token", "token:" + MaskToken(token)
 	}
 
 	// check for session cookie
@@ -500,17 +496,6 @@ func (s *Service) isTokenAdmin(token string) bool {
 		return false
 	}
 	return acl.Admin
-}
-
-// validateSession checks if a session token is valid and not expired.
-// note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
-func (s *Service) validateSession(ctx context.Context, token string) bool {
-	if s == nil {
-		return false
-	}
-
-	_, _, err := s.sessionStore.GetSession(ctx, token)
-	return err == nil
 }
 
 // InvalidateSession removes a session.
@@ -617,13 +602,8 @@ func (s *Service) startCleanup(ctx context.Context) {
 		return
 	}
 
-	interval := s.cleanupInterval
-	if interval == 0 {
-		interval = defaultSessionCleanupInterval
-	}
-
 	go func() {
-		ticker := time.NewTicker(interval)
+		ticker := time.NewTicker(s.cleanupInterval)
 		defer ticker.Stop()
 
 		for {
@@ -644,15 +624,5 @@ func (s *Service) startCleanup(ctx context.Context) {
 		}
 	}()
 
-	log.Printf("[INFO] session cleanup started (interval: %s)", interval)
-}
-
-// getPublicACL returns the public access ACL if configured.
-func (s *Service) getPublicACL() *TokenACL {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.publicACL
+	log.Printf("[INFO] session cleanup started (interval: %s)", s.cleanupInterval)
 }
