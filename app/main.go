@@ -65,6 +65,12 @@ var opts struct {
 		Key string `long:"key" env:"KEY" description:"master key for encrypting secrets (min 16 chars)"`
 	} `group:"secrets" namespace:"secrets" env-namespace:"STASH_SECRETS"`
 
+	Audit struct {
+		Enabled    bool          `long:"enabled" env:"ENABLED" description:"enable audit logging"`
+		Retention  time.Duration `long:"retention" env:"RETENTION" default:"2160h" description:"audit log retention period (default 90d)"`
+		QueryLimit int           `long:"query-limit" env:"QUERY_LIMIT" default:"10000" description:"max entries per audit query"`
+	} `group:"audit" namespace:"audit" env-namespace:"STASH_AUDIT"`
+
 	ServerCmd struct {
 	} `command:"server" description:"run the stash server"`
 
@@ -146,6 +152,9 @@ func runServer(ctx context.Context) error {
 	if opts.Cache.Enabled {
 		log.Printf("[INFO] cache enabled, max keys: %d", opts.Cache.MaxKeys)
 	}
+	if opts.Audit.Enabled {
+		log.Printf("[INFO] audit logging enabled, retention: %s", opts.Audit.Retention)
+	}
 
 	// configure secrets encryption if key is provided
 	var storeOpts []store.Option
@@ -189,7 +198,13 @@ func runServer(ctx context.Context) error {
 		gitService = git.NewService(gitStore, opts.Git.Push)
 	}
 
-	srv, err := server.New(kvStore, validator.NewService(), gitService, rawStore, server.Config{
+	// determine audit store (rawStore implements AuditStore interface)
+	var auditStore server.AuditStore
+	if opts.Audit.Enabled {
+		auditStore = rawStore
+	}
+
+	srv, err := server.New(kvStore, validator.NewService(), gitService, rawStore, auditStore, server.Config{
 		Address:          opts.Server.Address,
 		ReadTimeout:      opts.Server.ReadTimeout,
 		WriteTimeout:     opts.Server.WriteTimeout,
@@ -205,12 +220,19 @@ func runServer(ctx context.Context) error {
 		MaxConcurrent:    opts.Limits.MaxConcurrent,
 		LoginConcurrency: opts.Limits.LoginConcurrency,
 		PageSize:         opts.Server.PageSize,
+		AuditEnabled:     opts.Audit.Enabled,
+		AuditQueryLimit:  opts.Audit.QueryLimit,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
 	sighupHandler(ctx, srv.AuthReload) // set up SIGHUP handler for auth config reload
+
+	// start audit cleanup goroutine if enabled
+	if opts.Audit.Enabled && opts.Audit.Retention > 0 {
+		startAuditCleanup(ctx, rawStore, opts.Audit.Retention)
+	}
 
 	if err := srv.Run(ctx); err != nil {
 		return fmt.Errorf("server failed: %w", err)
@@ -364,4 +386,40 @@ func sighupHandler(ctx context.Context, reload func(context.Context) error) {
 			}
 		}
 	}()
+}
+
+// auditCleaner defines the interface for audit cleanup operations.
+type auditCleaner interface {
+	DeleteAuditOlderThan(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
+// startAuditCleanup starts a background goroutine that periodically deletes old audit entries.
+func startAuditCleanup(ctx context.Context, cleaner auditCleaner, retention time.Duration) {
+	// run cleanup every hour
+	ticker := time.NewTicker(time.Hour)
+	go func() {
+		// run initial cleanup
+		cleanupAudit(ctx, cleaner, retention)
+
+		for {
+			select {
+			case <-ctx.Done():
+				ticker.Stop()
+				return
+			case <-ticker.C:
+				cleanupAudit(ctx, cleaner, retention)
+			}
+		}
+	}()
+}
+
+// cleanupAudit deletes audit entries older than retention period.
+func cleanupAudit(ctx context.Context, cleaner auditCleaner, retention time.Duration) {
+	olderThan := time.Now().Add(-retention)
+	deleted, err := cleaner.DeleteAuditOlderThan(ctx, olderThan)
+	if err != nil {
+		log.Printf("[WARN] audit cleanup failed: %v", err)
+	} else if deleted > 0 {
+		log.Printf("[INFO] audit cleanup: deleted %d entries older than %s", deleted, olderThan.Format(time.RFC3339))
+	}
 }

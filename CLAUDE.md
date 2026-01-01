@@ -36,6 +36,9 @@ The project uses `github.com/go-pkgz/enum` for type-safe enums defined in `app/e
 - **Permission**: none, r, w, rw
 - **DbType**: sqlite, postgres
 - **SecretsFilter**: all, secrets, keys (for API list filtering)
+- **AuditAction**: read, create, update, delete
+- **AuditResult**: success, denied, not_found
+- **ActorType**: user, token, public
 
 Enums are generated with `//go:generate` and support String(), MarshalText/UnmarshalText.
 
@@ -112,6 +115,15 @@ GET    /ping                 # health check (returns "pong")
 Keys can contain slashes (e.g., `app/config/database`).
 
 List endpoint returns only keys the caller has read permission for when auth is enabled.
+
+## Audit API (admin only)
+
+```
+POST   /audit/query              # query audit log (requires admin, JSON body with filters)
+```
+
+Audit logging is enabled with `--audit.enabled`. Tracks read, update, delete actions on /kv/* routes.
+Query filters: key (prefix with `*`), actor, actor_type, action, result, from, to, limit.
 
 ## Web UI Routes
 

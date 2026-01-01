@@ -27,15 +27,17 @@ import (
 
 // Server represents the HTTP server.
 type Server struct {
-	store      KVStore
-	validator  Validator // format validator
-	cfg        Config
-	version    string
-	baseURL    string
-	auth       *Auth
-	apiHandler *api.Handler
-	webHandler *web.Handler
-	staticFS   fs.FS // embedded static files
+	store        KVStore
+	auditStore   AuditStore
+	validator    Validator // format validator
+	cfg          Config
+	version      string
+	baseURL      string
+	auth         *Auth
+	apiHandler   *api.Handler
+	webHandler   *web.Handler
+	auditHandler *AuditHandler
+	staticFS     fs.FS // embedded static files
 }
 
 // KVStore defines the interface for key-value storage operations.
@@ -83,11 +85,15 @@ type Config struct {
 	RequestsPerSec   float64 // max requests per second (rate limit)
 	MaxConcurrent    int64   // max concurrent in-flight requests
 	LoginConcurrency int64   // max concurrent login attempts
+
+	AuditEnabled    bool // enable audit logging
+	AuditQueryLimit int  // max entries per audit query (default 10000)
 }
 
 // New creates a new Server instance.
 // gs is optional git service, pass nil to disable git versioning.
-func New(st KVStore, val Validator, gs GitService, ss SessionStore, cfg Config) (*Server, error) {
+// as is optional audit store, pass nil to disable audit logging.
+func New(st KVStore, val Validator, gs GitService, ss SessionStore, as AuditStore, cfg Config) (*Server, error) {
 	auth, err := NewAuth(cfg.AuthFile, cfg.LoginTTL, ss)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize auth: %w", err)
@@ -99,13 +105,14 @@ func New(st KVStore, val Validator, gs GitService, ss SessionStore, cfg Config) 
 	}
 
 	s := &Server{
-		store:     st,
-		validator: val,
-		cfg:       cfg,
-		version:   cfg.Version,
-		baseURL:   cfg.BaseURL,
-		auth:      auth,
-		staticFS:  staticContent,
+		store:      st,
+		auditStore: as,
+		validator:  val,
+		cfg:        cfg,
+		version:    cfg.Version,
+		baseURL:    cfg.BaseURL,
+		auth:       auth,
+		staticFS:   staticContent,
 	}
 
 	// create web handler
@@ -120,6 +127,11 @@ func New(st KVStore, val Validator, gs GitService, ss SessionStore, cfg Config) 
 
 	// create api handler
 	s.apiHandler = api.New(st, auth, val, gs)
+
+	// create audit handler if audit is enabled
+	if cfg.AuditEnabled && as != nil {
+		s.auditHandler = NewAuditHandler(as, auth, cfg.AuditQueryLimit)
+	}
 
 	return s, nil
 }
@@ -226,11 +238,17 @@ func (s *Server) routes() http.Handler {
 		s.webHandler.Register(webRouter)
 	})
 
-	// kv API routes (token auth)
+	// kv API routes (token auth + audit)
 	router.Mount("/kv").Route(func(kv *routegroup.Bundle) {
 		kv.Use(tokenAuth)
+		kv.Use(s.auditMiddleware())
 		s.apiHandler.Register(kv)
 	})
+
+	// audit query route (admin only, requires auth)
+	if s.auditHandler != nil {
+		router.HandleFunc("POST /audit/query", s.auditHandler.HandleQuery)
+	}
 
 	return router
 }
@@ -280,4 +298,12 @@ func (s *Server) rateLimiter() func(http.Handler) http.Handler {
 // url returns a URL path with the base URL prefix.
 func (s *Server) url(path string) string {
 	return s.baseURL + path
+}
+
+// auditMiddleware returns the audit middleware or noop if audit is disabled.
+func (s *Server) auditMiddleware() func(http.Handler) http.Handler {
+	if !s.cfg.AuditEnabled || s.auditStore == nil {
+		return NoopAuditMiddleware
+	}
+	return AuditMiddleware(s.auditStore, s.auth)
 }

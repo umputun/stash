@@ -81,52 +81,52 @@ Add audit logging to track all KV operations (read, create, update, delete) with
 - Create: `app/server/audit.go`
 - Create: `app/server/audit_test.go`
 
-- [ ] Create responseWriter wrapper to capture status code and bytes
-- [ ] Create AuditMiddleware that logs after handler completes
-- [ ] Create NoopAuditMiddleware for disabled state
-- [ ] Extract actor from session cookie or Bearer token
-- [ ] Map HTTP method to audit action
-- [ ] Map response status to audit result
-- [ ] Add tests for middleware
+- [x] Create responseWriter wrapper to capture status code and bytes
+- [x] Create AuditMiddleware that logs after handler completes
+- [x] Create NoopAuditMiddleware for disabled state
+- [x] Extract actor from session cookie or Bearer token
+- [x] Map HTTP method to audit action
+- [x] Map response status to audit result
+- [x] Add tests for middleware
 
 ### 5. Create Audit Query Handler
 
 **Files:**
 - Modify: `app/server/audit.go`
 
-- [ ] Add POST /audit/query handler
-- [ ] Parse JSON body with filter fields
-- [ ] Validate admin access (403 if not admin)
-- [ ] Call auditStore.Query with filters
-- [ ] Return JSON response with entries, total, limit
-- [ ] Add tests for query handler
+- [x] Add POST /audit/query handler
+- [x] Parse JSON body with filter fields
+- [x] Validate admin access (403 if not admin)
+- [x] Call auditStore.Query with filters
+- [x] Return JSON response with entries, total, limit
+- [x] Add tests for query handler
 
 ### 6. Wire Up in Server
 
 **Files:**
 - Modify: `app/server/server.go`
 
-- [ ] Add AuditStore field to Server config
-- [ ] Add audit CLI flags to Config struct
-- [ ] Apply audit middleware to /kv/ route group
-- [ ] Register /audit/query route with admin check
-- [ ] Add tests for route registration
+- [x] Add AuditStore field to Server config
+- [x] Add audit CLI flags to Config struct
+- [x] Apply audit middleware to /kv/ route group
+- [x] Register /audit/query route with admin check
+- [x] Add tests for route registration
 
 ### 7. Add CLI Flags and Cleanup
 
 **Files:**
 - Modify: `app/main.go`
 
-- [ ] Add audit.enabled, audit.retention, audit.limit flags
-- [ ] Create audit store (or noop) based on enabled flag
-- [ ] Start audit cleanup goroutine (like session cleanup)
-- [ ] Pass audit config to server
+- [x] Add audit.enabled, audit.retention, audit.limit flags
+- [x] Create audit store (or noop) based on enabled flag
+- [x] Start audit cleanup goroutine (like session cleanup)
+- [x] Pass audit config to server
 
 ### 8. Final Validation
 
-- [ ] Run full test suite
-- [ ] Run linter
+- [x] Run full test suite
+- [x] Run linter
 - [ ] Manual testing with auth-private.yml
-- [ ] Update CLAUDE.md with audit routes
-- [ ] Update CHANGELOG.md
+- [x] Update CLAUDE.md with audit routes
+- [x] Update CHANGELOG.md
 - [ ] Move plan to `docs/plans/completed/`

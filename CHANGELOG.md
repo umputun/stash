@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Audit trail for KV operations
+  - Tracks read, update, delete actions on /kv/* routes
+  - Configurable via `--audit.enabled`, `--audit.retention`, `--audit.query-limit`
+  - POST /audit/query endpoint for admin users
+  - Query by key prefix, actor, actor_type, action, result, time range
+  - Automatic cleanup of entries older than retention period (default 90 days)
+
 ## [0.17.0] - 2025-12-31
 
 ### Added
