@@ -10,14 +10,16 @@ import (
 	"github.com/invopop/jsonschema"
 	validator "github.com/santhosh-tekuri/jsonschema/v5"
 	"gopkg.in/yaml.v3"
+
+	"github.com/umputun/stash/app/server/auth"
 )
 
 //go:embed schema.json
 var embeddedSchemaData []byte
 
-// GenerateAuthSchema generates JSON schema for AuthConfig struct.
+// GenerateAuthSchema generates JSON schema for auth.Config struct.
 func GenerateAuthSchema() ([]byte, error) {
-	schema := jsonschema.Reflect(&AuthConfig{})
+	schema := jsonschema.Reflect(&auth.Config{})
 	schema.Title = "Stash Auth Configuration"
 	data, err := json.MarshalIndent(schema, "", "  ")
 	if err != nil {

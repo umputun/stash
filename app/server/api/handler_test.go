@@ -139,7 +139,7 @@ func TestHandler_HandleList(t *testing.T) {
 
 	t.Run("invalid filter parameter", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/?filter=invalid", http.NoBody)
@@ -156,7 +156,7 @@ func TestHandler_HandleList(t *testing.T) {
 				return nil, errors.New("db error")
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
@@ -177,7 +177,7 @@ func TestHandler_HandleGet(t *testing.T) {
 				return nil, "", store.ErrNotFound
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/testkey", http.NoBody)
@@ -196,7 +196,7 @@ func TestHandler_HandleGet(t *testing.T) {
 				return []byte(`{"key":"value"}`), "json", nil
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/config", http.NoBody)
@@ -214,7 +214,7 @@ func TestHandler_HandleGet(t *testing.T) {
 				return nil, "", store.ErrNotFound
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/missing", http.NoBody)
@@ -227,7 +227,7 @@ func TestHandler_HandleGet(t *testing.T) {
 
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
@@ -244,7 +244,7 @@ func TestHandler_HandleGet(t *testing.T) {
 				return nil, "", store.ErrSecretsNotConfigured
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/secrets/db", http.NoBody)
@@ -262,7 +262,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/newkey", strings.NewReader("newvalue"))
@@ -281,7 +281,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/config", strings.NewReader(`{"key":"value"}`))
@@ -299,7 +299,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/config?format=yaml", strings.NewReader("key: value"))
@@ -316,7 +316,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/key", strings.NewReader("value"))
@@ -332,7 +332,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/", strings.NewReader("value"))
@@ -347,7 +347,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return false, errors.New("db error") },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/key", strings.NewReader("value"))
@@ -364,7 +364,7 @@ func TestHandler_HandleSet(t *testing.T) {
 				return false, store.ErrSecretsNotConfigured
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/secrets/db", strings.NewReader("secret-value"))
@@ -382,7 +382,7 @@ func TestHandler_HandleSet(t *testing.T) {
 				return false, store.ErrInvalidZKPayload
 			},
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := New(st, auth, defaultFormatValidator(), nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/secrets/zk-key", strings.NewReader("$ZK$invalid"))
@@ -400,7 +400,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			DeleteFunc: func(context.Context, string) error { return nil },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodDelete, "/kv/deletekey", http.NoBody)
@@ -417,7 +417,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			DeleteFunc: func(context.Context, string) error { return store.ErrNotFound },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodDelete, "/kv/missing", http.NoBody)
@@ -432,7 +432,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			DeleteFunc: func(context.Context, string) error { return errors.New("db error") },
 		}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodDelete, "/kv/errorkey", http.NoBody)
@@ -445,7 +445,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
-		auth := &mocks.AuthProviderMock{}
+		auth := noopAuthMock()
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodDelete, "/kv/", http.NoBody)
@@ -459,7 +459,7 @@ func TestHandler_HandleDelete(t *testing.T) {
 
 func TestHandler_FormatToContentType(t *testing.T) {
 	st := &mocks.KVStoreMock{}
-	auth := &mocks.AuthProviderMock{}
+	auth := noopAuthMock()
 	h := newTestHandler(t, st, auth)
 
 	tests := []struct {
@@ -500,72 +500,26 @@ func TestHandler_FilterKeysByAuth(t *testing.T) {
 		assert.Equal(t, keys, result)
 	})
 
-	t.Run("session cookie filters keys", func(t *testing.T) {
+	t.Run("auth enabled delegates to FilterKeysForRequest", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc: func() bool { return true },
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
-				if token == "valid-token" {
-					return "testuser", true
-				}
-				return "", false
-			},
-			FilterUserKeysFunc: func(username string, keys []string) []string {
-				return []string{"app/config", "app/db"} // filter out secret/key
+			FilterKeysForRequestFunc: func(_ *http.Request, _ []string) []string {
+				return []string{"app/config", "app/db"} // filtered by auth service
 			},
 		}
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "valid-token"})
 		result := h.filterKeysByAuth(req, keys)
 		assert.Equal(t, []string{"app/config", "app/db"}, result)
 	})
 
-	t.Run("bearer token filters keys", func(t *testing.T) {
+	t.Run("auth returns nil for no access", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := &mocks.AuthProviderMock{
-			EnabledFunc:        func() bool { return true },
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
-			FilterTokenKeysFunc: func(token string, keys []string) []string {
-				if token == "api-token" {
-					return []string{"app/config"}
-				}
-				return nil
-			},
-		}
-		h := newTestHandler(t, st, auth)
-
-		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
-		req.Header.Set("Authorization", "Bearer api-token")
-		result := h.filterKeysByAuth(req, keys)
-		assert.Equal(t, []string{"app/config"}, result)
-	})
-
-	t.Run("public access filters keys", func(t *testing.T) {
-		st := &mocks.KVStoreMock{}
-		auth := &mocks.AuthProviderMock{
-			EnabledFunc:         func() bool { return true },
-			GetSessionUserFunc:  func(_ context.Context, token string) (string, bool) { return "", false },
-			FilterTokenKeysFunc: func(token string, keys []string) []string { return nil },
-			FilterPublicKeysFunc: func(keys []string) []string {
-				return []string{"app/config"} // only public keys
-			},
-		}
-		h := newTestHandler(t, st, auth)
-
-		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
-		result := h.filterKeysByAuth(req, keys)
-		assert.Equal(t, []string{"app/config"}, result)
-	})
-
-	t.Run("no valid auth returns nil", func(t *testing.T) {
-		st := &mocks.KVStoreMock{}
-		auth := &mocks.AuthProviderMock{
-			EnabledFunc:          func() bool { return true },
-			GetSessionUserFunc:   func(_ context.Context, token string) (string, bool) { return "", false },
-			FilterTokenKeysFunc:  func(token string, keys []string) []string { return nil },
-			FilterPublicKeysFunc: func(keys []string) []string { return nil },
+			EnabledFunc:              func() bool { return true },
+			FilterKeysForRequestFunc: func(_ *http.Request, _ []string) []string { return nil },
 		}
 		h := newTestHandler(t, st, auth)
 
@@ -583,50 +537,89 @@ func TestHandler_GetIdentity(t *testing.T) {
 		assert.Equal(t, identityAnonymous, id.typ)
 	})
 
-	t.Run("session cookie returns user identity", func(t *testing.T) {
+	t.Run("auth disabled returns anonymous", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
-				if token == "valid" {
-					return "testuser", true
-				}
-				return "", false
+			EnabledFunc: func() bool { return false },
+		}
+		h := &Handler{auth: auth}
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		id := h.getIdentity(req)
+		assert.Equal(t, identityAnonymous, id.typ)
+	})
+
+	t.Run("user actor returns user identity", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "user", "testuser"
 			},
 		}
 		h := &Handler{auth: auth}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "valid"})
 		id := h.getIdentity(req)
 		assert.Equal(t, identityUser, id.typ)
 		assert.Equal(t, "testuser", id.name)
 	})
 
-	t.Run("bearer token returns token identity", func(t *testing.T) {
+	t.Run("token actor returns token identity", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
-			HasTokenACLFunc:    func(token string) bool { return token == "api-token" },
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "token", "token:api-toke"
+			},
 		}
 		h := &Handler{auth: auth}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header.Set("Authorization", "Bearer api-token")
 		id := h.getIdentity(req)
 		assert.Equal(t, identityToken, id.typ)
-		assert.Equal(t, "token:api-toke", id.name) // truncated to 8 chars
+		assert.Equal(t, "token:api-toke", id.name)
+	})
+
+	t.Run("public actor returns anonymous", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "public", ""
+			},
+		}
+		h := &Handler{auth: auth}
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		id := h.getIdentity(req)
+		assert.Equal(t, identityAnonymous, id.typ)
 	})
 }
 
 func TestHandler_GetIdentityForLog(t *testing.T) {
 	t.Run("user identity", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "admin", true },
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "user", "admin"
+			},
 		}
 		h := &Handler{auth: auth}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "token"})
 		result := h.getIdentityForLog(req)
 		assert.Equal(t, "user:admin", result)
+	})
+
+	t.Run("token identity", func(t *testing.T) {
+		auth := &mocks.AuthProviderMock{
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "token", "token:api-key"
+			},
+		}
+		h := &Handler{auth: auth}
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		result := h.getIdentityForLog(req)
+		assert.Equal(t, "token:api-key", result) // already has token: prefix
 	})
 
 	t.Run("anonymous identity", func(t *testing.T) {
@@ -641,7 +634,7 @@ func TestHandler_HandleSet_WithGit(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 	}
-	auth := &mocks.AuthProviderMock{}
+	auth := noopAuthMock()
 	gitMock := &mocks.GitServiceMock{
 		CommitFunc: func(req git.CommitRequest) error {
 			assert.Equal(t, "testkey", req.Key)
@@ -665,7 +658,7 @@ func TestHandler_HandleDelete_WithGit(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		DeleteFunc: func(context.Context, string) error { return nil },
 	}
-	auth := &mocks.AuthProviderMock{}
+	auth := noopAuthMock()
 	gitMock := &mocks.GitServiceMock{
 		DeleteFunc: func(key string, author git.Author) error {
 			assert.Equal(t, "testkey", key)
@@ -699,24 +692,26 @@ func newTestHandler(t *testing.T, st KVStore, auth AuthProvider) *Handler {
 	return New(st, auth, defaultFormatValidator(), nil)
 }
 
+// noopAuthMock returns an auth mock that is disabled (auth not configured)
+func noopAuthMock() *mocks.AuthProviderMock {
+	return &mocks.AuthProviderMock{
+		EnabledFunc: func() bool { return false },
+	}
+}
+
 func TestHandler_GetAuthorFromRequest(t *testing.T) {
 	st := &mocks.KVStoreMock{}
 
 	t.Run("user identity returns author with username", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) {
-				if token == "valid-session" {
-					return "testuser", true
-				}
-				return "", false
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "user", "testuser"
 			},
-			HasTokenACLFunc: func(token string) bool { return false },
 		}
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: "valid-session"})
-
 		author := h.getAuthorFromRequest(req)
 		assert.Equal(t, "testuser", author.Name)
 		assert.Equal(t, "testuser@stash", author.Email)
@@ -724,29 +719,29 @@ func TestHandler_GetAuthorFromRequest(t *testing.T) {
 
 	t.Run("token identity returns author with token prefix", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
-			HasTokenACLFunc:    func(token string) bool { return token == "my-api-token" },
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "token", "token:my-api-t"
+			},
 		}
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-		req.Header.Set("Authorization", "Bearer my-api-token")
-
 		author := h.getAuthorFromRequest(req)
-		// token gets truncated to first 8 chars: "my-api-t"
 		assert.Equal(t, "token:my-api-t", author.Name)
 		assert.Equal(t, "token:my-api-t@stash", author.Email)
 	})
 
 	t.Run("anonymous returns default author", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			GetSessionUserFunc: func(_ context.Context, token string) (string, bool) { return "", false },
-			HasTokenACLFunc:    func(token string) bool { return false },
+			EnabledFunc: func() bool { return true },
+			GetRequestActorFunc: func(_ *http.Request) (string, string) {
+				return "public", ""
+			},
 		}
 		h := newTestHandler(t, st, auth)
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-
 		author := h.getAuthorFromRequest(req)
 		expected := git.DefaultAuthor()
 		assert.Equal(t, expected.Name, author.Name)
@@ -808,10 +803,10 @@ func TestHandler_HandleHistory(t *testing.T) {
 
 	t.Run("access denied when auth enabled", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
-			EnabledFunc:          func() bool { return true },
-			GetSessionUserFunc:   func(_ context.Context, _ string) (string, bool) { return "", false },
-			HasTokenACLFunc:      func(_ string) bool { return false },
-			FilterPublicKeysFunc: func(keys []string) []string { return nil },
+			EnabledFunc: func() bool { return true },
+			FilterKeysForRequestFunc: func(_ *http.Request, _ []string) []string {
+				return []string{} // no access to any keys
+			},
 		}
 		gitSvc := &mocks.GitServiceMock{}
 		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)

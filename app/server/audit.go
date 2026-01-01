@@ -16,7 +16,6 @@ import (
 	"github.com/go-pkgz/rest/realip"
 
 	"github.com/umputun/stash/app/enum"
-	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
 )
 
@@ -31,10 +30,8 @@ type AuditStore interface {
 
 // AuditAuth defines the interface for auth operations needed by audit.
 type AuditAuth interface {
-	GetSessionUser(ctx context.Context, token string) (string, bool)
-	HasTokenACL(token string) bool
-	IsAdmin(username string) bool
-	IsTokenAdmin(token string) bool
+	GetRequestActor(r *http.Request) (actorType, actorName string)
+	IsRequestAdmin(r *http.Request) bool
 }
 
 // responseCapture wraps http.ResponseWriter to capture status code and bytes written.
@@ -96,8 +93,8 @@ type auditor struct {
 }
 
 // newAuditor creates a new auditor.
-func newAuditor(auditStore AuditStore, auth AuditAuth) *auditor {
-	return &auditor{store: auditStore, auth: auth}
+func newAuditor(auditStore AuditStore, authSvc AuditAuth) *auditor {
+	return &auditor{store: auditStore, auth: authSvc}
 }
 
 // Middleware returns HTTP middleware that logs audit entries after handler completes.
@@ -162,31 +159,21 @@ func (a *auditor) buildEntry(r *http.Request, rc *responseCapture, key string) s
 }
 
 // extractActor extracts actor identity from request.
-// returns (actor name, actor type) - checks session cookie first, then API token.
+// returns (actor name, actor type) - delegates to auth service.
 func (a *auditor) extractActor(r *http.Request) (string, enum.ActorType) {
 	if a.auth == nil {
 		return "anonymous", enum.ActorTypePublic
 	}
 
-	// check session cookie for web UI users
-	for _, cookieName := range cookie.SessionCookieNames {
-		c, err := r.Cookie(cookieName)
-		if err != nil {
-			continue
-		}
-		if username, valid := a.auth.GetSessionUser(r.Context(), c.Value); valid && username != "" {
-			return username, enum.ActorTypeUser
-		}
+	actorType, actorName := a.auth.GetRequestActor(r)
+	switch actorType {
+	case enum.ActorTypeUser.String():
+		return actorName, enum.ActorTypeUser
+	case enum.ActorTypeToken.String():
+		return actorName, enum.ActorTypeToken
+	default:
+		return "anonymous", enum.ActorTypePublic
 	}
-
-	// check API token (X-Auth-Token or Bearer)
-	if token := ExtractToken(r); token != "" {
-		if a.auth.HasTokenACL(token) {
-			return "token:" + maskToken(token), enum.ActorTypeToken
-		}
-	}
-
-	return "anonymous", enum.ActorTypePublic
 }
 
 // mapAction maps HTTP method and response status to audit action.
@@ -243,11 +230,11 @@ type AuditHandler struct {
 }
 
 // NewAuditHandler creates a new audit handler.
-func NewAuditHandler(auditStore AuditStore, auth AuditAuth, maxLimit int) *AuditHandler {
+func NewAuditHandler(auditStore AuditStore, authSvc AuditAuth, maxLimit int) *AuditHandler {
 	if maxLimit <= 0 {
 		maxLimit = 10000
 	}
-	return &AuditHandler{store: auditStore, auth: auth, maxLimit: maxLimit}
+	return &AuditHandler{store: auditStore, auth: authSvc, maxLimit: maxLimit}
 }
 
 // AuditQueryRequest represents the JSON request for audit query.
@@ -272,32 +259,21 @@ type AuditQueryResponse struct {
 // HandleQuery handles POST /audit/query requests.
 // Requires admin privileges via session cookie or API token with admin flag.
 func (h *AuditHandler) HandleQuery(w http.ResponseWriter, r *http.Request) {
-	// check admin access via session cookie first
-	for _, cookieName := range cookie.SessionCookieNames {
-		c, err := r.Cookie(cookieName)
-		if err != nil {
-			continue
-		}
-		if username, valid := h.auth.GetSessionUser(r.Context(), c.Value); valid {
-			if h.auth.IsAdmin(username) {
-				h.handleQueryInternal(w, r)
-				return
-			}
-			rest.SendErrorJSON(w, r, log.Default(), http.StatusForbidden, nil, "admin access required")
-			return
-		}
+	if h.auth == nil {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusUnauthorized, nil, "unauthorized")
+		return
 	}
 
-	// check API token (X-Auth-Token or Bearer)
-	if token := ExtractToken(r); token != "" {
-		if h.auth.IsTokenAdmin(token) {
-			h.handleQueryInternal(w, r)
-			return
-		}
-		if h.auth.HasTokenACL(token) {
-			rest.SendErrorJSON(w, r, log.Default(), http.StatusForbidden, nil, "admin access required")
-			return
-		}
+	if h.auth.IsRequestAdmin(r) {
+		h.handleQueryInternal(w, r)
+		return
+	}
+
+	// check if authenticated but not admin (403) vs not authenticated at all (401)
+	actorType, _ := h.auth.GetRequestActor(r)
+	if actorType == enum.ActorTypeUser.String() || actorType == enum.ActorTypeToken.String() {
+		rest.SendErrorJSON(w, r, log.Default(), http.StatusForbidden, nil, "admin access required")
+		return
 	}
 
 	rest.SendErrorJSON(w, r, log.Default(), http.StatusUnauthorized, nil, "unauthorized")

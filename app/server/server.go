@@ -33,12 +33,36 @@ type Server struct {
 	cfg             Config
 	version         string
 	baseURL         string
-	auth            *Auth
+	auth            AuthService
 	apiHandler      *api.Handler
 	webHandler      *web.Handler
 	auditHandler    *AuditHandler
 	webAuditHandler *web.AuditHandler
 	staticFS        fs.FS // embedded static files
+}
+
+// AuthService defines the interface for authentication operations used by the server.
+// This is a comprehensive interface that satisfies all consumers (web, api, audit handlers).
+type AuthService interface {
+	Enabled() bool
+	LoginTTL() time.Duration
+
+	SessionMiddleware(loginURL string) func(http.Handler) http.Handler
+	TokenMiddleware(next http.Handler) http.Handler
+
+	GetSessionUser(ctx context.Context, token string) (string, bool)
+	IsValidUser(username, password string) bool
+	CreateSession(ctx context.Context, username string) (string, error)
+	InvalidateSession(ctx context.Context, token string)
+
+	CheckUserPermission(username, key string, write bool) bool
+	FilterUserKeys(username string, keys []string) []string
+	UserCanWrite(username string) bool
+	IsAdmin(username string) bool
+
+	FilterKeysForRequest(r *http.Request, keys []string) []string
+	IsRequestAdmin(r *http.Request) bool
+	GetRequestActor(r *http.Request) (actorType, actorName string)
 }
 
 // KVStore defines the interface for key-value storage operations.
@@ -76,11 +100,8 @@ type Config struct {
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
 	Version         string
-	AuthFile        string        // path to auth config file (empty = auth disabled)
-	AuthHotReload   bool          // watch auth config for changes and reload
-	LoginTTL        time.Duration // session duration
-	BaseURL         string        // base URL path for reverse proxy (e.g., /stash)
-	PageSize        int           // keys per page in web UI (0 = unlimited)
+	BaseURL         string // base URL path for reverse proxy (e.g., /stash)
+	PageSize        int    // keys per page in web UI (0 = unlimited)
 
 	BodySizeLimit    int64   // max request body size in bytes
 	RequestsPerSec   float64 // max requests per second (rate limit)
@@ -94,12 +115,8 @@ type Config struct {
 // New creates a new Server instance.
 // gs is optional git service, pass nil to disable git versioning.
 // as is optional audit store, pass nil to disable audit logging.
-func New(st KVStore, val Validator, gs GitService, ss SessionStore, as AuditStore, cfg Config) (*Server, error) {
-	auth, err := NewAuth(cfg.AuthFile, cfg.LoginTTL, ss)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize auth: %w", err)
-	}
-
+// authSvc is optional auth service, pass nil to disable authentication.
+func New(st KVStore, val Validator, gs GitService, authSvc AuthService, as AuditStore, cfg Config) (*Server, error) {
 	staticContent, err := web.StaticFS()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load static files: %w", err)
@@ -112,7 +129,7 @@ func New(st KVStore, val Validator, gs GitService, ss SessionStore, as AuditStor
 		cfg:        cfg,
 		version:    cfg.Version,
 		baseURL:    cfg.BaseURL,
-		auth:       auth,
+		auth:       authSvc,
 		staticFS:   staticContent,
 	}
 
@@ -121,7 +138,7 @@ func New(st KVStore, val Validator, gs GitService, ss SessionStore, as AuditStor
 	if cfg.AuditEnabled && as != nil {
 		webAuditLogger = as
 	}
-	webHandler, err := web.New(st, auth, val, gs, webAuditLogger, web.Config{
+	webHandler, err := web.New(st, authSvc, val, gs, webAuditLogger, web.Config{
 		BaseURL:      cfg.BaseURL,
 		PageSize:     cfg.PageSize,
 		AuditEnabled: cfg.AuditEnabled && as != nil,
@@ -132,12 +149,12 @@ func New(st KVStore, val Validator, gs GitService, ss SessionStore, as AuditStor
 	s.webHandler = webHandler
 
 	// create api handler
-	s.apiHandler = api.New(st, auth, val, gs)
+	s.apiHandler = api.New(st, authSvc, val, gs)
 
 	// create audit handlers if audit is enabled
 	if cfg.AuditEnabled && as != nil {
-		s.auditHandler = NewAuditHandler(as, auth, cfg.AuditQueryLimit)
-		s.webAuditHandler = web.NewAuditHandler(as, auth, webHandler)
+		s.auditHandler = NewAuditHandler(as, authSvc, cfg.AuditQueryLimit)
+		s.webAuditHandler = web.NewAuditHandler(as, authSvc, webHandler)
 	}
 
 	return s, nil
@@ -151,19 +168,6 @@ func (s *Server) Run(ctx context.Context) error {
 		ReadHeaderTimeout: s.cfg.ReadTimeout,
 		WriteTimeout:      s.cfg.WriteTimeout,
 		IdleTimeout:       s.cfg.IdleTimeout,
-	}
-
-	// start auth config file watcher if enabled
-	if s.auth.Enabled() && s.cfg.AuthHotReload {
-		if err := s.auth.StartWatcher(ctx); err != nil {
-			return fmt.Errorf("failed to start auth config watcher: %w", err)
-		}
-		log.Printf("[INFO] auth config hot-reload enabled")
-	}
-
-	// start session cleanup goroutine if auth is enabled
-	if s.auth.Enabled() {
-		s.auth.StartCleanup(ctx)
 	}
 
 	// graceful shutdown
@@ -182,14 +186,6 @@ func (s *Server) Run(ctx context.Context) error {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
-}
-
-// AuthReload reloads auth configuration from file. Returns nil if auth is not enabled.
-func (s *Server) AuthReload(ctx context.Context) error {
-	if s.auth == nil || !s.auth.Enabled() {
-		return nil
-	}
-	return s.auth.Reload(ctx)
 }
 
 // handler returns the HTTP handler, wrapping routes with base URL support if configured.
@@ -225,15 +221,15 @@ func (s *Server) routes() http.Handler {
 	)
 
 	// determine auth middleware for protected routes
-	sessionAuth, tokenAuth := NoopAuth, NoopAuth
-	if s.auth.Enabled() {
-		sessionAuth = s.auth.SessionAuth(s.url("/login"))
-		tokenAuth = s.auth.TokenAuth
+	sessionAuth, tokenAuth := noopMiddleware, noopMiddleware
+	if s.auth != nil && s.auth.Enabled() {
+		sessionAuth = s.auth.SessionMiddleware(s.url("/login"))
+		tokenAuth = s.auth.TokenMiddleware
 	}
 
 	// public routes (no auth required)
 	router.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
-	if s.auth.Enabled() {
+	if s.auth != nil && s.auth.Enabled() {
 		s.webHandler.RegisterAuth(router)
 		// stricter throttle on login to prevent brute-force
 		s.webHandler.RegisterLogin(router, rest.Throttle(s.loginConcurrency()))
@@ -311,6 +307,11 @@ func (s *Server) rateLimiter() func(http.Handler) http.Handler {
 // url returns a URL path with the base URL prefix.
 func (s *Server) url(path string) string {
 	return s.baseURL + path
+}
+
+// noopMiddleware is a pass-through middleware (used when auth is disabled).
+func noopMiddleware(next http.Handler) http.Handler {
+	return next
 }
 
 // auditMiddleware returns the audit middleware or noop if audit is disabled.

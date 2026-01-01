@@ -667,7 +667,7 @@ func TestRun_InvalidAuthFile(t *testing.T) {
 
 	err := runServer(t.Context())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to initialize server")
+	assert.Contains(t, err.Error(), "failed to initialize auth") // auth created before server
 
 	// reset
 	opts.Auth.File = ""

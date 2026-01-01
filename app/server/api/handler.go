@@ -16,7 +16,6 @@ import (
 
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
-	"github.com/umputun/stash/app/server/internal/cookie"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/lib/stash"
 )
@@ -47,11 +46,8 @@ type KVStore interface {
 // AuthProvider defines the interface for authentication operations.
 type AuthProvider interface {
 	Enabled() bool
-	GetSessionUser(ctx context.Context, token string) (string, bool)
-	FilterUserKeys(username string, keys []string) []string
-	FilterTokenKeys(token string, keys []string) []string
-	FilterPublicKeys(keys []string) []string
-	HasTokenACL(token string) bool
+	FilterKeysForRequest(r *http.Request, keys []string) []string
+	GetRequestActor(r *http.Request) (actorType, actorName string)
 }
 
 // FormatValidator defines the interface for format validation.
@@ -150,41 +146,13 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	rest.RenderJSON(w, filtered)
 }
 
-// filterKeysByAuth filters keys based on the caller's auth credentials.
-// returns nil if auth is required but caller has no valid credentials.
-// priority: session cookie > Bearer token > public ACL
+// filterKeysByAuth filters keys based on the request's authentication.
+// Returns nil if auth is required but caller has no valid credentials.
 func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
-	// no auth = return all keys
 	if h.auth == nil || !h.auth.Enabled() {
 		return keys
 	}
-
-	// check session cookie first (authenticated user has priority over public)
-	for _, cookieName := range cookie.SessionCookieNames {
-		c, err := r.Cookie(cookieName)
-		if err != nil {
-			continue
-		}
-		username, valid := h.auth.GetSessionUser(r.Context(), c.Value)
-		if valid {
-			return h.auth.FilterUserKeys(username, keys)
-		}
-	}
-
-	// check Bearer token (authenticated token has priority over public)
-	authHeader := r.Header.Get("Authorization")
-	if token, found := strings.CutPrefix(authHeader, "Bearer "); found {
-		if filtered := h.auth.FilterTokenKeys(token, keys); filtered != nil {
-			return filtered
-		}
-	}
-
-	// fall back to public access for unauthenticated requests
-	if filtered := h.auth.FilterPublicKeys(keys); filtered != nil {
-		return filtered
-	}
-
-	return nil // no valid auth
+	return h.auth.FilterKeysForRequest(r, keys)
 }
 
 // handleGet retrieves the value for a key.
@@ -386,37 +354,22 @@ type identity struct {
 	name string // username or token prefix
 }
 
-// getIdentity extracts identity from request context.
-// returns user identity from session cookie, token identity from Authorization header, or anonymous.
+// getIdentity extracts identity from request.
+// Returns user identity, token identity, or anonymous.
 func (h *Handler) getIdentity(r *http.Request) identity {
-	if h.auth == nil {
+	if h.auth == nil || !h.auth.Enabled() {
 		return identity{typ: identityAnonymous}
 	}
 
-	// check session cookie for web UI users
-	for _, cookieName := range cookie.SessionCookieNames {
-		c, err := r.Cookie(cookieName)
-		if err != nil {
-			continue
-		}
-		if username, valid := h.auth.GetSessionUser(r.Context(), c.Value); valid && username != "" {
-			return identity{typ: identityUser, name: username}
-		}
+	actorType, actorName := h.auth.GetRequestActor(r)
+	switch actorType {
+	case "user":
+		return identity{typ: identityUser, name: actorName}
+	case "token":
+		return identity{typ: identityToken, name: actorName}
+	default:
+		return identity{typ: identityAnonymous}
 	}
-
-	// check API token from Authorization header
-	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if h.auth.HasTokenACL(token) {
-			prefix := token
-			if len(prefix) > 8 {
-				prefix = prefix[:8]
-			}
-			return identity{typ: identityToken, name: "token:" + prefix}
-		}
-	}
-
-	return identity{typ: identityAnonymous}
 }
 
 // getAuthorFromRequest extracts the git author from request context.

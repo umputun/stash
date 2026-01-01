@@ -4,7 +4,7 @@
 package mocks
 
 import (
-	"context"
+	"net/http"
 	"sync"
 )
 
@@ -14,17 +14,11 @@ import (
 //
 //		// make and configure a mocked server.AuditAuth
 //		mockedAuditAuth := &AuditAuthMock{
-//			GetSessionUserFunc: func(ctx context.Context, token string) (string, bool) {
-//				panic("mock out the GetSessionUser method")
+//			GetRequestActorFunc: func(r *http.Request) (string, string) {
+//				panic("mock out the GetRequestActor method")
 //			},
-//			HasTokenACLFunc: func(token string) bool {
-//				panic("mock out the HasTokenACL method")
-//			},
-//			IsAdminFunc: func(username string) bool {
-//				panic("mock out the IsAdmin method")
-//			},
-//			IsTokenAdminFunc: func(token string) bool {
-//				panic("mock out the IsTokenAdmin method")
+//			IsRequestAdminFunc: func(r *http.Request) bool {
+//				panic("mock out the IsRequestAdmin method")
 //			},
 //		}
 //
@@ -33,177 +27,89 @@ import (
 //
 //	}
 type AuditAuthMock struct {
-	// GetSessionUserFunc mocks the GetSessionUser method.
-	GetSessionUserFunc func(ctx context.Context, token string) (string, bool)
+	// GetRequestActorFunc mocks the GetRequestActor method.
+	GetRequestActorFunc func(r *http.Request) (string, string)
 
-	// HasTokenACLFunc mocks the HasTokenACL method.
-	HasTokenACLFunc func(token string) bool
-
-	// IsAdminFunc mocks the IsAdmin method.
-	IsAdminFunc func(username string) bool
-
-	// IsTokenAdminFunc mocks the IsTokenAdmin method.
-	IsTokenAdminFunc func(token string) bool
+	// IsRequestAdminFunc mocks the IsRequestAdmin method.
+	IsRequestAdminFunc func(r *http.Request) bool
 
 	// calls tracks calls to the methods.
 	calls struct {
-		// GetSessionUser holds details about calls to the GetSessionUser method.
-		GetSessionUser []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// Token is the token argument value.
-			Token string
+		// GetRequestActor holds details about calls to the GetRequestActor method.
+		GetRequestActor []struct {
+			// R is the r argument value.
+			R *http.Request
 		}
-		// HasTokenACL holds details about calls to the HasTokenACL method.
-		HasTokenACL []struct {
-			// Token is the token argument value.
-			Token string
-		}
-		// IsAdmin holds details about calls to the IsAdmin method.
-		IsAdmin []struct {
-			// Username is the username argument value.
-			Username string
-		}
-		// IsTokenAdmin holds details about calls to the IsTokenAdmin method.
-		IsTokenAdmin []struct {
-			// Token is the token argument value.
-			Token string
+		// IsRequestAdmin holds details about calls to the IsRequestAdmin method.
+		IsRequestAdmin []struct {
+			// R is the r argument value.
+			R *http.Request
 		}
 	}
-	lockGetSessionUser sync.RWMutex
-	lockHasTokenACL    sync.RWMutex
-	lockIsAdmin        sync.RWMutex
-	lockIsTokenAdmin   sync.RWMutex
+	lockGetRequestActor sync.RWMutex
+	lockIsRequestAdmin  sync.RWMutex
 }
 
-// GetSessionUser calls GetSessionUserFunc.
-func (mock *AuditAuthMock) GetSessionUser(ctx context.Context, token string) (string, bool) {
-	if mock.GetSessionUserFunc == nil {
-		panic("AuditAuthMock.GetSessionUserFunc: method is nil but AuditAuth.GetSessionUser was just called")
+// GetRequestActor calls GetRequestActorFunc.
+func (mock *AuditAuthMock) GetRequestActor(r *http.Request) (string, string) {
+	if mock.GetRequestActorFunc == nil {
+		panic("AuditAuthMock.GetRequestActorFunc: method is nil but AuditAuth.GetRequestActor was just called")
 	}
 	callInfo := struct {
-		Ctx   context.Context
-		Token string
+		R *http.Request
 	}{
-		Ctx:   ctx,
-		Token: token,
+		R: r,
 	}
-	mock.lockGetSessionUser.Lock()
-	mock.calls.GetSessionUser = append(mock.calls.GetSessionUser, callInfo)
-	mock.lockGetSessionUser.Unlock()
-	return mock.GetSessionUserFunc(ctx, token)
+	mock.lockGetRequestActor.Lock()
+	mock.calls.GetRequestActor = append(mock.calls.GetRequestActor, callInfo)
+	mock.lockGetRequestActor.Unlock()
+	return mock.GetRequestActorFunc(r)
 }
 
-// GetSessionUserCalls gets all the calls that were made to GetSessionUser.
+// GetRequestActorCalls gets all the calls that were made to GetRequestActor.
 // Check the length with:
 //
-//	len(mockedAuditAuth.GetSessionUserCalls())
-func (mock *AuditAuthMock) GetSessionUserCalls() []struct {
-	Ctx   context.Context
-	Token string
+//	len(mockedAuditAuth.GetRequestActorCalls())
+func (mock *AuditAuthMock) GetRequestActorCalls() []struct {
+	R *http.Request
 } {
 	var calls []struct {
-		Ctx   context.Context
-		Token string
+		R *http.Request
 	}
-	mock.lockGetSessionUser.RLock()
-	calls = mock.calls.GetSessionUser
-	mock.lockGetSessionUser.RUnlock()
+	mock.lockGetRequestActor.RLock()
+	calls = mock.calls.GetRequestActor
+	mock.lockGetRequestActor.RUnlock()
 	return calls
 }
 
-// HasTokenACL calls HasTokenACLFunc.
-func (mock *AuditAuthMock) HasTokenACL(token string) bool {
-	if mock.HasTokenACLFunc == nil {
-		panic("AuditAuthMock.HasTokenACLFunc: method is nil but AuditAuth.HasTokenACL was just called")
+// IsRequestAdmin calls IsRequestAdminFunc.
+func (mock *AuditAuthMock) IsRequestAdmin(r *http.Request) bool {
+	if mock.IsRequestAdminFunc == nil {
+		panic("AuditAuthMock.IsRequestAdminFunc: method is nil but AuditAuth.IsRequestAdmin was just called")
 	}
 	callInfo := struct {
-		Token string
+		R *http.Request
 	}{
-		Token: token,
+		R: r,
 	}
-	mock.lockHasTokenACL.Lock()
-	mock.calls.HasTokenACL = append(mock.calls.HasTokenACL, callInfo)
-	mock.lockHasTokenACL.Unlock()
-	return mock.HasTokenACLFunc(token)
+	mock.lockIsRequestAdmin.Lock()
+	mock.calls.IsRequestAdmin = append(mock.calls.IsRequestAdmin, callInfo)
+	mock.lockIsRequestAdmin.Unlock()
+	return mock.IsRequestAdminFunc(r)
 }
 
-// HasTokenACLCalls gets all the calls that were made to HasTokenACL.
+// IsRequestAdminCalls gets all the calls that were made to IsRequestAdmin.
 // Check the length with:
 //
-//	len(mockedAuditAuth.HasTokenACLCalls())
-func (mock *AuditAuthMock) HasTokenACLCalls() []struct {
-	Token string
+//	len(mockedAuditAuth.IsRequestAdminCalls())
+func (mock *AuditAuthMock) IsRequestAdminCalls() []struct {
+	R *http.Request
 } {
 	var calls []struct {
-		Token string
+		R *http.Request
 	}
-	mock.lockHasTokenACL.RLock()
-	calls = mock.calls.HasTokenACL
-	mock.lockHasTokenACL.RUnlock()
-	return calls
-}
-
-// IsAdmin calls IsAdminFunc.
-func (mock *AuditAuthMock) IsAdmin(username string) bool {
-	if mock.IsAdminFunc == nil {
-		panic("AuditAuthMock.IsAdminFunc: method is nil but AuditAuth.IsAdmin was just called")
-	}
-	callInfo := struct {
-		Username string
-	}{
-		Username: username,
-	}
-	mock.lockIsAdmin.Lock()
-	mock.calls.IsAdmin = append(mock.calls.IsAdmin, callInfo)
-	mock.lockIsAdmin.Unlock()
-	return mock.IsAdminFunc(username)
-}
-
-// IsAdminCalls gets all the calls that were made to IsAdmin.
-// Check the length with:
-//
-//	len(mockedAuditAuth.IsAdminCalls())
-func (mock *AuditAuthMock) IsAdminCalls() []struct {
-	Username string
-} {
-	var calls []struct {
-		Username string
-	}
-	mock.lockIsAdmin.RLock()
-	calls = mock.calls.IsAdmin
-	mock.lockIsAdmin.RUnlock()
-	return calls
-}
-
-// IsTokenAdmin calls IsTokenAdminFunc.
-func (mock *AuditAuthMock) IsTokenAdmin(token string) bool {
-	if mock.IsTokenAdminFunc == nil {
-		panic("AuditAuthMock.IsTokenAdminFunc: method is nil but AuditAuth.IsTokenAdmin was just called")
-	}
-	callInfo := struct {
-		Token string
-	}{
-		Token: token,
-	}
-	mock.lockIsTokenAdmin.Lock()
-	mock.calls.IsTokenAdmin = append(mock.calls.IsTokenAdmin, callInfo)
-	mock.lockIsTokenAdmin.Unlock()
-	return mock.IsTokenAdminFunc(token)
-}
-
-// IsTokenAdminCalls gets all the calls that were made to IsTokenAdmin.
-// Check the length with:
-//
-//	len(mockedAuditAuth.IsTokenAdminCalls())
-func (mock *AuditAuthMock) IsTokenAdminCalls() []struct {
-	Token string
-} {
-	var calls []struct {
-		Token string
-	}
-	mock.lockIsTokenAdmin.RLock()
-	calls = mock.calls.IsTokenAdmin
-	mock.lockIsTokenAdmin.RUnlock()
+	mock.lockIsRequestAdmin.RLock()
+	calls = mock.calls.IsRequestAdmin
+	mock.lockIsRequestAdmin.RUnlock()
 	return calls
 }

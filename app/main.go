@@ -17,6 +17,7 @@ import (
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server"
+	"github.com/umputun/stash/app/server/auth"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/app/validator"
 )
@@ -135,26 +136,7 @@ func runServer(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("invalid base URL: %w", err)
 	}
-
-	log.Printf("[INFO] starting stash server on %s", opts.Server.Address)
-	if baseURL != "" {
-		log.Printf("[INFO] base URL: %s", baseURL)
-	}
-	if opts.Auth.File != "" {
-		log.Printf("[INFO] authentication enabled from %s", opts.Auth.File)
-		if opts.Auth.HotReload {
-			log.Printf("[INFO] auth config hot-reload enabled")
-		}
-	}
-	if opts.Git.Enabled {
-		log.Printf("[INFO] git tracking enabled, path: %s, branch: %s", opts.Git.Path, opts.Git.Branch)
-	}
-	if opts.Cache.Enabled {
-		log.Printf("[INFO] cache enabled, max keys: %d", opts.Cache.MaxKeys)
-	}
-	if opts.Audit.Enabled {
-		log.Printf("[INFO] audit logging enabled, retention: %s", opts.Audit.Retention)
-	}
+	logServerConfig(baseURL)
 
 	// configure secrets encryption if key is provided
 	var storeOpts []store.Option
@@ -184,18 +166,9 @@ func runServer(ctx context.Context) error {
 	defer kvStore.Close()
 
 	// initialize git service if enabled
-	var gitService server.GitService // use interface type to avoid typed nil issue
-	if opts.Git.Enabled {
-		gitStore, gitErr := git.New(git.Config{
-			Path:   opts.Git.Path,
-			Branch: opts.Git.Branch,
-			Remote: opts.Git.Remote,
-			SSHKey: opts.Git.SSHKey,
-		})
-		if gitErr != nil {
-			return fmt.Errorf("failed to initialize git store: %w", gitErr)
-		}
-		gitService = git.NewService(gitStore, opts.Git.Push)
+	gitService, err := initGitService()
+	if err != nil {
+		return err
 	}
 
 	// determine audit store (rawStore implements AuditStore interface)
@@ -204,16 +177,19 @@ func runServer(ctx context.Context) error {
 		auditStore = rawStore
 	}
 
-	srv, err := server.New(kvStore, validator.NewService(), gitService, rawStore, auditStore, server.Config{
+	// initialize auth service if config file is provided
+	authService, authSvc, err := initAuthService(ctx, rawStore)
+	if err != nil {
+		return err
+	}
+
+	srv, err := server.New(kvStore, validator.NewService(), gitService, authService, auditStore, server.Config{
 		Address:          opts.Server.Address,
 		ReadTimeout:      opts.Server.ReadTimeout,
 		WriteTimeout:     opts.Server.WriteTimeout,
 		IdleTimeout:      opts.Server.IdleTimeout,
 		ShutdownTimeout:  opts.Server.ShutdownTimeout,
 		Version:          revision,
-		AuthFile:         opts.Auth.File,
-		AuthHotReload:    opts.Auth.HotReload,
-		LoginTTL:         opts.Auth.LoginTTL,
 		BaseURL:          baseURL,
 		BodySizeLimit:    opts.Limits.BodySize,
 		RequestsPerSec:   opts.Limits.RequestsPerSec,
@@ -227,7 +203,10 @@ func runServer(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}
 
-	sighupHandler(ctx, srv.AuthReload) // set up SIGHUP handler for auth config reload
+	// set up SIGHUP handler for auth config reload (only if auth is enabled)
+	if authSvc != nil {
+		sighupHandler(ctx, authSvc.Reload)
+	}
 
 	// start audit cleanup goroutine if enabled
 	if opts.Audit.Enabled && opts.Audit.Retention > 0 {
@@ -422,4 +401,59 @@ func cleanupAudit(ctx context.Context, cleaner auditCleaner, retention time.Dura
 	} else if deleted > 0 {
 		log.Printf("[INFO] audit cleanup: deleted %d entries older than %s", deleted, olderThan.Format(time.RFC3339))
 	}
+}
+
+// logServerConfig logs startup configuration.
+func logServerConfig(baseURL string) {
+	log.Printf("[INFO] starting stash server on %s", opts.Server.Address)
+	if baseURL != "" {
+		log.Printf("[INFO] base URL: %s", baseURL)
+	}
+	if opts.Auth.File != "" {
+		log.Printf("[INFO] authentication enabled from %s", opts.Auth.File)
+		if opts.Auth.HotReload {
+			log.Printf("[INFO] auth config hot-reload enabled")
+		}
+	}
+	if opts.Git.Enabled {
+		log.Printf("[INFO] git tracking enabled, path: %s, branch: %s", opts.Git.Path, opts.Git.Branch)
+	}
+	if opts.Cache.Enabled {
+		log.Printf("[INFO] cache enabled, max keys: %d", opts.Cache.MaxKeys)
+	}
+	if opts.Audit.Enabled {
+		log.Printf("[INFO] audit logging enabled, retention: %s", opts.Audit.Retention)
+	}
+}
+
+// initGitService creates git service if enabled.
+func initGitService() (server.GitService, error) {
+	if !opts.Git.Enabled {
+		return nil, nil //nolint:nilnil // nil git service is valid when disabled
+	}
+	gitStore, err := git.New(git.Config{
+		Path:   opts.Git.Path,
+		Branch: opts.Git.Branch,
+		Remote: opts.Git.Remote,
+		SSHKey: opts.Git.SSHKey,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize git store: %w", err)
+	}
+	return git.NewService(gitStore, opts.Git.Push), nil
+}
+
+// initAuthService creates auth service if enabled and activates it.
+func initAuthService(ctx context.Context, sessionStore auth.SessionStore) (server.AuthService, *auth.Service, error) {
+	if opts.Auth.File == "" {
+		return nil, nil, nil
+	}
+	authSvc, err := auth.New(opts.Auth.File, opts.Auth.LoginTTL, opts.Auth.HotReload, sessionStore, server.VerifyAuthConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize auth: %w", err)
+	}
+	if err := authSvc.Activate(ctx); err != nil {
+		return nil, nil, fmt.Errorf("failed to activate auth: %w", err)
+	}
+	return authSvc, authSvc, nil
 }

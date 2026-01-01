@@ -4,7 +4,7 @@
 package mocks
 
 import (
-	"context"
+	"net/http"
 	"sync"
 )
 
@@ -17,20 +17,11 @@ import (
 //			EnabledFunc: func() bool {
 //				panic("mock out the Enabled method")
 //			},
-//			FilterPublicKeysFunc: func(keys []string) []string {
-//				panic("mock out the FilterPublicKeys method")
+//			FilterKeysForRequestFunc: func(r *http.Request, keys []string) []string {
+//				panic("mock out the FilterKeysForRequest method")
 //			},
-//			FilterTokenKeysFunc: func(token string, keys []string) []string {
-//				panic("mock out the FilterTokenKeys method")
-//			},
-//			FilterUserKeysFunc: func(username string, keys []string) []string {
-//				panic("mock out the FilterUserKeys method")
-//			},
-//			GetSessionUserFunc: func(ctx context.Context, token string) (string, bool) {
-//				panic("mock out the GetSessionUser method")
-//			},
-//			HasTokenACLFunc: func(token string) bool {
-//				panic("mock out the HasTokenACL method")
+//			GetRequestActorFunc: func(r *http.Request) (string, string) {
+//				panic("mock out the GetRequestActor method")
 //			},
 //		}
 //
@@ -42,64 +33,33 @@ type AuthProviderMock struct {
 	// EnabledFunc mocks the Enabled method.
 	EnabledFunc func() bool
 
-	// FilterPublicKeysFunc mocks the FilterPublicKeys method.
-	FilterPublicKeysFunc func(keys []string) []string
+	// FilterKeysForRequestFunc mocks the FilterKeysForRequest method.
+	FilterKeysForRequestFunc func(r *http.Request, keys []string) []string
 
-	// FilterTokenKeysFunc mocks the FilterTokenKeys method.
-	FilterTokenKeysFunc func(token string, keys []string) []string
-
-	// FilterUserKeysFunc mocks the FilterUserKeys method.
-	FilterUserKeysFunc func(username string, keys []string) []string
-
-	// GetSessionUserFunc mocks the GetSessionUser method.
-	GetSessionUserFunc func(ctx context.Context, token string) (string, bool)
-
-	// HasTokenACLFunc mocks the HasTokenACL method.
-	HasTokenACLFunc func(token string) bool
+	// GetRequestActorFunc mocks the GetRequestActor method.
+	GetRequestActorFunc func(r *http.Request) (string, string)
 
 	// calls tracks calls to the methods.
 	calls struct {
 		// Enabled holds details about calls to the Enabled method.
 		Enabled []struct {
 		}
-		// FilterPublicKeys holds details about calls to the FilterPublicKeys method.
-		FilterPublicKeys []struct {
+		// FilterKeysForRequest holds details about calls to the FilterKeysForRequest method.
+		FilterKeysForRequest []struct {
+			// R is the r argument value.
+			R *http.Request
 			// Keys is the keys argument value.
 			Keys []string
 		}
-		// FilterTokenKeys holds details about calls to the FilterTokenKeys method.
-		FilterTokenKeys []struct {
-			// Token is the token argument value.
-			Token string
-			// Keys is the keys argument value.
-			Keys []string
-		}
-		// FilterUserKeys holds details about calls to the FilterUserKeys method.
-		FilterUserKeys []struct {
-			// Username is the username argument value.
-			Username string
-			// Keys is the keys argument value.
-			Keys []string
-		}
-		// GetSessionUser holds details about calls to the GetSessionUser method.
-		GetSessionUser []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// Token is the token argument value.
-			Token string
-		}
-		// HasTokenACL holds details about calls to the HasTokenACL method.
-		HasTokenACL []struct {
-			// Token is the token argument value.
-			Token string
+		// GetRequestActor holds details about calls to the GetRequestActor method.
+		GetRequestActor []struct {
+			// R is the r argument value.
+			R *http.Request
 		}
 	}
-	lockEnabled          sync.RWMutex
-	lockFilterPublicKeys sync.RWMutex
-	lockFilterTokenKeys  sync.RWMutex
-	lockFilterUserKeys   sync.RWMutex
-	lockGetSessionUser   sync.RWMutex
-	lockHasTokenACL      sync.RWMutex
+	lockEnabled              sync.RWMutex
+	lockFilterKeysForRequest sync.RWMutex
+	lockGetRequestActor      sync.RWMutex
 }
 
 // Enabled calls EnabledFunc.
@@ -129,174 +89,70 @@ func (mock *AuthProviderMock) EnabledCalls() []struct {
 	return calls
 }
 
-// FilterPublicKeys calls FilterPublicKeysFunc.
-func (mock *AuthProviderMock) FilterPublicKeys(keys []string) []string {
-	if mock.FilterPublicKeysFunc == nil {
-		panic("AuthProviderMock.FilterPublicKeysFunc: method is nil but AuthProvider.FilterPublicKeys was just called")
+// FilterKeysForRequest calls FilterKeysForRequestFunc.
+func (mock *AuthProviderMock) FilterKeysForRequest(r *http.Request, keys []string) []string {
+	if mock.FilterKeysForRequestFunc == nil {
+		panic("AuthProviderMock.FilterKeysForRequestFunc: method is nil but AuthProvider.FilterKeysForRequest was just called")
 	}
 	callInfo := struct {
+		R    *http.Request
 		Keys []string
 	}{
+		R:    r,
 		Keys: keys,
 	}
-	mock.lockFilterPublicKeys.Lock()
-	mock.calls.FilterPublicKeys = append(mock.calls.FilterPublicKeys, callInfo)
-	mock.lockFilterPublicKeys.Unlock()
-	return mock.FilterPublicKeysFunc(keys)
+	mock.lockFilterKeysForRequest.Lock()
+	mock.calls.FilterKeysForRequest = append(mock.calls.FilterKeysForRequest, callInfo)
+	mock.lockFilterKeysForRequest.Unlock()
+	return mock.FilterKeysForRequestFunc(r, keys)
 }
 
-// FilterPublicKeysCalls gets all the calls that were made to FilterPublicKeys.
+// FilterKeysForRequestCalls gets all the calls that were made to FilterKeysForRequest.
 // Check the length with:
 //
-//	len(mockedAuthProvider.FilterPublicKeysCalls())
-func (mock *AuthProviderMock) FilterPublicKeysCalls() []struct {
+//	len(mockedAuthProvider.FilterKeysForRequestCalls())
+func (mock *AuthProviderMock) FilterKeysForRequestCalls() []struct {
+	R    *http.Request
 	Keys []string
 } {
 	var calls []struct {
+		R    *http.Request
 		Keys []string
 	}
-	mock.lockFilterPublicKeys.RLock()
-	calls = mock.calls.FilterPublicKeys
-	mock.lockFilterPublicKeys.RUnlock()
+	mock.lockFilterKeysForRequest.RLock()
+	calls = mock.calls.FilterKeysForRequest
+	mock.lockFilterKeysForRequest.RUnlock()
 	return calls
 }
 
-// FilterTokenKeys calls FilterTokenKeysFunc.
-func (mock *AuthProviderMock) FilterTokenKeys(token string, keys []string) []string {
-	if mock.FilterTokenKeysFunc == nil {
-		panic("AuthProviderMock.FilterTokenKeysFunc: method is nil but AuthProvider.FilterTokenKeys was just called")
+// GetRequestActor calls GetRequestActorFunc.
+func (mock *AuthProviderMock) GetRequestActor(r *http.Request) (string, string) {
+	if mock.GetRequestActorFunc == nil {
+		panic("AuthProviderMock.GetRequestActorFunc: method is nil but AuthProvider.GetRequestActor was just called")
 	}
 	callInfo := struct {
-		Token string
-		Keys  []string
+		R *http.Request
 	}{
-		Token: token,
-		Keys:  keys,
+		R: r,
 	}
-	mock.lockFilterTokenKeys.Lock()
-	mock.calls.FilterTokenKeys = append(mock.calls.FilterTokenKeys, callInfo)
-	mock.lockFilterTokenKeys.Unlock()
-	return mock.FilterTokenKeysFunc(token, keys)
+	mock.lockGetRequestActor.Lock()
+	mock.calls.GetRequestActor = append(mock.calls.GetRequestActor, callInfo)
+	mock.lockGetRequestActor.Unlock()
+	return mock.GetRequestActorFunc(r)
 }
 
-// FilterTokenKeysCalls gets all the calls that were made to FilterTokenKeys.
+// GetRequestActorCalls gets all the calls that were made to GetRequestActor.
 // Check the length with:
 //
-//	len(mockedAuthProvider.FilterTokenKeysCalls())
-func (mock *AuthProviderMock) FilterTokenKeysCalls() []struct {
-	Token string
-	Keys  []string
+//	len(mockedAuthProvider.GetRequestActorCalls())
+func (mock *AuthProviderMock) GetRequestActorCalls() []struct {
+	R *http.Request
 } {
 	var calls []struct {
-		Token string
-		Keys  []string
+		R *http.Request
 	}
-	mock.lockFilterTokenKeys.RLock()
-	calls = mock.calls.FilterTokenKeys
-	mock.lockFilterTokenKeys.RUnlock()
-	return calls
-}
-
-// FilterUserKeys calls FilterUserKeysFunc.
-func (mock *AuthProviderMock) FilterUserKeys(username string, keys []string) []string {
-	if mock.FilterUserKeysFunc == nil {
-		panic("AuthProviderMock.FilterUserKeysFunc: method is nil but AuthProvider.FilterUserKeys was just called")
-	}
-	callInfo := struct {
-		Username string
-		Keys     []string
-	}{
-		Username: username,
-		Keys:     keys,
-	}
-	mock.lockFilterUserKeys.Lock()
-	mock.calls.FilterUserKeys = append(mock.calls.FilterUserKeys, callInfo)
-	mock.lockFilterUserKeys.Unlock()
-	return mock.FilterUserKeysFunc(username, keys)
-}
-
-// FilterUserKeysCalls gets all the calls that were made to FilterUserKeys.
-// Check the length with:
-//
-//	len(mockedAuthProvider.FilterUserKeysCalls())
-func (mock *AuthProviderMock) FilterUserKeysCalls() []struct {
-	Username string
-	Keys     []string
-} {
-	var calls []struct {
-		Username string
-		Keys     []string
-	}
-	mock.lockFilterUserKeys.RLock()
-	calls = mock.calls.FilterUserKeys
-	mock.lockFilterUserKeys.RUnlock()
-	return calls
-}
-
-// GetSessionUser calls GetSessionUserFunc.
-func (mock *AuthProviderMock) GetSessionUser(ctx context.Context, token string) (string, bool) {
-	if mock.GetSessionUserFunc == nil {
-		panic("AuthProviderMock.GetSessionUserFunc: method is nil but AuthProvider.GetSessionUser was just called")
-	}
-	callInfo := struct {
-		Ctx   context.Context
-		Token string
-	}{
-		Ctx:   ctx,
-		Token: token,
-	}
-	mock.lockGetSessionUser.Lock()
-	mock.calls.GetSessionUser = append(mock.calls.GetSessionUser, callInfo)
-	mock.lockGetSessionUser.Unlock()
-	return mock.GetSessionUserFunc(ctx, token)
-}
-
-// GetSessionUserCalls gets all the calls that were made to GetSessionUser.
-// Check the length with:
-//
-//	len(mockedAuthProvider.GetSessionUserCalls())
-func (mock *AuthProviderMock) GetSessionUserCalls() []struct {
-	Ctx   context.Context
-	Token string
-} {
-	var calls []struct {
-		Ctx   context.Context
-		Token string
-	}
-	mock.lockGetSessionUser.RLock()
-	calls = mock.calls.GetSessionUser
-	mock.lockGetSessionUser.RUnlock()
-	return calls
-}
-
-// HasTokenACL calls HasTokenACLFunc.
-func (mock *AuthProviderMock) HasTokenACL(token string) bool {
-	if mock.HasTokenACLFunc == nil {
-		panic("AuthProviderMock.HasTokenACLFunc: method is nil but AuthProvider.HasTokenACL was just called")
-	}
-	callInfo := struct {
-		Token string
-	}{
-		Token: token,
-	}
-	mock.lockHasTokenACL.Lock()
-	mock.calls.HasTokenACL = append(mock.calls.HasTokenACL, callInfo)
-	mock.lockHasTokenACL.Unlock()
-	return mock.HasTokenACLFunc(token)
-}
-
-// HasTokenACLCalls gets all the calls that were made to HasTokenACL.
-// Check the length with:
-//
-//	len(mockedAuthProvider.HasTokenACLCalls())
-func (mock *AuthProviderMock) HasTokenACLCalls() []struct {
-	Token string
-} {
-	var calls []struct {
-		Token string
-	}
-	mock.lockHasTokenACL.RLock()
-	calls = mock.calls.HasTokenACL
-	mock.lockHasTokenACL.RUnlock()
+	mock.lockGetRequestActor.RLock()
+	calls = mock.calls.GetRequestActor
+	mock.lockGetRequestActor.RUnlock()
 	return calls
 }

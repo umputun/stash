@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/app/server/auth"
 	"github.com/umputun/stash/app/server/mocks"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/app/validator"
@@ -319,19 +320,6 @@ func TestServer_HandleDelete_InternalError(t *testing.T) {
 	assert.Equal(t, "testkey", st.DeleteCalls()[0].Key)
 }
 
-func TestServer_New_InvalidTokens(t *testing.T) {
-	st := &mocks.KVStoreMock{
-		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
-	}
-	_, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-		Address:     ":8080",
-		ReadTimeout: 5 * time.Second,
-		AuthFile:    "/nonexistent/auth.yml", // file doesn't exist
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to initialize auth")
-}
-
 func TestServer_Handler_BaseURL(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) {
@@ -419,251 +407,24 @@ func newTestServer(t *testing.T, st KVStore) *Server {
 	return srv
 }
 
-func TestServer_AuthHotReload(t *testing.T) {
-	tmpDir := t.TempDir()
-	authFile := tmpDir + "/auth.yml"
-	// bcrypt hash for "testpass"
-	authConfig := `users:
-  - name: "admin"
-    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-	st := &mocks.KVStoreMock{
-		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
-	}
-	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: true,
-	})
+// testSessionStore creates an in-memory SQLite store for testing session operations.
+func testSessionStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.New(":memory:")
 	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// run server in background
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Run(ctx) }()
-
-	// give server and watcher time to start (watcher starts before HTTP server)
-	time.Sleep(100 * time.Millisecond)
-
-	// create session for original user
-	sessionToken, err := srv.auth.CreateSession(t.Context(), "admin")
-	require.NoError(t, err)
-	assert.NotEmpty(t, sessionToken)
-
-	// update auth file with new user
-	newAuthConfig := `users:
-  - name: "newuser"
-    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(newAuthConfig), 0o600))
-
-	// wait for reload to happen (session should be invalidated)
-	require.Eventually(t, func() bool {
-		_, ok := srv.auth.GetSessionUser(t.Context(), sessionToken)
-		return !ok // session invalidated
-	}, 2*time.Second, 10*time.Millisecond, "session should be invalidated after reload")
-
-	// new user should work
-	newSessionToken, err := srv.auth.CreateSession(t.Context(), "newuser")
-	require.NoError(t, err)
-	assert.NotEmpty(t, newSessionToken)
-
-	// old user should not work
-	user := srv.auth.ValidateUser("admin", "testpass")
-	assert.Nil(t, user, "old user should not exist after reload")
-
-	cancel()
-	select {
-	case err := <-errCh:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("server did not shutdown in time")
-	}
+	t.Cleanup(func() { _ = st.Close() })
+	return st
 }
 
-func TestServer_AuthHotReload_Disabled(t *testing.T) {
+// testAuthService creates an auth service from config string for testing.
+func testAuthService(t *testing.T, authConfig string) *auth.Service {
+	t.Helper()
 	tmpDir := t.TempDir()
 	authFile := tmpDir + "/auth.yml"
-	// bcrypt hash for "testpass"
-	authConfig := `users:
-  - name: "admin"
-    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
 	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-	st := &mocks.KVStoreMock{
-		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
-	}
-	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: false,
-	})
+	svc, err := auth.New(authFile, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// run server in background
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Run(ctx) }()
-
-	// give server time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// create session
-	sessionToken, err := srv.auth.CreateSession(t.Context(), "admin")
-	require.NoError(t, err)
-
-	// update auth file
-	newAuthConfig := `users:
-  - name: "newuser"
-    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(newAuthConfig), 0o600))
-
-	// wait a bit
-	time.Sleep(300 * time.Millisecond)
-
-	// session should still be valid (no reload happened)
-	user, ok := srv.auth.GetSessionUser(t.Context(), sessionToken)
-	require.True(t, ok)
-	assert.Equal(t, "admin", user)
-
-	// old user should still work (config not reloaded)
-	validatedUser := srv.auth.ValidateUser("admin", "testpass")
-	assert.NotNil(t, validatedUser, "old user should still exist when hot-reload disabled")
-
-	cancel()
-	select {
-	case err := <-errCh:
-		require.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("server did not shutdown in time")
-	}
-}
-
-func TestServer_AuthHotReload_PermissionChange(t *testing.T) {
-	tmpDir := t.TempDir()
-	authFile := tmpDir + "/auth.yml"
-	// bcrypt hash for "testpass"
-	authConfig := `users:
-  - name: "admin"
-    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-	st := &mocks.KVStoreMock{
-		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
-	}
-	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: true,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Run(ctx) }()
-	time.Sleep(100 * time.Millisecond)
-
-	// verify user has rw permission initially
-	ok := srv.auth.CheckUserPermission("admin", "foo/bar", true) // write
-	assert.True(t, ok, "admin should have write permission initially")
-
-	// update permissions to read-only
-	newAuthConfig := `users:
-  - name: "admin"
-    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
-    permissions:
-      - prefix: "*"
-        access: r
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(newAuthConfig), 0o600))
-
-	// wait for reload
-	require.Eventually(t, func() bool {
-		return !srv.auth.CheckUserPermission("admin", "foo/bar", true) // should NOT have write
-	}, 2*time.Second, 10*time.Millisecond, "permission should be updated after reload")
-
-	// verify read permission still works
-	assert.True(t, srv.auth.CheckUserPermission("admin", "foo/bar", false), "admin should have read permission")
-
-	cancel()
-	<-errCh
-}
-
-func TestServer_AuthHotReload_TokenChange(t *testing.T) {
-	tmpDir := t.TempDir()
-	authFile := tmpDir + "/auth.yml"
-	authConfig := `tokens:
-  - token: "oldtoken"
-    permissions:
-      - prefix: "*"
-        access: rw
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
-	st := &mocks.KVStoreMock{
-		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
-	}
-	srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-		Address: ":0", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile, AuthHotReload: true,
-	})
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Run(ctx) }()
-	time.Sleep(100 * time.Millisecond)
-
-	// verify old token works
-	acl, ok := srv.auth.GetTokenACL("oldtoken")
-	require.True(t, ok, "oldtoken should exist initially")
-	assert.True(t, acl.CheckKeyPermission("foo/bar", true), "oldtoken should have write permission")
-
-	// update to use new token
-	newAuthConfig := `tokens:
-  - token: "newtoken"
-    permissions:
-      - prefix: "app/*"
-        access: r
-`
-	require.NoError(t, os.WriteFile(authFile, []byte(newAuthConfig), 0o600))
-
-	// wait for reload - old token should disappear
-	require.Eventually(t, func() bool {
-		_, exists := srv.auth.GetTokenACL("oldtoken")
-		return !exists
-	}, 2*time.Second, 10*time.Millisecond, "old token should be removed after reload")
-
-	// verify new token works
-	newACL, newOk := srv.auth.GetTokenACL("newtoken")
-	require.True(t, newOk, "newtoken should exist after reload")
-	assert.True(t, newACL.CheckKeyPermission("app/config", false), "newtoken should have read permission for app/*")
-	assert.False(t, newACL.CheckKeyPermission("app/config", true), "newtoken should NOT have write permission")
-	assert.False(t, newACL.CheckKeyPermission("db/host", false), "newtoken should NOT have access to db/*")
-
-	cancel()
-	<-errCh
+	return svc
 }
 
 func TestServer_HandleList(t *testing.T) {
@@ -745,21 +506,18 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 	}
 
 	t.Run("list with token auth filters by permission", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
 		authConfig := `tokens:
   - token: "apptoken"
     permissions:
       - prefix: "app/*"
         access: r
 `
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
+		authSvc := testAuthService(t, authConfig)
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
 
@@ -775,21 +533,18 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 	})
 
 	t.Run("list with invalid token returns 401", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
 		authConfig := `tokens:
   - token: "validtoken"
     permissions:
       - prefix: "*"
         access: r
 `
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
+		authSvc := testAuthService(t, authConfig)
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
 
@@ -802,8 +557,6 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 	})
 
 	t.Run("list with session auth filters by user permission", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
 		// bcrypt hash for "password123"
 		authConfig := `users:
   - name: "dbadmin"
@@ -812,18 +565,17 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
       - prefix: "db/*"
         access: rw
 `
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
+		authSvc := testAuthService(t, authConfig)
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
 
 		// create session for user
-		sessionToken, err := srv.auth.CreateSession(t.Context(), "dbadmin")
+		sessionToken, err := authSvc.CreateSession(t.Context(), "dbadmin")
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/", http.NoBody)
@@ -838,21 +590,18 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 	})
 
 	t.Run("list with public access returns filtered keys", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
 		authConfig := `tokens:
   - token: "*"
     permissions:
       - prefix: "app/*"
         access: r
 `
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
+		authSvc := testAuthService(t, authConfig)
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
 
@@ -868,8 +617,6 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 	})
 
 	t.Run("admin token sees all keys even with public ACL configured", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		authFile := tmpDir + "/auth.yml"
 		// both public (limited) and admin (full) tokens configured
 		authConfig := `tokens:
   - token: "*"
@@ -881,13 +628,12 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
       - prefix: "*"
         access: rw
 `
-		require.NoError(t, os.WriteFile(authFile, []byte(authConfig), 0o600))
-
+		authSvc := testAuthService(t, authConfig)
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, testSessionStore(t), nil, Config{
-			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", AuthFile: authFile,
+		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
 

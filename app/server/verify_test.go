@@ -60,7 +60,7 @@ func TestGenerateAuthSchema(t *testing.T) {
 	data, err := GenerateAuthSchema()
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"$schema"`)
-	assert.Contains(t, string(data), `"AuthConfig"`)
+	assert.Contains(t, string(data), `"Config"`) // auth.Config (no stuttering)
 	assert.Contains(t, string(data), `"users"`)
 	assert.Contains(t, string(data), `"tokens"`)
 	assert.Contains(t, string(data), `"Stash Auth Configuration"`)
