@@ -8,12 +8,12 @@ import (
 	"sync"
 )
 
-// AuditAuthMock is a mock implementation of server.AuditAuth.
+// AuthMock is a mock implementation of audit.Auth.
 //
-//	func TestSomethingThatUsesAuditAuth(t *testing.T) {
+//	func TestSomethingThatUsesAuth(t *testing.T) {
 //
-//		// make and configure a mocked server.AuditAuth
-//		mockedAuditAuth := &AuditAuthMock{
+//		// make and configure a mocked audit.Auth
+//		mockedAuth := &AuthMock{
 //			GetRequestActorFunc: func(r *http.Request) (string, string) {
 //				panic("mock out the GetRequestActor method")
 //			},
@@ -22,11 +22,11 @@ import (
 //			},
 //		}
 //
-//		// use mockedAuditAuth in code that requires server.AuditAuth
+//		// use mockedAuth in code that requires audit.Auth
 //		// and then make assertions.
 //
 //	}
-type AuditAuthMock struct {
+type AuthMock struct {
 	// GetRequestActorFunc mocks the GetRequestActor method.
 	GetRequestActorFunc func(r *http.Request) (string, string)
 
@@ -51,9 +51,9 @@ type AuditAuthMock struct {
 }
 
 // GetRequestActor calls GetRequestActorFunc.
-func (mock *AuditAuthMock) GetRequestActor(r *http.Request) (string, string) {
+func (mock *AuthMock) GetRequestActor(r *http.Request) (string, string) {
 	if mock.GetRequestActorFunc == nil {
-		panic("AuditAuthMock.GetRequestActorFunc: method is nil but AuditAuth.GetRequestActor was just called")
+		panic("AuthMock.GetRequestActorFunc: method is nil but Auth.GetRequestActor was just called")
 	}
 	callInfo := struct {
 		R *http.Request
@@ -69,8 +69,8 @@ func (mock *AuditAuthMock) GetRequestActor(r *http.Request) (string, string) {
 // GetRequestActorCalls gets all the calls that were made to GetRequestActor.
 // Check the length with:
 //
-//	len(mockedAuditAuth.GetRequestActorCalls())
-func (mock *AuditAuthMock) GetRequestActorCalls() []struct {
+//	len(mockedAuth.GetRequestActorCalls())
+func (mock *AuthMock) GetRequestActorCalls() []struct {
 	R *http.Request
 } {
 	var calls []struct {
@@ -83,9 +83,9 @@ func (mock *AuditAuthMock) GetRequestActorCalls() []struct {
 }
 
 // IsRequestAdmin calls IsRequestAdminFunc.
-func (mock *AuditAuthMock) IsRequestAdmin(r *http.Request) bool {
+func (mock *AuthMock) IsRequestAdmin(r *http.Request) bool {
 	if mock.IsRequestAdminFunc == nil {
-		panic("AuditAuthMock.IsRequestAdminFunc: method is nil but AuditAuth.IsRequestAdmin was just called")
+		panic("AuthMock.IsRequestAdminFunc: method is nil but Auth.IsRequestAdmin was just called")
 	}
 	callInfo := struct {
 		R *http.Request
@@ -101,8 +101,8 @@ func (mock *AuditAuthMock) IsRequestAdmin(r *http.Request) bool {
 // IsRequestAdminCalls gets all the calls that were made to IsRequestAdmin.
 // Check the length with:
 //
-//	len(mockedAuditAuth.IsRequestAdminCalls())
-func (mock *AuditAuthMock) IsRequestAdminCalls() []struct {
+//	len(mockedAuth.IsRequestAdminCalls())
+func (mock *AuthMock) IsRequestAdminCalls() []struct {
 	R *http.Request
 } {
 	var calls []struct {

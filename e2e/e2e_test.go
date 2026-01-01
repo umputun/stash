@@ -191,8 +191,13 @@ func createKey(t *testing.T, page playwright.Page, key, value string) {
 	modal := page.Locator("#main-modal.active")
 	waitVisible(t, modal)
 
-	require.NoError(t, page.Locator(`input[name="key"]`).Fill(key))
-	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(value))
+	// wait for form inputs to be visible and interactive
+	keyInput := page.Locator(`input[name="key"]`)
+	waitVisible(t, keyInput)
+	require.NoError(t, keyInput.Fill(key))
+	valueInput := page.Locator(`textarea[name="value"]`)
+	waitVisible(t, valueInput)
+	require.NoError(t, valueInput.Fill(value))
 	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
 	waitVisible(t, submitBtn)
 
@@ -216,9 +221,16 @@ func createKeyWithFormat(t *testing.T, page playwright.Page, key, value, format 
 	modal := page.Locator("#main-modal.active")
 	waitVisible(t, modal)
 
-	require.NoError(t, page.Locator(`input[name="key"]`).Fill(key))
-	require.NoError(t, page.Locator(`textarea[name="value"]`).Fill(value))
-	_, err := page.Locator(`select[name="format"]`).SelectOption(playwright.SelectOptionValues{Values: &[]string{format}})
+	// wait for form inputs to be visible and interactive
+	keyInput := page.Locator(`input[name="key"]`)
+	waitVisible(t, keyInput)
+	require.NoError(t, keyInput.Fill(key))
+	valueInput := page.Locator(`textarea[name="value"]`)
+	waitVisible(t, valueInput)
+	require.NoError(t, valueInput.Fill(value))
+	formatSelect := page.Locator(`select[name="format"]`)
+	waitVisible(t, formatSelect)
+	_, err := formatSelect.SelectOption(playwright.SelectOptionValues{Values: &[]string{format}})
 	require.NoError(t, err)
 	submitBtn := page.Locator(`#modal-content button[type="submit"]`)
 	waitVisible(t, submitBtn)

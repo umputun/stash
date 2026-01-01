@@ -10,12 +10,12 @@ import (
 	"github.com/umputun/stash/app/store"
 )
 
-// AuditStoreMock is a mock implementation of server.AuditStore.
+// StoreMock is a mock implementation of audit.Store.
 //
-//	func TestSomethingThatUsesAuditStore(t *testing.T) {
+//	func TestSomethingThatUsesStore(t *testing.T) {
 //
-//		// make and configure a mocked server.AuditStore
-//		mockedAuditStore := &AuditStoreMock{
+//		// make and configure a mocked audit.Store
+//		mockedStore := &StoreMock{
 //			LogAuditFunc: func(ctx context.Context, entry store.AuditEntry) error {
 //				panic("mock out the LogAudit method")
 //			},
@@ -24,11 +24,11 @@ import (
 //			},
 //		}
 //
-//		// use mockedAuditStore in code that requires server.AuditStore
+//		// use mockedStore in code that requires audit.Store
 //		// and then make assertions.
 //
 //	}
-type AuditStoreMock struct {
+type StoreMock struct {
 	// LogAuditFunc mocks the LogAudit method.
 	LogAuditFunc func(ctx context.Context, entry store.AuditEntry) error
 
@@ -57,9 +57,9 @@ type AuditStoreMock struct {
 }
 
 // LogAudit calls LogAuditFunc.
-func (mock *AuditStoreMock) LogAudit(ctx context.Context, entry store.AuditEntry) error {
+func (mock *StoreMock) LogAudit(ctx context.Context, entry store.AuditEntry) error {
 	if mock.LogAuditFunc == nil {
-		panic("AuditStoreMock.LogAuditFunc: method is nil but AuditStore.LogAudit was just called")
+		panic("StoreMock.LogAuditFunc: method is nil but Store.LogAudit was just called")
 	}
 	callInfo := struct {
 		Ctx   context.Context
@@ -77,8 +77,8 @@ func (mock *AuditStoreMock) LogAudit(ctx context.Context, entry store.AuditEntry
 // LogAuditCalls gets all the calls that were made to LogAudit.
 // Check the length with:
 //
-//	len(mockedAuditStore.LogAuditCalls())
-func (mock *AuditStoreMock) LogAuditCalls() []struct {
+//	len(mockedStore.LogAuditCalls())
+func (mock *StoreMock) LogAuditCalls() []struct {
 	Ctx   context.Context
 	Entry store.AuditEntry
 } {
@@ -93,9 +93,9 @@ func (mock *AuditStoreMock) LogAuditCalls() []struct {
 }
 
 // QueryAudit calls QueryAuditFunc.
-func (mock *AuditStoreMock) QueryAudit(ctx context.Context, q store.AuditQuery) ([]store.AuditEntry, int, error) {
+func (mock *StoreMock) QueryAudit(ctx context.Context, q store.AuditQuery) ([]store.AuditEntry, int, error) {
 	if mock.QueryAuditFunc == nil {
-		panic("AuditStoreMock.QueryAuditFunc: method is nil but AuditStore.QueryAudit was just called")
+		panic("StoreMock.QueryAuditFunc: method is nil but Store.QueryAudit was just called")
 	}
 	callInfo := struct {
 		Ctx context.Context
@@ -113,8 +113,8 @@ func (mock *AuditStoreMock) QueryAudit(ctx context.Context, q store.AuditQuery) 
 // QueryAuditCalls gets all the calls that were made to QueryAudit.
 // Check the length with:
 //
-//	len(mockedAuditStore.QueryAuditCalls())
-func (mock *AuditStoreMock) QueryAuditCalls() []struct {
+//	len(mockedStore.QueryAuditCalls())
+func (mock *StoreMock) QueryAuditCalls() []struct {
 	Ctx context.Context
 	Q   store.AuditQuery
 } {

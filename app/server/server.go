@@ -18,6 +18,7 @@ import (
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/api"
+	"github.com/umputun/stash/app/server/audit"
 	"github.com/umputun/stash/app/server/auth"
 	"github.com/umputun/stash/app/server/web"
 	"github.com/umputun/stash/app/store"
@@ -29,7 +30,7 @@ import (
 // Server represents the HTTP server.
 type Server struct {
 	store           KVStore
-	auditStore      AuditStore
+	auditStore      *store.Store
 	validator       Validator // format validator
 	cfg             Config
 	version         string
@@ -37,7 +38,7 @@ type Server struct {
 	auth            *auth.Service
 	apiHandler      *api.Handler
 	webHandler      *web.Handler
-	auditHandler    *AuditHandler
+	auditHandler    *audit.Handler
 	webAuditHandler *web.AuditHandler
 	staticFS        fs.FS // embedded static files
 }
@@ -93,7 +94,7 @@ type Config struct {
 // gs is optional git service, pass nil to disable git versioning.
 // as is optional audit store, pass nil to disable audit logging.
 // authSvc is optional auth service, pass nil to disable authentication.
-func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as AuditStore, cfg Config) (*Server, error) {
+func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as *store.Store, cfg Config) (*Server, error) {
 	staticContent, err := web.StaticFS()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load static files: %w", err)
@@ -130,7 +131,7 @@ func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as Aud
 
 	// create audit handlers if audit is enabled
 	if cfg.AuditEnabled && as != nil {
-		s.auditHandler = NewAuditHandler(as, authSvc, cfg.AuditQueryLimit)
+		s.auditHandler = audit.NewHandler(as, authSvc, cfg.AuditQueryLimit)
 		s.webAuditHandler = web.NewAuditHandler(as, authSvc, webHandler)
 	}
 
@@ -294,7 +295,7 @@ func noopMiddleware(next http.Handler) http.Handler {
 // auditMiddleware returns the audit middleware or noop if audit is disabled.
 func (s *Server) auditMiddleware() func(http.Handler) http.Handler {
 	if !s.cfg.AuditEnabled || s.auditStore == nil {
-		return NoopAuditMiddleware
+		return audit.NoopMiddleware
 	}
-	return AuditMiddleware(s.auditStore, s.auth)
+	return audit.Middleware(s.auditStore, s.auth)
 }

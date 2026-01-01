@@ -171,8 +171,8 @@ func runServer(ctx context.Context) error {
 		return err
 	}
 
-	// determine audit store (rawStore implements AuditStore interface)
-	var auditStore server.AuditStore
+	// determine audit store (nil if disabled)
+	var auditStore *store.Store
 	if opts.Audit.Enabled {
 		auditStore = rawStore
 	}
