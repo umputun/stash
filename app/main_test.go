@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1767,4 +1768,194 @@ func TestIntegration_SecretsNotConfigured(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not shut down in time")
 	}
+}
+
+func TestIntegration_AuditTrail(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18502"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Secrets.Key = ""
+
+	// enable audit
+	opts.Audit.Enabled = true
+	opts.Audit.QueryLimit = 1000
+
+	// create auth config with admin user
+	authContent := `users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    admin: true
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: api-token
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+	opts.Auth.LoginTTL = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServer(ctx)
+	}()
+
+	waitForServer(t, "http://127.0.0.1:18502/ping")
+
+	// helper to make requests with auth token
+	doRequest := func(method, url, token, body string) (*http.Response, error) {
+		var reqBody io.Reader
+		if body != "" {
+			reqBody = strings.NewReader(body)
+		}
+		req, err := http.NewRequest(method, url, reqBody)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		client := &http.Client{Timeout: 5 * time.Second}
+		return client.Do(req)
+	}
+
+	// perform KV operations that should be audited
+	t.Run("create key", func(t *testing.T) {
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18502/kv/audit-test/key1", "api-token", "value1")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
+	})
+
+	t.Run("read key", func(t *testing.T) {
+		resp, err := doRequest(http.MethodGet, "http://127.0.0.1:18502/kv/audit-test/key1", "api-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("update key", func(t *testing.T) {
+		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18502/kv/audit-test/key1", "api-token", "value2")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode) // update returns 200
+	})
+
+	t.Run("delete key", func(t *testing.T) {
+		resp, err := doRequest(http.MethodDelete, "http://127.0.0.1:18502/kv/audit-test/key1", "api-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+	})
+
+	t.Run("read nonexistent key", func(t *testing.T) {
+		resp, err := doRequest(http.MethodGet, "http://127.0.0.1:18502/kv/audit-test/nonexistent", "api-token", "")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	// login as admin to query audit log
+	t.Run("query audit log", func(t *testing.T) {
+		// client that doesn't follow redirects to capture cookies
+		client := &http.Client{
+			Timeout: 5 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse // don't follow redirects
+			},
+		}
+
+		// login to get session cookie
+		loginData := strings.NewReader("username=admin&password=testpass")
+		loginReq, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:18502/login", loginData)
+		require.NoError(t, err)
+		loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		loginResp, err := client.Do(loginReq)
+		require.NoError(t, err)
+		defer loginResp.Body.Close()
+
+		// extract session cookie
+		var sessionCookie *http.Cookie
+		for _, c := range loginResp.Cookies() {
+			if c.Name == "stash-auth" || c.Name == "__Host-stash-auth" {
+				sessionCookie = c
+				break
+			}
+		}
+		require.NotNil(t, sessionCookie, "session cookie should be set after login")
+
+		// query audit log
+		queryBody := `{"key":"audit-test/*","limit":100}`
+		queryReq, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:18502/audit/query", strings.NewReader(queryBody))
+		require.NoError(t, err)
+		queryReq.Header.Set("Content-Type", "application/json")
+		queryReq.AddCookie(sessionCookie)
+
+		queryResp, err := client.Do(queryReq)
+		require.NoError(t, err)
+		defer queryResp.Body.Close()
+
+		require.Equal(t, http.StatusOK, queryResp.StatusCode, "audit query should succeed")
+
+		// parse response
+		var auditResp struct {
+			Entries []struct {
+				Action    string `json:"action"`
+				Key       string `json:"key"`
+				Actor     string `json:"actor"`
+				ActorType string `json:"actor_type"`
+				Result    string `json:"result"`
+			} `json:"entries"`
+			Total int `json:"total"`
+		}
+		err = json.NewDecoder(queryResp.Body).Decode(&auditResp)
+		require.NoError(t, err)
+
+		// verify we have audit entries for our operations
+		assert.GreaterOrEqual(t, auditResp.Total, 5, "should have at least 5 audit entries")
+
+		// build map of actions for verification
+		actions := make(map[string]int)
+		for _, e := range auditResp.Entries {
+			if strings.HasPrefix(e.Key, "audit-test/") {
+				actions[e.Action]++
+				assert.Equal(t, "token", e.ActorType, "actor type should be token")
+				assert.Contains(t, e.Actor, "api-", "actor should contain masked token prefix")
+			}
+		}
+
+		// verify expected actions were recorded
+		assert.Equal(t, 1, actions["create"], "should have 1 create action")
+		assert.GreaterOrEqual(t, actions["read"], 1, "should have at least 1 read action")
+		assert.Equal(t, 1, actions["update"], "should have 1 update action")
+		assert.Equal(t, 1, actions["delete"], "should have 1 delete action")
+	})
+
+	t.Run("audit query requires admin", func(t *testing.T) {
+		// query without auth should fail
+		resp, err := doRequest(http.MethodPost, "http://127.0.0.1:18502/audit/query", "", `{}`)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	})
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+
+	opts.Audit.Enabled = false
+	opts.Auth.File = ""
 }

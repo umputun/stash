@@ -603,7 +603,7 @@ func TestZK_InSecretsPath(t *testing.T) {
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode, "should create ZK key via API")
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "should create ZK key via API")
 
 	// login to UI
 	page := newPage(t)
