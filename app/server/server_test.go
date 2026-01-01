@@ -99,7 +99,7 @@ func TestServer_HandleGet_ContentType(t *testing.T) {
 func TestServer_HandleSet(t *testing.T) {
 	t.Run("set new key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -109,7 +109,7 @@ func TestServer_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "newkey", st.SetCalls()[0].Key)
 		assert.Equal(t, []byte("newvalue"), st.SetCalls()[0].Value)
@@ -117,7 +117,7 @@ func TestServer_HandleSet(t *testing.T) {
 
 	t.Run("update existing key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return false, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -135,7 +135,7 @@ func TestServer_HandleSet(t *testing.T) {
 
 	t.Run("set key with slashes", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -145,7 +145,7 @@ func TestServer_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "a/b/c", st.SetCalls()[0].Key)
 		assert.Equal(t, []byte("nested"), st.SetCalls()[0].Value)
@@ -153,7 +153,7 @@ func TestServer_HandleSet(t *testing.T) {
 
 	t.Run("valid format via header", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -164,14 +164,14 @@ func TestServer_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "json", st.SetCalls()[0].Format)
 	})
 
 	t.Run("valid format via query param", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -181,14 +181,14 @@ func TestServer_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "yaml", st.SetCalls()[0].Format)
 	})
 
 	t.Run("invalid format defaults to text", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -199,14 +199,14 @@ func TestServer_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "text", st.SetCalls()[0].Format)
 	})
 
 	t.Run("empty format defaults to text", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		srv := newTestServer(t, st)
@@ -216,7 +216,7 @@ func TestServer_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.routes().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "text", st.SetCalls()[0].Format)
 	})
@@ -288,7 +288,7 @@ func TestServer_HandleGet_InternalError(t *testing.T) {
 
 func TestServer_HandleSet_InternalError(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc:  func(context.Context, string, []byte, string) error { return errors.New("db error") },
+		SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return false, errors.New("db error") },
 		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 	srv := newTestServer(t, st)
@@ -340,7 +340,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 			}
 			return nil, "", store.ErrNotFound
 		},
-		SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+		SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 	}
 
@@ -406,7 +406,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.handler().ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "newkey", st.SetCalls()[0].Key)
 	})

@@ -95,7 +95,7 @@ class Client:
 
     def _check_response(self, resp: urllib3.HTTPResponse) -> None:
         """Check response status and raise appropriate errors."""
-        if resp.status in (200, 204):
+        if resp.status in (200, 201, 204):
             return
         if resp.status == 404:
             raise NotFoundError("key not found")

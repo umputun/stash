@@ -181,7 +181,8 @@ func (s *Store) createSchema() error {
 			);
 			CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 			CREATE INDEX IF NOT EXISTS idx_audit_key ON audit_log(key);
-			CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)`
+			CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+			CREATE INDEX IF NOT EXISTS idx_audit_ts_key ON audit_log(timestamp, key)`
 	default:
 		kvSchema = `
 			CREATE TABLE IF NOT EXISTS kv (
@@ -215,7 +216,8 @@ func (s *Store) createSchema() error {
 			);
 			CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 			CREATE INDEX IF NOT EXISTS idx_audit_key ON audit_log(key);
-			CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)`
+			CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+			CREATE INDEX IF NOT EXISTS idx_audit_ts_key ON audit_log(timestamp, key)`
 	}
 
 	if _, err := s.db.Exec(kvSchema); err != nil { //nolint:noctx // init-time, no context available
@@ -408,13 +410,14 @@ func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 // Creates a new key or updates an existing one.
 // If format is empty, defaults to "text".
 // Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
-func (s *Store) Set(ctx context.Context, key string, value []byte, format string) error {
+// Returns (true, nil) if a new key was created, (false, nil) if an existing key was updated.
+func (s *Store) Set(ctx context.Context, key string, value []byte, format string) (created bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// check if trying to store secret without key configured
 	if IsSecret(key) && !s.SecretsEnabled() {
-		return ErrSecretsNotConfigured
+		return false, ErrSecretsNotConfigured
 	}
 
 	if format == "" {
@@ -423,28 +426,59 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 
 	// reject invalid ZK payloads in secrets paths
 	if IsSecret(key) && IsZKEncrypted(value) && !IsValidZKPayload(value) {
-		return ErrInvalidZKPayload
+		return false, ErrInvalidZKPayload
 	}
 
 	// encrypt secrets (skip if already ZK-encrypted)
 	storeValue := value
 	if IsSecret(key) && !IsZKEncrypted(value) {
-		encrypted, err := s.encryptor.Encrypt(value)
+		var encrypted []byte
+		encrypted, err = s.encryptor.Encrypt(value)
 		if err != nil {
-			return fmt.Errorf("failed to encrypt key %q: %w", key, err)
+			return false, fmt.Errorf("failed to encrypt key %q: %w", key, err)
 		}
 		storeValue = encrypted
 	}
 
 	now := time.Now().UTC()
-	query := s.adoptQuery(`
-		INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value, format = excluded.format, updated_at = excluded.updated_at`)
-	if _, err := s.db.ExecContext(ctx, query, key, storeValue, format, now, now); err != nil {
-		return fmt.Errorf("failed to set key %q: %w", key, err)
+
+	// try insert first
+	insertQuery := s.adoptQuery(`INSERT INTO kv (key, value, format, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`)
+	_, err = s.db.ExecContext(ctx, insertQuery, key, storeValue, format, now, now)
+	if err == nil {
+		log.Printf("[DEBUG] created key %q: %d bytes, format=%s", key, len(value), format)
+		return true, nil
 	}
-	log.Printf("[DEBUG] set key %q: %d bytes, format=%s", key, len(value), format)
-	return nil
+
+	// check if it's a unique constraint violation (key exists)
+	if !isUniqueViolation(err) {
+		return false, fmt.Errorf("failed to set key %q: %w", key, err)
+	}
+
+	// update existing key
+	updateQuery := s.adoptQuery(`UPDATE kv SET value = ?, format = ?, updated_at = ? WHERE key = ?`)
+	if _, err = s.db.ExecContext(ctx, updateQuery, storeValue, format, now, key); err != nil {
+		return false, fmt.Errorf("failed to update key %q: %w", key, err)
+	}
+	log.Printf("[DEBUG] updated key %q: %d bytes, format=%s", key, len(value), format)
+	return false, nil
+}
+
+// isUniqueViolation checks if error is a unique constraint violation.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// sQLite
+	if strings.Contains(errStr, "UNIQUE constraint failed") {
+		return true
+	}
+	// postgreSQL
+	if strings.Contains(errStr, "duplicate key value") {
+		return true
+	}
+	return false
 }
 
 // SetWithVersion stores the value only if the key's updated_at matches expectedVersion.
@@ -453,7 +487,8 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 // Returns ErrSecretsNotConfigured if key is a secret path but secrets are not enabled.
 func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
 	if expectedVersion.IsZero() {
-		return s.Set(ctx, key, value, format)
+		_, err := s.Set(ctx, key, value, format)
+		return err
 	}
 
 	// check if trying to store secret without key configured

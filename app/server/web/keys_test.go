@@ -251,7 +251,7 @@ func TestHandler_HandleKeyView_ZKEncrypted(t *testing.T) {
 func TestHandler_HandleKeyCreate(t *testing.T) {
 	st := &mocks.KVStoreMock{
 		GetWithFormatFunc:  func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-		SetFunc:            func(context.Context, string, []byte, string) error { return nil },
+		SetFunc:            func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		SecretsEnabledFunc: func() bool { return false },
 	}
@@ -280,7 +280,7 @@ func TestHandler_HandleKeyCreate(t *testing.T) {
 func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc:  func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:  func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc: func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		h := newTestHandlerWithStore(t, st)
@@ -298,7 +298,7 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-			SetFunc:           func(context.Context, string, []byte, string) error { return errors.New("db error") },
+			SetFunc:           func(context.Context, string, []byte, string) (bool, error) { return false, errors.New("db error") },
 			ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
@@ -318,7 +318,7 @@ func TestHandler_HandleKeyCreate_Errors(t *testing.T) {
 	t.Run("duplicate key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return []byte("existing"), "text", nil },
-			SetFunc:           func(context.Context, string, []byte, string) error { return nil },
+			SetFunc:           func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 			ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		}
 		auth := &mocks.AuthProviderMock{
@@ -860,7 +860,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 			GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
-			SetFunc:           func(_ context.Context, key string, value []byte, format string) error { return nil },
+			SetFunc:           func(_ context.Context, key string, value []byte, format string) (bool, error) { return true, nil },
 		}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc:             func() bool { return true },
@@ -888,7 +888,9 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 			GetWithFormatFunc: func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
-			SetFunc:           func(_ context.Context, key string, value []byte, format string) error { return errors.New("db error") },
+			SetFunc: func(_ context.Context, key string, value []byte, format string) (bool, error) {
+				return false, errors.New("db error")
+			},
 		}
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc:             func() bool { return false },
@@ -972,8 +974,8 @@ func TestHandler_SecretsNotConfigured(t *testing.T) {
 	t.Run("handleKeyCreate", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			GetWithFormatFunc: func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
-			SetFunc: func(context.Context, string, []byte, string) error {
-				return store.ErrSecretsNotConfigured
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) {
+				return false, store.ErrSecretsNotConfigured
 			},
 			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 			SecretsEnabledFunc: func() bool { return false },
@@ -1021,8 +1023,8 @@ func TestHandler_SecretsNotConfigured(t *testing.T) {
 			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
 		}
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error {
-				return store.ErrSecretsNotConfigured
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) {
+				return false, store.ErrSecretsNotConfigured
 			},
 			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 			SecretsEnabledFunc: func() bool { return false },

@@ -78,7 +78,7 @@ func TestStore_SetGet(t *testing.T) {
 			store := newTestStore(t, engine)
 
 			t.Run("set and get value", func(t *testing.T) {
-				err := store.Set(t.Context(), "key1", []byte("value1"), "text")
+				_, err := store.Set(t.Context(), "key1", []byte("value1"), "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(t.Context(), "key1")
@@ -87,10 +87,10 @@ func TestStore_SetGet(t *testing.T) {
 			})
 
 			t.Run("update existing key", func(t *testing.T) {
-				err := store.Set(t.Context(), "key2", []byte("original"), "text")
+				_, err := store.Set(t.Context(), "key2", []byte("original"), "text")
 				require.NoError(t, err)
 
-				err = store.Set(t.Context(), "key2", []byte("updated"), "text")
+				_, err = store.Set(t.Context(), "key2", []byte("updated"), "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(t.Context(), "key2")
@@ -105,7 +105,7 @@ func TestStore_SetGet(t *testing.T) {
 
 			t.Run("handles binary data", func(t *testing.T) {
 				binary := []byte{0x00, 0x01, 0xFF, 0xFE}
-				err := store.Set(t.Context(), "binary", binary, "text")
+				_, err := store.Set(t.Context(), "binary", binary, "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(t.Context(), "binary")
@@ -114,7 +114,7 @@ func TestStore_SetGet(t *testing.T) {
 			})
 
 			t.Run("handles empty value", func(t *testing.T) {
-				err := store.Set(t.Context(), "empty", []byte{}, "text")
+				_, err := store.Set(t.Context(), "empty", []byte{}, "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(t.Context(), "empty")
@@ -131,7 +131,7 @@ func TestStore_UpdatedAt(t *testing.T) {
 			store := newTestStore(t, engine)
 
 			// set initial value
-			err := store.Set(t.Context(), "timekey", []byte("v1"), "text")
+			_, err := store.Set(t.Context(), "timekey", []byte("v1"), "text")
 			require.NoError(t, err)
 
 			// get created_at
@@ -144,7 +144,7 @@ func TestStore_UpdatedAt(t *testing.T) {
 
 			// update value (wait to ensure different timestamp - RFC3339 has second precision)
 			time.Sleep(1100 * time.Millisecond)
-			err = store.Set(t.Context(), "timekey", []byte("v2"), "text")
+			_, err = store.Set(t.Context(), "timekey", []byte("v2"), "text")
 			require.NoError(t, err)
 
 			// verify updated_at changed but created_at didn't
@@ -166,7 +166,7 @@ func TestStore_Delete(t *testing.T) {
 			store := newTestStore(t, engine)
 
 			t.Run("delete existing key", func(t *testing.T) {
-				err := store.Set(t.Context(), "todelete", []byte("value"), "text")
+				_, err := store.Set(t.Context(), "todelete", []byte("value"), "text")
 				require.NoError(t, err)
 
 				err = store.Delete(t.Context(), "todelete")
@@ -190,9 +190,9 @@ func TestStore_List(t *testing.T) {
 			store := newTestStore(t, engine)
 
 			t.Run("returns keys with correct metadata", func(t *testing.T) {
-				err := store.Set(t.Context(), "list/key1", []byte("short"), "text")
+				_, err := store.Set(t.Context(), "list/key1", []byte("short"), "text")
 				require.NoError(t, err)
-				err = store.Set(t.Context(), "list/key2", []byte("longer value here"), "json")
+				_, err = store.Set(t.Context(), "list/key2", []byte("longer value here"), "json")
 				require.NoError(t, err)
 
 				keys, err := store.List(t.Context(), enum.SecretsFilterAll)
@@ -224,10 +224,10 @@ func TestStore_List(t *testing.T) {
 				prefix := "list-order/" + engine + "/"
 
 				// create keys with delay to ensure different timestamps
-				err := store.Set(t.Context(), prefix+"first", []byte("1"), "text")
+				_, err := store.Set(t.Context(), prefix+"first", []byte("1"), "text")
 				require.NoError(t, err)
 				time.Sleep(1100 * time.Millisecond) // RFC3339 has second precision
-				err = store.Set(t.Context(), prefix+"second", []byte("2"), "yaml")
+				_, err = store.Set(t.Context(), prefix+"second", []byte("2"), "yaml")
 				require.NoError(t, err)
 
 				keys, err := store.List(t.Context(), enum.SecretsFilterAll)
@@ -259,7 +259,7 @@ func TestStore_GetInfo(t *testing.T) {
 			st := newTestStore(t, engine)
 
 			// create a key
-			err := st.Set(t.Context(), "info/testkey", []byte("testvalue"), "json")
+			_, err := st.Set(t.Context(), "info/testkey", []byte("testvalue"), "json")
 			require.NoError(t, err)
 
 			t.Run("returns key info for existing key", func(t *testing.T) {
@@ -283,7 +283,7 @@ func TestStore_GetInfo(t *testing.T) {
 				require.NoError(t, err)
 
 				time.Sleep(1100 * time.Millisecond) // ensure timestamp changes
-				err = st.Set(t.Context(), "info/testkey", []byte("updated"), "text")
+				_, err = st.Set(t.Context(), "info/testkey", []byte("updated"), "text")
 				require.NoError(t, err)
 
 				info2, err := st.GetInfo(t.Context(), "info/testkey")
@@ -308,9 +308,9 @@ func TestStore_ZKEncrypted(t *testing.T) {
 			st := newTestStore(t, engine)
 
 			// create a regular key and a ZK-encrypted key
-			err := st.Set(t.Context(), "zk/regular", []byte("plain value"), "text")
+			_, err := st.Set(t.Context(), "zk/regular", []byte("plain value"), "text")
 			require.NoError(t, err)
-			err = st.Set(t.Context(), "zk/encrypted", zkValue, "text")
+			_, err = st.Set(t.Context(), "zk/encrypted", zkValue, "text")
 			require.NoError(t, err)
 
 			t.Run("GetInfo returns ZKEncrypted=true for $ZK$ values", func(t *testing.T) {
@@ -400,7 +400,7 @@ func TestStore_Format(t *testing.T) {
 			store := newTestStore(t, engine)
 
 			t.Run("set with format and get with format", func(t *testing.T) {
-				err := store.Set(t.Context(), "fmt/jsonkey", []byte(`{"key": "value"}`), "json")
+				_, err := store.Set(t.Context(), "fmt/jsonkey", []byte(`{"key": "value"}`), "json")
 				require.NoError(t, err)
 
 				value, format, err := store.GetWithFormat(t.Context(), "fmt/jsonkey")
@@ -410,7 +410,7 @@ func TestStore_Format(t *testing.T) {
 			})
 
 			t.Run("empty format defaults to text", func(t *testing.T) {
-				err := store.Set(t.Context(), "fmt/defaultkey", []byte("some value"), "")
+				_, err := store.Set(t.Context(), "fmt/defaultkey", []byte("some value"), "")
 				require.NoError(t, err)
 
 				value, format, err := store.GetWithFormat(t.Context(), "fmt/defaultkey")
@@ -420,14 +420,14 @@ func TestStore_Format(t *testing.T) {
 			})
 
 			t.Run("format updates when key is updated", func(t *testing.T) {
-				err := store.Set(t.Context(), "fmt/updatekey", []byte("original"), "text")
+				_, err := store.Set(t.Context(), "fmt/updatekey", []byte("original"), "text")
 				require.NoError(t, err)
 
 				_, format, err := store.GetWithFormat(t.Context(), "fmt/updatekey")
 				require.NoError(t, err)
 				assert.Equal(t, "text", format)
 
-				err = store.Set(t.Context(), "fmt/updatekey", []byte(`{"new": "value"}`), "json")
+				_, err = store.Set(t.Context(), "fmt/updatekey", []byte(`{"new": "value"}`), "json")
 				require.NoError(t, err)
 
 				value, format, err := store.GetWithFormat(t.Context(), "fmt/updatekey")
@@ -445,7 +445,7 @@ func TestStore_Format(t *testing.T) {
 				formats := []string{"text", "json", "yaml", "xml", "toml", "ini", "shell"}
 				for _, fmt := range formats {
 					key := "fmt/various_" + engine + "_" + fmt
-					err := store.Set(t.Context(), key, []byte("content"), fmt)
+					_, err := store.Set(t.Context(), key, []byte("content"), fmt)
 					require.NoError(t, err)
 
 					_, gotFmt, err := store.GetWithFormat(t.Context(), key)
@@ -492,7 +492,7 @@ func TestStore_Migration(t *testing.T) {
 		assert.Equal(t, "text", format, "migrated row should have default format 'text'")
 
 		// verify new data can be written with format
-		err = store.Set(t.Context(), "new-key", []byte("new-value"), "json")
+		_, err = store.Set(t.Context(), "new-key", []byte("new-value"), "json")
 		require.NoError(t, err)
 
 		value, format, err = store.GetWithFormat(t.Context(), "new-key")
@@ -513,7 +513,7 @@ func TestStore_Migration(t *testing.T) {
 		store1, err := New(dbPath)
 		require.NoError(t, err)
 
-		err = store1.Set(t.Context(), "test-key", []byte("test-value"), "yaml")
+		_, err = store1.Set(t.Context(), "test-key", []byte("test-value"), "yaml")
 		require.NoError(t, err)
 		require.NoError(t, store1.Close())
 
@@ -535,7 +535,7 @@ func TestStore_SetWithVersion(t *testing.T) {
 			store := newTestStore(t, engine)
 
 			t.Run("success when version matches", func(t *testing.T) {
-				err := store.Set(t.Context(), "ver/versioned", []byte("initial"), "text")
+				_, err := store.Set(t.Context(), "ver/versioned", []byte("initial"), "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(t.Context(), "ver/versioned")
@@ -553,7 +553,7 @@ func TestStore_SetWithVersion(t *testing.T) {
 			})
 
 			t.Run("conflict when version mismatch", func(t *testing.T) {
-				err := store.Set(t.Context(), "ver/conflict-key", []byte("original"), "text")
+				_, err := store.Set(t.Context(), "ver/conflict-key", []byte("original"), "text")
 				require.NoError(t, err)
 
 				// get initial version
@@ -562,7 +562,7 @@ func TestStore_SetWithVersion(t *testing.T) {
 
 				// simulate concurrent update
 				time.Sleep(1100 * time.Millisecond) // ensure timestamp changes
-				err = store.Set(t.Context(), "ver/conflict-key", []byte("concurrent-update"), "yaml")
+				_, err = store.Set(t.Context(), "ver/conflict-key", []byte("concurrent-update"), "yaml")
 				require.NoError(t, err)
 
 				// try to update with old version
@@ -580,7 +580,7 @@ func TestStore_SetWithVersion(t *testing.T) {
 			})
 
 			t.Run("not found when key deleted", func(t *testing.T) {
-				err := store.Set(t.Context(), "ver/to-delete", []byte("value"), "text")
+				_, err := store.Set(t.Context(), "ver/to-delete", []byte("value"), "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(t.Context(), "ver/to-delete")
@@ -615,7 +615,7 @@ func TestStore_SetWithVersion(t *testing.T) {
 			})
 
 			t.Run("empty format defaults to text", func(t *testing.T) {
-				err := store.Set(t.Context(), "ver/empty-fmt", []byte("val"), "text")
+				_, err := store.Set(t.Context(), "ver/empty-fmt", []byte("val"), "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(t.Context(), "ver/empty-fmt")
@@ -632,7 +632,7 @@ func TestStore_SetWithVersion(t *testing.T) {
 			t.Run("works with unix nano timestamp round-trip", func(t *testing.T) {
 				// this test verifies that nanosecond-precision timestamps survive round-trip
 				// through UnixNano() -> time.Unix(0, nanos) conversion (used by web UI)
-				err := store.Set(t.Context(), "ver/unix-roundtrip", []byte("initial"), "text")
+				_, err := store.Set(t.Context(), "ver/unix-roundtrip", []byte("initial"), "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(t.Context(), "ver/unix-roundtrip")
@@ -832,7 +832,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			prefix := "sec/crud/" + engine + "/"
 
 			t.Run("set and get secret", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"secrets/db/password", []byte("super-secret"), "text")
+				_, err := store.Set(ctx, prefix+"secrets/db/password", []byte("super-secret"), "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(ctx, prefix+"secrets/db/password")
@@ -841,7 +841,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			})
 
 			t.Run("set and get secret with format", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"app/secrets/config", []byte(`{"key":"secret"}`), "json")
+				_, err := store.Set(ctx, prefix+"app/secrets/config", []byte(`{"key":"secret"}`), "json")
 				require.NoError(t, err)
 
 				value, format, err := store.GetWithFormat(ctx, prefix+"app/secrets/config")
@@ -851,10 +851,10 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			})
 
 			t.Run("update secret", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"secrets/update-test", []byte("original"), "text")
+				_, err := store.Set(ctx, prefix+"secrets/update-test", []byte("original"), "text")
 				require.NoError(t, err)
 
-				err = store.Set(ctx, prefix+"secrets/update-test", []byte("updated"), "text")
+				_, err = store.Set(ctx, prefix+"secrets/update-test", []byte("updated"), "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(ctx, prefix+"secrets/update-test")
@@ -863,7 +863,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			})
 
 			t.Run("delete secret", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"secrets/delete-test", []byte("to-delete"), "text")
+				_, err := store.Set(ctx, prefix+"secrets/delete-test", []byte("to-delete"), "text")
 				require.NoError(t, err)
 
 				err = store.Delete(ctx, prefix+"secrets/delete-test")
@@ -874,7 +874,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			})
 
 			t.Run("get info for secret", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"secrets/info-test", []byte("test-value"), "yaml")
+				_, err := store.Set(ctx, prefix+"secrets/info-test", []byte("test-value"), "yaml")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(ctx, prefix+"secrets/info-test")
@@ -886,7 +886,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			})
 
 			t.Run("get info for non-secret", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"config/database", []byte("test"), "text")
+				_, err := store.Set(ctx, prefix+"config/database", []byte("test"), "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(ctx, prefix+"config/database")
@@ -898,7 +898,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			t.Run("secret value is encrypted in database", func(t *testing.T) {
 				secretValue := []byte("plaintext-secret")
 				key := prefix + "secrets/encrypted-check"
-				err := store.Set(ctx, key, secretValue, "text")
+				_, err := store.Set(ctx, key, secretValue, "text")
 				require.NoError(t, err)
 
 				// read raw value from database
@@ -918,7 +918,7 @@ func TestStore_Secrets_CRUD(t *testing.T) {
 			t.Run("regular key is not encrypted", func(t *testing.T) {
 				regularValue := []byte("regular-value")
 				key := prefix + "config/regular"
-				err := store.Set(ctx, key, regularValue, "text")
+				_, err := store.Set(ctx, key, regularValue, "text")
 				require.NoError(t, err)
 
 				// read raw value from database
@@ -952,7 +952,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				require.NoError(t, err)
 				key := prefix + "secrets/zk-api-key"
 
-				err = store.Set(ctx, key, zkValue, "text")
+				_, err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				// get should return the ZK value as-is (not decrypted by server)
@@ -966,7 +966,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				require.NoError(t, err)
 				key := prefix + "app/secrets/zk-creds"
 
-				err = store.Set(ctx, key, zkValue, "text")
+				_, err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(ctx, key)
@@ -980,7 +980,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				require.NoError(t, err)
 				key := prefix + "secrets/raw-check"
 
-				err = store.Set(ctx, key, zkValue, "text")
+				_, err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				// check raw value in database - should have $ZK$ prefix, not encrypted
@@ -996,7 +996,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				require.NoError(t, err)
 				key := prefix + "secrets/format-test"
 
-				err = store.Set(ctx, key, zkValue, "json")
+				_, err = store.Set(ctx, key, zkValue, "json")
 				require.NoError(t, err)
 
 				value, format, err := store.GetWithFormat(ctx, key)
@@ -1011,7 +1011,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				key := prefix + "secrets/version-test"
 
 				// first set
-				err = store.Set(ctx, key, zkValue, "text")
+				_, err = store.Set(ctx, key, zkValue, "text")
 				require.NoError(t, err)
 
 				// get current version
@@ -1053,7 +1053,7 @@ func TestStore_ZKPayload_Validation(t *testing.T) {
 			t.Run("rejected in secrets paths", func(t *testing.T) {
 				for _, tc := range invalidPayloads {
 					t.Run(tc.name, func(t *testing.T) {
-						err := store.Set(ctx, prefix+"secrets/key", tc.value, "text")
+						_, err := store.Set(ctx, prefix+"secrets/key", tc.value, "text")
 						assert.ErrorIs(t, err, ErrInvalidZKPayload)
 					})
 				}
@@ -1063,7 +1063,7 @@ func TestStore_ZKPayload_Validation(t *testing.T) {
 				for _, tc := range invalidPayloads {
 					t.Run(tc.name, func(t *testing.T) {
 						key := prefix + "regular/" + tc.name
-						err := store.Set(ctx, key, tc.value, "text")
+						_, err := store.Set(ctx, key, tc.value, "text")
 						require.NoError(t, err, "invalid ZK should be allowed in non-secrets paths")
 
 						// verify it's stored as-is
@@ -1091,7 +1091,7 @@ func TestStore_Secrets_WithoutEncryptor(t *testing.T) {
 			prefix := "sec/noenc/" + engine + "/"
 
 			t.Run("set secret returns error", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"secrets/test", []byte("value"), "text")
+				_, err := store.Set(ctx, prefix+"secrets/test", []byte("value"), "text")
 				assert.ErrorIs(t, err, ErrSecretsNotConfigured)
 			})
 
@@ -1106,7 +1106,7 @@ func TestStore_Secrets_WithoutEncryptor(t *testing.T) {
 			})
 
 			t.Run("regular keys work without encryptor", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"config/regular", []byte("value"), "text")
+				_, err := store.Set(ctx, prefix+"config/regular", []byte("value"), "text")
 				require.NoError(t, err)
 
 				value, err := store.Get(ctx, prefix+"config/regular")
@@ -1137,10 +1137,14 @@ func TestStore_Secrets_ListFilter(t *testing.T) {
 			prefix := "sec/filter/" + engine + "/"
 
 			// create mix of secret and regular keys
-			require.NoError(t, store.Set(ctx, prefix+"config/db", []byte("v1"), "text"))
-			require.NoError(t, store.Set(ctx, prefix+"config/app", []byte("v2"), "text"))
-			require.NoError(t, store.Set(ctx, prefix+"secrets/db/password", []byte("s1"), "text"))
-			require.NoError(t, store.Set(ctx, prefix+"app/secrets/key", []byte("s2"), "text"))
+			_, err := store.Set(ctx, prefix+"config/db", []byte("v1"), "text")
+			require.NoError(t, err)
+			_, err = store.Set(ctx, prefix+"config/app", []byte("v2"), "text")
+			require.NoError(t, err)
+			_, err = store.Set(ctx, prefix+"secrets/db/password", []byte("s1"), "text")
+			require.NoError(t, err)
+			_, err = store.Set(ctx, prefix+"app/secrets/key", []byte("s2"), "text")
+			require.NoError(t, err)
 
 			t.Run("list all keys", func(t *testing.T) {
 				keys, err := store.List(ctx, enum.SecretsFilterAll)
@@ -1203,7 +1207,7 @@ func TestStore_Secrets_SetWithVersion(t *testing.T) {
 			prefix := "sec/ver/" + engine + "/"
 
 			t.Run("update secret with correct version", func(t *testing.T) {
-				err := store.Set(ctx, prefix+"secrets/versioned", []byte("v1"), "text")
+				_, err := store.Set(ctx, prefix+"secrets/versioned", []byte("v1"), "text")
 				require.NoError(t, err)
 
 				info, err := store.GetInfo(ctx, prefix+"secrets/versioned")
@@ -1227,7 +1231,7 @@ func TestStore_Secrets_SetWithVersion(t *testing.T) {
 			t.Run("conflict returns decrypted secret value", func(t *testing.T) {
 				secretValue := "super-secret-password"
 				key := prefix + "secrets/conflict-key"
-				err := store.Set(ctx, key, []byte(secretValue), "text")
+				_, err := store.Set(ctx, key, []byte(secretValue), "text")
 				require.NoError(t, err)
 
 				// get initial version
@@ -1237,7 +1241,7 @@ func TestStore_Secrets_SetWithVersion(t *testing.T) {
 				// simulate concurrent update
 				time.Sleep(1100 * time.Millisecond) // ensure timestamp differs
 				concurrentValue := "concurrent-secret-value"
-				err = store.Set(ctx, key, []byte(concurrentValue), "yaml")
+				_, err = store.Set(ctx, key, []byte(concurrentValue), "yaml")
 				require.NoError(t, err)
 
 				// try to update with old version - should get conflict

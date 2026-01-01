@@ -21,7 +21,8 @@ func TestCached_GetWithFormat(t *testing.T) {
 		require.NoError(t, err)
 
 		// set a value
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "json"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "json")
+		require.NoError(t, err)
 
 		// first read - loads from DB
 		val, format, err := cached.GetWithFormat(t.Context(), "key1")
@@ -56,12 +57,14 @@ func TestCached_GetWithFormat(t *testing.T) {
 		require.NoError(t, err)
 
 		// set and read to populate cache
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "text")
+		require.NoError(t, err)
 		_, _, err = cached.GetWithFormat(t.Context(), "key1")
 		require.NoError(t, err)
 
 		// update the value
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("updated"), "yaml"))
+		_, err = cached.Set(t.Context(), "key1", []byte("updated"), "yaml")
+		require.NoError(t, err)
 
 		// read again - should get updated value from DB (cache miss)
 		val, format, err := cached.GetWithFormat(t.Context(), "key1")
@@ -84,7 +87,8 @@ func TestCached_GetWithFormat(t *testing.T) {
 		require.NoError(t, err)
 
 		// set and read to populate cache
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "text")
+		require.NoError(t, err)
 		_, _, err = cached.GetWithFormat(t.Context(), "key1")
 		require.NoError(t, err)
 
@@ -120,7 +124,8 @@ func TestCached_Get(t *testing.T) {
 		cached, err := NewCached(underlying, 100)
 		require.NoError(t, err)
 
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "text")
+		require.NoError(t, err)
 
 		// first read
 		val, err := cached.Get(t.Context(), "key1")
@@ -147,8 +152,10 @@ func TestCached_List(t *testing.T) {
 		cached, err := NewCached(underlying, 100)
 		require.NoError(t, err)
 
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
-		require.NoError(t, cached.Set(t.Context(), "key2", []byte("value2"), "json"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "text")
+		require.NoError(t, err)
+		_, err = cached.Set(t.Context(), "key2", []byte("value2"), "json")
+		require.NoError(t, err)
 
 		keys, err := cached.List(t.Context(), enum.SecretsFilterAll)
 		require.NoError(t, err)
@@ -184,7 +191,8 @@ func TestCached_SetWithVersion(t *testing.T) {
 		require.NoError(t, err)
 
 		// set initial value and populate cache
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "text")
+		require.NoError(t, err)
 		_, _, err = cached.GetWithFormat(t.Context(), "key1")
 		require.NoError(t, err)
 
@@ -216,7 +224,8 @@ func TestCached_SetWithVersion(t *testing.T) {
 		cached, err := NewCached(underlying, 100)
 		require.NoError(t, err)
 
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("value1"), "text"))
+		_, err = cached.Set(t.Context(), "key1", []byte("value1"), "text")
+		require.NoError(t, err)
 
 		// get initial version
 		info1, err := cached.GetInfo(t.Context(), "key1")
@@ -224,7 +233,8 @@ func TestCached_SetWithVersion(t *testing.T) {
 
 		// simulate concurrent update
 		time.Sleep(1100 * time.Millisecond)
-		require.NoError(t, cached.Set(t.Context(), "key1", []byte("concurrent"), "yaml"))
+		_, err = cached.Set(t.Context(), "key1", []byte("concurrent"), "yaml")
+		require.NoError(t, err)
 
 		// try to update with old version
 		err = cached.SetWithVersion(t.Context(), "key1", []byte("my-update"), "json", info1.UpdatedAt)

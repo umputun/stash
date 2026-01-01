@@ -320,7 +320,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+	if _, err := h.store.Set(r.Context(), key, value, format); err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderFormError(w, templateData{
 				Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
@@ -608,7 +608,7 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// save to store
-	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+	if _, err := h.store.Set(r.Context(), key, value, format); err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderError(w, "Secrets not configured: keys with 'secrets' in path require --secrets.key")
 			return

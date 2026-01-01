@@ -357,7 +357,7 @@ func (c *Client) Close() {
 // checkResponse handles HTTP response status codes and returns appropriate errors.
 func (c *Client) checkResponse(resp *http.Response) error {
 	switch resp.StatusCode {
-	case http.StatusOK, http.StatusNoContent:
+	case http.StatusOK, http.StatusCreated, http.StatusNoContent:
 		return nil
 	case http.StatusNotFound:
 		return ErrNotFound

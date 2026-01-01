@@ -84,12 +84,14 @@ func (c *Cached) GetWithFormat(ctx context.Context, key string) ([]byte, string,
 }
 
 // Set stores a value and invalidates the cache entry.
-func (c *Cached) Set(ctx context.Context, key string, value []byte, format string) error {
-	if err := c.store.Set(ctx, key, value, format); err != nil {
-		return fmt.Errorf("store set: %w", err)
+// Returns (true, nil) if a new key was created, (false, nil) if an existing key was updated.
+func (c *Cached) Set(ctx context.Context, key string, value []byte, format string) (created bool, err error) {
+	created, err = c.store.Set(ctx, key, value, format)
+	if err != nil {
+		return false, fmt.Errorf("store set: %w", err)
 	}
 	c.cache.Invalidate(func(k string) bool { return k == key })
-	return nil
+	return created, nil
 }
 
 // SetWithVersion stores a value with version check and invalidates the cache entry on success.

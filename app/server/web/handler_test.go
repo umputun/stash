@@ -568,7 +568,7 @@ func newTestHandlerWithGit(t *testing.T, gitSvc GitService) *Handler {
 	st := &mocks.KVStoreMock{
 		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		GetWithFormatFunc:  func(_ context.Context, key string) ([]byte, string, error) { return []byte("value"), "text", nil },
-		SetFunc:            func(_ context.Context, key string, value []byte, format string) error { return nil },
+		SetFunc:            func(_ context.Context, key string, value []byte, format string) (bool, error) { return true, nil },
 		SecretsEnabledFunc: func() bool { return false },
 	}
 	auth := &mocks.AuthProviderMock{

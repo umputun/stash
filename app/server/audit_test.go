@@ -121,7 +121,7 @@ func TestAuditMiddleware(t *testing.T) {
 		assert.Equal(t, "app/config", capturedEntry.Key)
 		assert.Equal(t, enum.AuditActionUpdate, capturedEntry.Action)
 		assert.Equal(t, enum.AuditResultSuccess, capturedEntry.Result)
-		assert.Equal(t, "token:mytoken1...", capturedEntry.Actor)
+		assert.Equal(t, "token:myto****", capturedEntry.Actor)
 		assert.Equal(t, enum.ActorTypeToken, capturedEntry.ActorType)
 	})
 
@@ -355,21 +355,24 @@ func TestNoopAuditMiddleware(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestAuditor_MapMethod(t *testing.T) {
+func TestAuditor_MapAction(t *testing.T) {
 	aud := newAuditor(nil, nil)
 	tests := []struct {
+		name   string
 		method string
+		status int
 		want   enum.AuditAction
 	}{
-		{http.MethodGet, enum.AuditActionRead},
-		{http.MethodPut, enum.AuditActionUpdate},
-		{http.MethodDelete, enum.AuditActionDelete},
-		{http.MethodPost, enum.AuditActionRead}, // fallback
+		{"GET 200", http.MethodGet, 200, enum.AuditActionRead},
+		{"PUT 201 creates", http.MethodPut, 201, enum.AuditActionCreate},
+		{"PUT 200 updates", http.MethodPut, 200, enum.AuditActionUpdate},
+		{"DELETE", http.MethodDelete, 204, enum.AuditActionDelete},
+		{"POST fallback", http.MethodPost, 200, enum.AuditActionRead},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.method, func(t *testing.T) {
-			got := aud.mapMethod(tt.method)
+		t.Run(tt.name, func(t *testing.T) {
+			got := aud.mapAction(tt.method, tt.status)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -441,11 +444,11 @@ func TestAuditor_ExtractActor(t *testing.T) {
 
 		actor, actorType := aud.extractActor(req)
 
-		assert.Equal(t, "token:abcdefgh...", actor)
+		assert.Equal(t, "token:abcd****", actor)
 		assert.Equal(t, enum.ActorTypeToken, actorType)
 	})
 
-	t.Run("short token not truncated", func(t *testing.T) {
+	t.Run("short token masked with stars", func(t *testing.T) {
 		auth := &mocks.AuditAuthMock{
 			GetSessionUserFunc: func(_ context.Context, _ string) (string, bool) { return "", false },
 			HasTokenACLFunc:    func(token string) bool { return token == "short" },
@@ -457,7 +460,23 @@ func TestAuditor_ExtractActor(t *testing.T) {
 
 		actor, actorType := aud.extractActor(req)
 
-		assert.Equal(t, "token:short", actor)
+		assert.Equal(t, "token:shor****", actor)
+		assert.Equal(t, enum.ActorTypeToken, actorType)
+	})
+
+	t.Run("very short token fully masked", func(t *testing.T) {
+		auth := &mocks.AuditAuthMock{
+			GetSessionUserFunc: func(_ context.Context, _ string) (string, bool) { return "", false },
+			HasTokenACLFunc:    func(token string) bool { return token == "abc" },
+			IsAdminFunc:        func(_ string) bool { return false },
+		}
+		aud := newAuditor(nil, auth)
+		req := httptest.NewRequest(http.MethodGet, "/kv/test", http.NoBody)
+		req.Header.Set("Authorization", "Bearer abc")
+
+		actor, actorType := aud.extractActor(req)
+
+		assert.Equal(t, "token:****", actor)
 		assert.Equal(t, enum.ActorTypeToken, actorType)
 	})
 
@@ -474,7 +493,7 @@ func TestAuditor_ExtractActor(t *testing.T) {
 
 		actor, actorType := aud.extractActor(req)
 
-		assert.Equal(t, "token:mytoken1...", actor)
+		assert.Equal(t, "token:myto****", actor)
 		assert.Equal(t, enum.ActorTypeToken, actorType)
 	})
 

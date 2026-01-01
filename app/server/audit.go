@@ -134,7 +134,7 @@ func (a *auditor) Middleware(next http.Handler) http.Handler {
 // buildEntry creates an audit entry from request and response data.
 func (a *auditor) buildEntry(r *http.Request, rc *responseCapture, key string) store.AuditEntry {
 	actor, actorType := a.extractActor(r)
-	action := a.mapMethod(r.Method)
+	action := a.mapAction(r.Method, rc.status)
 	result := a.mapStatus(rc.status)
 
 	ip, _ := realip.Get(r) // ignore error, fallback to empty string
@@ -182,10 +182,12 @@ func (a *auditor) extractActor(r *http.Request) (string, enum.ActorType) {
 	authHeader := r.Header.Get("Authorization")
 	if token, found := strings.CutPrefix(authHeader, "Bearer "); found {
 		if a.auth.HasTokenACL(token) {
-			// mask token for audit log (show first 8 chars)
+			// mask token for audit log (show first 4 chars, matching auth.go)
 			masked := token
-			if len(masked) > 8 {
-				masked = masked[:8] + "..."
+			if len(masked) > 4 {
+				masked = masked[:4] + "****"
+			} else {
+				masked = "****"
 			}
 			return "token:" + masked, enum.ActorTypeToken
 		}
@@ -194,12 +196,16 @@ func (a *auditor) extractActor(r *http.Request) (string, enum.ActorType) {
 	return "anonymous", enum.ActorTypePublic
 }
 
-// mapMethod maps HTTP method to audit action.
-func (a *auditor) mapMethod(method string) enum.AuditAction {
+// mapAction maps HTTP method and response status to audit action.
+// for PUT requests, distinguishes between create (201) and update (200).
+func (a *auditor) mapAction(method string, status int) enum.AuditAction {
 	switch method {
 	case http.MethodGet:
 		return enum.AuditActionRead
 	case http.MethodPut:
+		if status == http.StatusCreated {
+			return enum.AuditActionCreate
+		}
 		return enum.AuditActionUpdate
 	case http.MethodDelete:
 		return enum.AuditActionDelete

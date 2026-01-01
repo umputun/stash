@@ -260,7 +260,7 @@ func TestHandler_HandleGet(t *testing.T) {
 func TestHandler_HandleSet(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -270,7 +270,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.handleSet(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "newkey", st.SetCalls()[0].Key)
 		assert.Equal(t, "newvalue", string(st.SetCalls()[0].Value))
@@ -279,7 +279,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("with format header", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -290,14 +290,14 @@ func TestHandler_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.handleSet(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "json", st.SetCalls()[0].Format)
 	})
 
 	t.Run("with format query param", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -307,14 +307,14 @@ func TestHandler_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.handleSet(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "yaml", st.SetCalls()[0].Format)
 	})
 
 	t.Run("invalid format defaults to text", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error { return nil },
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -325,7 +325,7 @@ func TestHandler_HandleSet(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.handleSet(rec, req)
 
-		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusCreated, rec.Code)
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "text", st.SetCalls()[0].Format)
 	})
@@ -345,7 +345,7 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("store error", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error { return errors.New("db error") },
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return false, errors.New("db error") },
 		}
 		auth := &mocks.AuthProviderMock{}
 		h := New(st, auth, defaultFormatValidator(), nil)
@@ -360,8 +360,8 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("secrets not configured returns 400", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error {
-				return store.ErrSecretsNotConfigured
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) {
+				return false, store.ErrSecretsNotConfigured
 			},
 		}
 		auth := &mocks.AuthProviderMock{}
@@ -378,8 +378,8 @@ func TestHandler_HandleSet(t *testing.T) {
 
 	t.Run("invalid ZK payload returns 400", func(t *testing.T) {
 		st := &mocks.KVStoreMock{
-			SetFunc: func(context.Context, string, []byte, string) error {
-				return store.ErrInvalidZKPayload
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) {
+				return false, store.ErrInvalidZKPayload
 			},
 		}
 		auth := &mocks.AuthProviderMock{}
@@ -639,14 +639,14 @@ func TestHandler_GetIdentityForLog(t *testing.T) {
 
 func TestHandler_HandleSet_WithGit(t *testing.T) {
 	st := &mocks.KVStoreMock{
-		SetFunc: func(context.Context, string, []byte, string) error { return nil },
+		SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 	}
 	auth := &mocks.AuthProviderMock{}
 	gitMock := &mocks.GitServiceMock{
 		CommitFunc: func(req git.CommitRequest) error {
 			assert.Equal(t, "testkey", req.Key)
 			assert.Equal(t, "testvalue", string(req.Value))
-			assert.Equal(t, "set", req.Operation)
+			assert.Equal(t, "create", req.Operation)
 			return nil
 		},
 	}
@@ -657,7 +657,7 @@ func TestHandler_HandleSet_WithGit(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.handleSet(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, http.StatusCreated, rec.Code)
 	require.Len(t, gitMock.CommitCalls(), 1, "git commit should be called")
 }
 

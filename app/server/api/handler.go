@@ -38,7 +38,7 @@ type GitService interface {
 type KVStore interface {
 	Get(ctx context.Context, key string) ([]byte, error)
 	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
-	Set(ctx context.Context, key string, value []byte, format string) error
+	Set(ctx context.Context, key string, value []byte, format string) (created bool, err error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error)
 	SecretsEnabled() bool
@@ -252,7 +252,8 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 		format = "text"
 	}
 
-	if err := h.store.Set(r.Context(), key, value, format); err != nil {
+	created, err := h.store.Set(r.Context(), key, value, format)
+	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
 			return
@@ -265,17 +266,25 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[INFO] set %q (%d bytes, format=%s) by %s", key, len(value), format, h.getIdentityForLog(r))
+	operation := "update"
+	if created {
+		operation = "create"
+	}
+	log.Printf("[INFO] %s %q (%d bytes, format=%s) by %s", operation, key, len(value), format, h.getIdentityForLog(r))
 
 	// commit to git if enabled
 	if h.git != nil {
-		req := git.CommitRequest{Key: key, Value: value, Operation: "set", Format: format, Author: h.getAuthorFromRequest(r)}
+		req := git.CommitRequest{Key: key, Value: value, Operation: operation, Format: format, Author: h.getAuthorFromRequest(r)}
 		if err := h.git.Commit(req); err != nil {
 			log.Printf("[WARN] git commit failed for %s: %v", key, err)
 		}
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if created {
+		w.WriteHeader(http.StatusCreated)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 }
 
 // handleDelete removes a key from the store.

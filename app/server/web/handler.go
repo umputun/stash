@@ -48,7 +48,7 @@ func StaticFS() (fs.FS, error) {
 type KVStore interface {
 	GetWithFormat(ctx context.Context, key string) ([]byte, string, error)
 	GetInfo(ctx context.Context, key string) (store.KeyInfo, error)
-	Set(ctx context.Context, key string, value []byte, format string) error
+	Set(ctx context.Context, key string, value []byte, format string) (created bool, err error)
 	SetWithVersion(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, filter enum.SecretsFilter) ([]store.KeyInfo, error)

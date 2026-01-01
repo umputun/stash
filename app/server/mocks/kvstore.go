@@ -36,7 +36,7 @@ import (
 //			SecretsEnabledFunc: func() bool {
 //				panic("mock out the SecretsEnabled method")
 //			},
-//			SetFunc: func(ctx context.Context, key string, value []byte, format string) error {
+//			SetFunc: func(ctx context.Context, key string, value []byte, format string) (bool, error) {
 //				panic("mock out the Set method")
 //			},
 //			SetWithVersionFunc: func(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error {
@@ -68,7 +68,7 @@ type KVStoreMock struct {
 	SecretsEnabledFunc func() bool
 
 	// SetFunc mocks the Set method.
-	SetFunc func(ctx context.Context, key string, value []byte, format string) error
+	SetFunc func(ctx context.Context, key string, value []byte, format string) (bool, error)
 
 	// SetWithVersionFunc mocks the SetWithVersion method.
 	SetWithVersionFunc func(ctx context.Context, key string, value []byte, format string, expectedVersion time.Time) error
@@ -356,7 +356,7 @@ func (mock *KVStoreMock) SecretsEnabledCalls() []struct {
 }
 
 // Set calls SetFunc.
-func (mock *KVStoreMock) Set(ctx context.Context, key string, value []byte, format string) error {
+func (mock *KVStoreMock) Set(ctx context.Context, key string, value []byte, format string) (bool, error) {
 	if mock.SetFunc == nil {
 		panic("KVStoreMock.SetFunc: method is nil but KVStore.Set was just called")
 	}

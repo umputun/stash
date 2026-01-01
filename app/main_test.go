@@ -48,13 +48,13 @@ func TestIntegration(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	t.Run("put and get value", func(t *testing.T) {
-		// put value
+		// put value (creates new key)
 		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18484/kv/test/key1", bytes.NewBufferString("value1"))
 		require.NoError(t, err)
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// get value
 		resp, err = client.Get("http://127.0.0.1:18484/kv/test/key1")
@@ -187,14 +187,14 @@ tokens:
 	})
 
 	t.Run("api with valid rw token can read and write", func(t *testing.T) {
-		// write
+		// write (creates new key)
 		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18485/kv/authtest", bytes.NewBufferString("authvalue"))
 		require.NoError(t, err)
 		req.Header.Set("Authorization", "Bearer apikey")
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// read
 		req, err = http.NewRequest(http.MethodGet, "http://127.0.0.1:18485/kv/authtest", http.NoBody)
@@ -237,7 +237,7 @@ tokens:
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// cannot write to other/*
 		req, err = http.NewRequest(http.MethodPut, "http://127.0.0.1:18485/kv/other/key", bytes.NewBufferString("value"))
@@ -459,7 +459,7 @@ tokens:
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
-		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
 	}
 
 	// helper to login and get cookie
@@ -800,7 +800,7 @@ func TestIntegration_WithBaseURL(t *testing.T) {
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// get value
 		resp, err = client.Get("http://127.0.0.1:18488/stash/kv/test/key1")
@@ -932,13 +932,13 @@ func TestIntegration_WithCache(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	t.Run("cache serves repeated reads", func(t *testing.T) {
-		// put value
+		// put value (creates new key)
 		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18493/kv/cached/key1", bytes.NewBufferString("cached-value"))
 		require.NoError(t, err)
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// first read - populates cache
 		resp, err = client.Get("http://127.0.0.1:18493/kv/cached/key1")
@@ -1090,7 +1090,7 @@ func TestIntegration_BodySizeLimit(t *testing.T) {
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 	})
 
 	t.Run("request over limit returns 413", func(t *testing.T) {
@@ -1506,13 +1506,13 @@ func TestIntegration_WithSecrets(t *testing.T) {
 	t.Run("secret path stores encrypted value", func(t *testing.T) {
 		secretValue := "super-secret-password-123"
 
-		// put secret value
+		// put secret value (creates new key)
 		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18496/kv/secrets/db/password", bytes.NewBufferString(secretValue))
 		require.NoError(t, err)
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// get secret value - should return decrypted value
 		resp, err = client.Get("http://127.0.0.1:18496/kv/secrets/db/password")
@@ -1527,13 +1527,13 @@ func TestIntegration_WithSecrets(t *testing.T) {
 	t.Run("regular path stores plaintext value", func(t *testing.T) {
 		regularValue := "regular-config-value"
 
-		// put regular value
+		// put regular value (creates new key)
 		req, err := http.NewRequest(http.MethodPut, "http://127.0.0.1:18496/kv/config/db", bytes.NewBufferString(regularValue))
 		require.NoError(t, err)
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// get regular value
 		resp, err = client.Get("http://127.0.0.1:18496/kv/config/db")
@@ -1643,7 +1643,7 @@ func TestIntegration_SecretsWithAuth(t *testing.T) {
 		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/secrets/test", "secrets-token", "test-value")
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
-		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// wildcard token cannot read it
 		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/secrets/test", "wildcard-token", "")
@@ -1657,7 +1657,7 @@ func TestIntegration_SecretsWithAuth(t *testing.T) {
 		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/secrets/db/conn", "secrets-token", "postgres://localhost")
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// read
 		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/secrets/db/conn", "secrets-token", "")
@@ -1674,7 +1674,7 @@ func TestIntegration_SecretsWithAuth(t *testing.T) {
 		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/app/secrets/apikey", "app-secrets-token", "my-api-key")
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// can read from app/secrets/*
 		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/app/secrets/apikey", "app-secrets-token", "")
@@ -1694,7 +1694,7 @@ func TestIntegration_SecretsWithAuth(t *testing.T) {
 		resp, err := doRequest(http.MethodPut, "http://127.0.0.1:18500/kv/config/db", "wildcard-token", "config-value")
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// read
 		resp, err = doRequest(http.MethodGet, "http://127.0.0.1:18500/kv/config/db", "wildcard-token", "")
@@ -1757,7 +1757,7 @@ func TestIntegration_SecretsNotConfigured(t *testing.T) {
 		resp, err := client.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 	})
 
 	cancel()
