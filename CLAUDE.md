@@ -9,7 +9,10 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **app/server/** - HTTP server with routegroup
   - `server.go` - Server struct, config, routes, graceful shutdown, GitStore interface
   - `handlers.go` - HTTP handlers for KV API operations (with git integration)
-  - `audit.go` - Audit API handler (admin query endpoint)
+  - `audit/` - Audit package
+    - `audit.go` - Middleware for audit logging, Store and Auth interfaces
+    - `handler.go` - Handler for POST /audit/query endpoint (admin only)
+    - `mocks/` - Generated mocks
   - `web.go` - Web UI handlers, templates, static file serving, per-user permission checks
   - `web/audit.go` - Audit web UI handler (full page and HTMX partials)
   - `auth/` - Authentication package

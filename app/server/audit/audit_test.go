@@ -44,6 +44,58 @@ func TestResponseCapture(t *testing.T) {
 
 		assert.Equal(t, rec, rc.Unwrap())
 	})
+
+	t.Run("flush delegates to underlying flusher", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		rc := newResponseCapture(rec)
+
+		// httptest.ResponseRecorder implements http.Flusher, so Flush should work
+		rc.Flush() // should not panic
+		assert.True(t, rec.Flushed)
+	})
+
+	t.Run("hijack returns error for non-hijacker", func(t *testing.T) {
+		rec := httptest.NewRecorder() // doesn't implement http.Hijacker
+		rc := newResponseCapture(rec)
+
+		conn, rw, err := rc.Hijack()
+
+		assert.Nil(t, conn)
+		assert.Nil(t, rw)
+		assert.EqualError(t, err, "ResponseWriter does not implement http.Hijacker")
+	})
+
+	t.Run("accumulates bytes across multiple writes", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		rc := newResponseCapture(rec)
+
+		_, _ = rc.Write([]byte("first"))
+		_, _ = rc.Write([]byte("second"))
+		_, _ = rc.Write([]byte("third"))
+
+		assert.Equal(t, 16, rc.bytesWritten) // 5 + 6 + 5
+	})
+}
+
+func TestNoopMiddleware(t *testing.T) {
+	t.Run("passes through unchanged", func(t *testing.T) {
+		handlerCalled := false
+		innerHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusTeapot)
+			_, _ = w.Write([]byte("I'm a teapot"))
+		})
+
+		handler := NoopMiddleware(innerHandler)
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/test", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		assert.True(t, handlerCalled)
+		assert.Equal(t, http.StatusTeapot, rec.Code)
+		assert.Equal(t, "I'm a teapot", rec.Body.String())
+	})
 }
 
 func TestMiddleware(t *testing.T) {
@@ -296,6 +348,63 @@ func TestMiddleware(t *testing.T) {
 
 		require.Len(t, auditStore.LogAuditCalls(), 1)
 		assert.Equal(t, "app///config", capturedEntry.Key) // only leading/trailing slashes trimmed
+	})
+
+	t.Run("continues on LogAudit error", func(t *testing.T) {
+		auditStore := &mocks.StoreMock{
+			LogAuditFunc: func(_ context.Context, _ store.AuditEntry) error {
+				return assert.AnError // simulate storage failure
+			},
+		}
+
+		middleware := Middleware(auditStore, nil)
+
+		handlerCalled := false
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("response"))
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/test/key", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		// handler should still execute and return response
+		assert.True(t, handlerCalled)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "response", rec.Body.String())
+		// LogAudit should have been called
+		require.Len(t, auditStore.LogAuditCalls(), 1)
+	})
+
+	t.Run("captures user agent and request id", func(t *testing.T) {
+		var capturedEntry store.AuditEntry
+		auditStore := &mocks.StoreMock{
+			LogAuditFunc: func(_ context.Context, entry store.AuditEntry) error {
+				capturedEntry = entry
+				return nil
+			},
+		}
+
+		middleware := Middleware(auditStore, nil)
+
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/test/key", http.NoBody)
+		req.Header.Set("User-Agent", "test-agent/1.0")
+		req.Header.Set("X-Request-ID", "req-12345")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		require.Len(t, auditStore.LogAuditCalls(), 1)
+		assert.Equal(t, "test-agent/1.0", capturedEntry.UserAgent)
+		assert.Equal(t, "req-12345", capturedEntry.RequestID)
+		assert.False(t, capturedEntry.Timestamp.IsZero())
 	})
 }
 

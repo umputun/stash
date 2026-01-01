@@ -56,7 +56,7 @@ func (rc *responseCapture) Write(b []byte) (int, error) {
 	n, err := rc.ResponseWriter.Write(b)
 	rc.bytesWritten += n
 	if err != nil {
-		return n, fmt.Errorf("write failed: %w", err)
+		return n, fmt.Errorf("write: %w", err)
 	}
 	return n, nil
 }
@@ -78,7 +78,7 @@ func (rc *responseCapture) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := rc.ResponseWriter.(http.Hijacker); ok {
 		conn, rw, err := hj.Hijack()
 		if err != nil {
-			return nil, nil, fmt.Errorf("hijack failed: %w", err)
+			return nil, nil, fmt.Errorf("hijack: %w", err)
 		}
 		return conn, rw, nil
 	}
