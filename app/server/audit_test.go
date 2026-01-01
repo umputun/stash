@@ -177,6 +177,74 @@ func TestAuditMiddleware(t *testing.T) {
 		assert.Nil(t, capturedEntry.ValueSize) // no size for denied
 	})
 
+	t.Run("logs denied result for 401", func(t *testing.T) {
+		var capturedEntry store.AuditEntry
+		auditStore := &mocks.AuditStoreMock{
+			LogAuditFunc: func(_ context.Context, entry store.AuditEntry) error {
+				capturedEntry = entry
+				return nil
+			},
+		}
+
+		middleware := AuditMiddleware(auditStore, nil)
+
+		handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/protected/key", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assert.Equal(t, enum.AuditResultDenied, capturedEntry.Result)
+		assert.Nil(t, capturedEntry.ValueSize)
+	})
+
+	t.Run("captures denial when auth middleware short-circuits", func(t *testing.T) {
+		// this tests the middleware ordering: audit runs BEFORE auth,
+		// so even when auth rejects and doesn't call next, audit still logs the denial
+		var capturedEntry store.AuditEntry
+		auditStore := &mocks.AuditStoreMock{
+			LogAuditFunc: func(_ context.Context, entry store.AuditEntry) error {
+				capturedEntry = entry
+				return nil
+			},
+		}
+
+		// auth middleware that rejects without calling next
+		authMiddleware := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				// note: does NOT call next.ServeHTTP - simulates auth rejection
+			})
+		}
+
+		// handler that should never be called
+		handlerCalled := false
+		finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			w.WriteHeader(http.StatusOK)
+		})
+
+		// chain: audit → auth → handler (same order as server.go)
+		auditMiddleware := AuditMiddleware(auditStore, nil)
+		chain := auditMiddleware(authMiddleware(finalHandler))
+
+		req := httptest.NewRequest(http.MethodGet, "/kv/secret/data", http.NoBody)
+		rec := httptest.NewRecorder()
+
+		chain.ServeHTTP(rec, req)
+
+		assert.False(t, handlerCalled, "handler should not be called when auth rejects")
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+		require.Len(t, auditStore.LogAuditCalls(), 1, "audit should log even when auth rejects")
+		assert.Equal(t, "secret/data", capturedEntry.Key)
+		assert.Equal(t, enum.AuditActionRead, capturedEntry.Action)
+		assert.Equal(t, enum.AuditResultDenied, capturedEntry.Result)
+		assert.Nil(t, capturedEntry.ValueSize)
+	})
+
 	t.Run("logs not_found result for 404", func(t *testing.T) {
 		var capturedEntry store.AuditEntry
 		auditStore := &mocks.AuditStoreMock{

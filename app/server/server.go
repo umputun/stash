@@ -238,10 +238,10 @@ func (s *Server) routes() http.Handler {
 		s.webHandler.Register(webRouter)
 	})
 
-	// kv API routes (token auth + audit)
+	// kv API routes (audit wraps auth to capture denied requests)
 	router.Mount("/kv").Route(func(kv *routegroup.Bundle) {
-		kv.Use(tokenAuth)
 		kv.Use(s.auditMiddleware())
+		kv.Use(tokenAuth)
 		s.apiHandler.Register(kv)
 	})
 
