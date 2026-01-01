@@ -18,7 +18,7 @@ func (s *Service) SessionMiddleware(loginURL string) func(http.Handler) http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// check session cookie
 			for _, cookieName := range cookie.SessionCookieNames {
-				if c, err := r.Cookie(cookieName); err == nil && s.ValidateSession(r.Context(), c.Value) {
+				if c, err := r.Cookie(cookieName); err == nil && s.validateSession(r.Context(), c.Value) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -93,7 +93,7 @@ func (s *Service) TokenMiddleware(next http.Handler) http.Handler {
 		}
 
 		// check if token exists
-		if _, ok := s.GetTokenACL(token); !ok {
+		if _, ok := s.getTokenACL(token); !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -104,7 +104,7 @@ func (s *Service) TokenMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if !s.CheckPermission(token, key, needWrite) {
+		if !s.checkPermission(token, key, needWrite) {
 			log.Printf("[INFO] token %q denied %s access to key %q", MaskToken(token), r.Method, key)
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return

@@ -152,7 +152,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
-	require.NotNil(t, svc.PublicACL())
+	require.NotNil(t, svc.getPublicACL())
 	assert.Empty(t, svc.tokens)
 	assert.Empty(t, svc.users)
 }
@@ -205,7 +205,7 @@ users:
 	})
 }
 
-func TestService_ValidateUser(t *testing.T) {
+func TestService_IsValidUser(t *testing.T) {
 	// bcrypt hash for "testpass"
 	content := `
 users:
@@ -223,7 +223,7 @@ users:
 		name     string
 		username string
 		password string
-		wantUser bool
+		want     bool
 	}{
 		{"correct credentials", "admin", "testpass", true},
 		{"wrong password", "admin", "wrong", false},
@@ -233,23 +233,17 @@ users:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			user := svc.ValidateUser(tt.username, tt.password)
-			if !tt.wantUser {
-				assert.Nil(t, user)
-				return
-			}
-			require.NotNil(t, user)
-			assert.Equal(t, tt.username, user.Name)
+			assert.Equal(t, tt.want, svc.IsValidUser(tt.username, tt.password))
 		})
 	}
 }
 
-func TestService_ValidateUser_NilService(t *testing.T) {
+func TestService_IsValidUser_NilService(t *testing.T) {
 	var svc *Service
-	assert.Nil(t, svc.ValidateUser("admin", "pass"))
+	assert.False(t, svc.IsValidUser("admin", "pass"))
 }
 
-func TestService_CheckPermission(t *testing.T) {
+func TestService_checkPermission(t *testing.T) {
 	content := `
 tokens:
   - token: "full"
@@ -290,7 +284,7 @@ tokens:
 
 	for _, tt := range tests {
 		t.Run(tt.token+"_"+tt.key, func(t *testing.T) {
-			got := svc.CheckPermission(tt.token, tt.key, tt.needWrite)
+			got := svc.checkPermission(tt.token, tt.key, tt.needWrite)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -422,8 +416,8 @@ users:
 	assert.Len(t, token, 36) // uuid format
 
 	// validate session
-	assert.True(t, svc.ValidateSession(t.Context(), token))
-	assert.False(t, svc.ValidateSession(t.Context(), "invalid"))
+	assert.True(t, svc.validateSession(t.Context(), token))
+	assert.False(t, svc.validateSession(t.Context(), "invalid"))
 
 	// get session user
 	username, valid := svc.GetSessionUser(t.Context(), token)
@@ -436,7 +430,7 @@ users:
 
 	// invalidate session
 	svc.InvalidateSession(t.Context(), token)
-	assert.False(t, svc.ValidateSession(t.Context(), token))
+	assert.False(t, svc.validateSession(t.Context(), token))
 }
 
 func TestService_SessionExpiry(t *testing.T) {
@@ -456,11 +450,11 @@ users:
 	require.NoError(t, err)
 
 	// session should be valid immediately after creation
-	assert.True(t, svc.ValidateSession(t.Context(), token))
+	assert.True(t, svc.validateSession(t.Context(), token))
 
 	// wait for session to expire using Eventually to avoid flaky timing
 	assert.Eventually(t, func() bool {
-		return !svc.ValidateSession(t.Context(), token)
+		return !svc.validateSession(t.Context(), token)
 	}, 200*time.Millisecond, 10*time.Millisecond, "session should expire")
 
 	// GetSessionUser also respects expiry
@@ -513,9 +507,9 @@ func TestService_LoginTTL(t *testing.T) {
 	})
 }
 
-func TestService_GetTokenACL_NilService(t *testing.T) {
+func TestService_getTokenACL_NilService(t *testing.T) {
 	var svc *Service
-	acl, ok := svc.GetTokenACL("anytoken")
+	acl, ok := svc.getTokenACL("anytoken")
 	assert.False(t, ok)
 	assert.Empty(t, acl.Token)
 }
@@ -552,7 +546,7 @@ users:
 	})
 }
 
-func TestService_IsTokenAdmin(t *testing.T) {
+func TestService_isTokenAdmin(t *testing.T) {
 	t.Run("admin token", func(t *testing.T) {
 		content := `
 tokens:
@@ -571,14 +565,14 @@ tokens:
 		svc, err := New(f, time.Hour, false, ss, nil)
 		require.NoError(t, err)
 
-		assert.True(t, svc.IsTokenAdmin("admin-token"), "admin token should return true")
-		assert.False(t, svc.IsTokenAdmin("regular-token"), "non-admin token should return false")
-		assert.False(t, svc.IsTokenAdmin("unknown-token"), "unknown token should return false")
+		assert.True(t, svc.isTokenAdmin("admin-token"), "admin token should return true")
+		assert.False(t, svc.isTokenAdmin("regular-token"), "non-admin token should return false")
+		assert.False(t, svc.isTokenAdmin("unknown-token"), "unknown token should return false")
 	})
 
 	t.Run("nil service", func(t *testing.T) {
 		var svc *Service
-		assert.False(t, svc.IsTokenAdmin("any-token"), "nil service should return false")
+		assert.False(t, svc.isTokenAdmin("any-token"), "nil service should return false")
 	})
 }
 
@@ -601,13 +595,13 @@ tokens:
 	require.NoError(t, err)
 
 	// verify initial config
-	assert.True(t, svc.HasTokenACL("token1"))
-	assert.False(t, svc.HasTokenACL("token2"))
+	assert.True(t, svc.hasTokenACL("token1"))
+	assert.False(t, svc.hasTokenACL("token2"))
 
 	// create a session
 	session, err := svc.CreateSession(t.Context(), "admin")
 	require.NoError(t, err)
-	assert.True(t, svc.ValidateSession(t.Context(), session))
+	assert.True(t, svc.validateSession(t.Context(), session))
 
 	// update config file with new token
 	newConfig := `
@@ -636,11 +630,11 @@ tokens:
 	require.NoError(t, err)
 
 	// verify new config is loaded
-	assert.False(t, svc.HasTokenACL("token1"), "old token should be gone")
-	assert.True(t, svc.HasTokenACL("token2"), "new token should exist")
+	assert.False(t, svc.hasTokenACL("token1"), "old token should be gone")
+	assert.True(t, svc.hasTokenACL("token2"), "new token should exist")
 
 	// verify session is preserved (admin user unchanged)
-	assert.True(t, svc.ValidateSession(t.Context(), session), "session should be preserved for unchanged user")
+	assert.True(t, svc.validateSession(t.Context(), session), "session should be preserved for unchanged user")
 
 	// verify new user exists
 	assert.True(t, svc.CheckUserPermission("viewer", "test", false))
@@ -841,14 +835,14 @@ func TestService_Reload_SelectiveSessionInvalidation(t *testing.T) {
 			// verify expected valid sessions
 			for _, username := range tt.expectValid {
 				token := tokensByUser[username]
-				assert.True(t, svc.ValidateSession(t.Context(), token),
+				assert.True(t, svc.validateSession(t.Context(), token),
 					"session for %q should remain valid", username)
 			}
 
 			// verify expected invalid sessions
 			for _, username := range tt.expectInvalid {
 				token := tokensByUser[username]
-				assert.False(t, svc.ValidateSession(t.Context(), token),
+				assert.False(t, svc.validateSession(t.Context(), token),
 					"session for %q should be invalidated", username)
 			}
 		})
@@ -941,10 +935,10 @@ tokens:
 	// concurrent reads while reloading
 	for range 1000 {
 		_ = svc.Enabled()
-		_ = svc.HasTokenACL("apitoken")
+		_ = svc.hasTokenACL("apitoken")
 		_ = svc.CheckUserPermission("admin", "test", false)
 		_ = svc.FilterUserKeys("admin", []string{"a", "b", "c"})
-		_ = svc.FilterTokenKeys("apitoken", []string{"a", "b", "c"})
+		_ = svc.filterTokenKeys("apitoken", []string{"a", "b", "c"})
 		_ = svc.UserCanWrite("admin")
 	}
 
@@ -973,8 +967,8 @@ tokens:
 	require.NoError(t, err)
 
 	// verify initial config
-	assert.True(t, svc.HasTokenACL("token1"))
-	assert.False(t, svc.HasTokenACL("token2"))
+	assert.True(t, svc.hasTokenACL("token1"))
+	assert.False(t, svc.hasTokenACL("token2"))
 
 	// update config file
 	newConfig := `
@@ -995,11 +989,11 @@ tokens:
 
 	// wait for reload using Eventually (avoids flaky timing)
 	require.Eventually(t, func() bool {
-		return svc.HasTokenACL("token2")
+		return svc.hasTokenACL("token2")
 	}, 2*time.Second, 10*time.Millisecond, "new token should exist after reload")
 
 	// verify old token is gone
-	assert.False(t, svc.HasTokenACL("token1"), "old token should be gone")
+	assert.False(t, svc.hasTokenACL("token1"), "old token should be gone")
 }
 
 func TestService_startWatcher_AtomicRename(t *testing.T) {

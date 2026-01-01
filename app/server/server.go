@@ -18,6 +18,7 @@ import (
 	"github.com/umputun/stash/app/enum"
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/api"
+	"github.com/umputun/stash/app/server/auth"
 	"github.com/umputun/stash/app/server/web"
 	"github.com/umputun/stash/app/store"
 )
@@ -33,36 +34,12 @@ type Server struct {
 	cfg             Config
 	version         string
 	baseURL         string
-	auth            AuthService
+	auth            *auth.Service
 	apiHandler      *api.Handler
 	webHandler      *web.Handler
 	auditHandler    *AuditHandler
 	webAuditHandler *web.AuditHandler
 	staticFS        fs.FS // embedded static files
-}
-
-// AuthService defines the interface for authentication operations used by the server.
-// This is a comprehensive interface that satisfies all consumers (web, api, audit handlers).
-type AuthService interface {
-	Enabled() bool
-	LoginTTL() time.Duration
-
-	SessionMiddleware(loginURL string) func(http.Handler) http.Handler
-	TokenMiddleware(next http.Handler) http.Handler
-
-	GetSessionUser(ctx context.Context, token string) (string, bool)
-	IsValidUser(username, password string) bool
-	CreateSession(ctx context.Context, username string) (string, error)
-	InvalidateSession(ctx context.Context, token string)
-
-	CheckUserPermission(username, key string, write bool) bool
-	FilterUserKeys(username string, keys []string) []string
-	UserCanWrite(username string) bool
-	IsAdmin(username string) bool
-
-	FilterKeysForRequest(r *http.Request, keys []string) []string
-	IsRequestAdmin(r *http.Request) bool
-	GetRequestActor(r *http.Request) (actorType, actorName string)
 }
 
 // KVStore defines the interface for key-value storage operations.
@@ -116,7 +93,7 @@ type Config struct {
 // gs is optional git service, pass nil to disable git versioning.
 // as is optional audit store, pass nil to disable audit logging.
 // authSvc is optional auth service, pass nil to disable authentication.
-func New(st KVStore, val Validator, gs GitService, authSvc AuthService, as AuditStore, cfg Config) (*Server, error) {
+func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as AuditStore, cfg Config) (*Server, error) {
 	staticContent, err := web.StaticFS()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load static files: %w", err)

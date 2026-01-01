@@ -1,3 +1,19 @@
+// Package auth provides authentication and authorization for the stash server.
+//
+// It supports two authentication methods:
+//   - Session-based authentication for web UI (username/password login)
+//   - Token-based authentication for API (X-Auth-Token header or Authorization: Bearer)
+//
+// Token types:
+//   - Named tokens with specific ACL permissions
+//   - Public token (token="*") allowing unauthenticated access with limited permissions
+//
+// Authorization uses prefix-based ACL where permissions are granted per key prefix
+// with access levels: read (r), write (w), or read-write (rw). Wildcards (*) match
+// any key, and longest prefix match wins. Secrets paths require explicit grant.
+//
+// Configuration is loaded from a YAML file with optional hot-reload support.
+// Sessions are stored persistently and survive server restarts.
 package auth
 
 import (
@@ -191,6 +207,322 @@ func (s *Service) Reload(ctx context.Context) error {
 	return nil
 }
 
+// IsValidUser checks if username/password are valid credentials.
+// Uses constant-time comparison to prevent username enumeration via timing attacks.
+func (s *Service) IsValidUser(username, password string) bool {
+	if s == nil {
+		return false
+	}
+
+	// dummy hash for constant-time comparison when user doesn't exist.
+	// this is a valid bcrypt hash (cost=10) to ensure comparison takes similar time.
+	const dummyHash = "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
+
+	s.mu.RLock()
+	user, exists := s.users[username]
+	hashToCheck := dummyHash
+	if exists {
+		hashToCheck = user.PasswordHash
+	}
+	s.mu.RUnlock()
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hashToCheck), []byte(password)); err != nil || !exists {
+		return false
+	}
+	return true
+}
+
+// getTokenACL returns the ACL for a token and whether it exists.
+func (s *Service) getTokenACL(token string) (TokenACL, bool) {
+	if s == nil {
+		return TokenACL{}, false
+	}
+	s.mu.RLock()
+	acl, ok := s.tokens[token]
+	s.mu.RUnlock()
+	return acl, ok
+}
+
+// hasTokenACL checks if a token exists in the ACL.
+func (s *Service) hasTokenACL(token string) bool {
+	_, ok := s.getTokenACL(token)
+	return ok
+}
+
+// checkPermission checks if a token has the required permission for a key.
+// returns true if the token has sufficient permissions.
+func (s *Service) checkPermission(token, key string, needWrite bool) bool {
+	acl, ok := s.getTokenACL(token)
+	if !ok {
+		return false
+	}
+	return acl.CheckKeyPermission(key, needWrite)
+}
+
+// CreateSession generates a new session token for the given username.
+func (s *Service) CreateSession(ctx context.Context, username string) (string, error) {
+	if s == nil {
+		return "", errors.New("auth not enabled")
+	}
+
+	token := uuid.NewString()
+	expiresAt := time.Now().Add(s.loginTTL)
+
+	if err := s.sessionStore.CreateSession(ctx, token, username, expiresAt); err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+	return token, nil
+}
+
+// GetSessionUser returns the username for a valid session.
+// Returns empty string and false if session is invalid or expired.
+// Note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
+func (s *Service) GetSessionUser(ctx context.Context, token string) (string, bool) {
+	if s == nil {
+		return "", false
+	}
+
+	username, _, err := s.sessionStore.GetSession(ctx, token)
+	if err != nil {
+		return "", false
+	}
+	return username, true
+}
+
+// CheckUserPermission checks if a user has the required permission for a key.
+// Returns true when auth is disabled (permissive by default).
+func (s *Service) CheckUserPermission(username, key string, needWrite bool) bool {
+	if s == nil || !s.Enabled() {
+		return true // no auth = everything allowed
+	}
+	s.mu.RLock()
+	user, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	return user.ACL.CheckKeyPermission(key, needWrite)
+}
+
+// FilterUserKeys filters keys based on user's read permissions.
+// Returns all keys when auth is disabled (permissive by default).
+func (s *Service) FilterUserKeys(username string, keys []string) []string {
+	if s == nil || !s.Enabled() {
+		return keys // no auth = show all keys
+	}
+	s.mu.RLock()
+	user, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return nil
+	}
+
+	var filtered []string
+	for _, key := range keys {
+		if user.ACL.CheckKeyPermission(key, false) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
+}
+
+// filterTokenKeys filters keys based on token's read permissions.
+// returns nil if token doesn't exist.
+func (s *Service) filterTokenKeys(token string, keys []string) []string {
+	if s == nil {
+		return keys // no auth = show all keys
+	}
+	s.mu.RLock()
+	acl, ok := s.tokens[token]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	var filtered []string
+	for _, key := range keys {
+		if acl.CheckKeyPermission(key, false) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
+}
+
+// filterPublicKeys filters keys based on public ACL read permissions.
+// returns nil if public access is not configured.
+func (s *Service) filterPublicKeys(keys []string) []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	publicACL := s.publicACL
+	s.mu.RUnlock()
+	if publicACL == nil {
+		return nil
+	}
+
+	var filtered []string
+	for _, key := range keys {
+		if publicACL.CheckKeyPermission(key, false) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered
+}
+
+// FilterKeysForRequest filters keys based on the request's authentication.
+// Determines actor type (token, session user, or public) and filters accordingly.
+// Returns all keys when auth is disabled.
+func (s *Service) FilterKeysForRequest(r *http.Request, keys []string) []string {
+	if s == nil || !s.Enabled() {
+		return keys
+	}
+
+	// check for API token first
+	if token := ExtractToken(r); token != "" {
+		if filtered := s.filterTokenKeys(token, keys); filtered != nil {
+			return filtered
+		}
+	}
+
+	// check for session cookie
+	for _, cookieName := range cookie.SessionCookieNames {
+		if c, err := r.Cookie(cookieName); err == nil {
+			if username, ok := s.GetSessionUser(r.Context(), c.Value); ok {
+				return s.FilterUserKeys(username, keys)
+			}
+		}
+	}
+
+	// fall back to public access
+	if filtered := s.filterPublicKeys(keys); filtered != nil {
+		return filtered
+	}
+	return nil
+}
+
+// IsRequestAdmin checks if the request is from an admin (user or token).
+// Returns false when auth is disabled.
+func (s *Service) IsRequestAdmin(r *http.Request) bool {
+	if s == nil || !s.Enabled() {
+		return false
+	}
+
+	// check for API token first
+	if token := ExtractToken(r); token != "" && s.hasTokenACL(token) {
+		return s.isTokenAdmin(token)
+	}
+
+	// check for session cookie
+	for _, cookieName := range cookie.SessionCookieNames {
+		if c, err := r.Cookie(cookieName); err == nil {
+			if username, ok := s.GetSessionUser(r.Context(), c.Value); ok {
+				return s.IsAdmin(username)
+			}
+		}
+	}
+
+	return false
+}
+
+// GetRequestActor returns the actor type and name from the request.
+// Returns ("user", username), ("token", masked_token), or ("public", "").
+func (s *Service) GetRequestActor(r *http.Request) (actorType, actorName string) {
+	if s == nil || !s.Enabled() {
+		return "public", ""
+	}
+
+	// check for API token first
+	if token := ExtractToken(r); token != "" && s.hasTokenACL(token) {
+		masked := token
+		if len(masked) > 8 {
+			masked = masked[:8]
+		}
+		return "token", "token:" + masked
+	}
+
+	// check for session cookie
+	for _, cookieName := range cookie.SessionCookieNames {
+		if c, err := r.Cookie(cookieName); err == nil {
+			if username, ok := s.GetSessionUser(r.Context(), c.Value); ok {
+				return "user", username
+			}
+		}
+	}
+
+	return "public", ""
+}
+
+// UserCanWrite returns true if user has any write permission.
+// Returns true when auth is disabled (permissive by default).
+func (s *Service) UserCanWrite(username string) bool {
+	if s == nil || !s.Enabled() {
+		return true // no auth = write allowed
+	}
+	s.mu.RLock()
+	user, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	for _, pp := range user.ACL.prefixes {
+		if pp.permission.CanWrite() {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAdmin returns true if user has admin privileges.
+// Returns false when auth is disabled.
+func (s *Service) IsAdmin(username string) bool {
+	if s == nil || !s.Enabled() {
+		return false
+	}
+	s.mu.RLock()
+	user, exists := s.users[username]
+	s.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	return user.Admin
+}
+
+// isTokenAdmin checks if an API token has admin privileges.
+func (s *Service) isTokenAdmin(token string) bool {
+	if s == nil || !s.Enabled() {
+		return false
+	}
+	s.mu.RLock()
+	acl, exists := s.tokens[token]
+	s.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	return acl.Admin
+}
+
+// validateSession checks if a session token is valid and not expired.
+// note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
+func (s *Service) validateSession(ctx context.Context, token string) bool {
+	if s == nil {
+		return false
+	}
+
+	_, _, err := s.sessionStore.GetSession(ctx, token)
+	return err == nil
+}
+
+// InvalidateSession removes a session.
+func (s *Service) InvalidateSession(ctx context.Context, token string) {
+	if s == nil {
+		return
+	}
+	if err := s.sessionStore.DeleteSession(ctx, token); err != nil {
+		log.Printf("[WARN] failed to delete session: %v", err)
+	}
+}
+
 // startWatcher starts watching the auth config file for changes.
 // when the file changes, it reloads the configuration automatically.
 // the watcher stops when the context is canceled.
@@ -278,328 +610,6 @@ func (s *Service) startWatcher(ctx context.Context) error {
 	return nil
 }
 
-// ValidateUser checks if username/password are valid and returns the user.
-// Returns nil if credentials are invalid.
-// Uses constant-time comparison to prevent username enumeration via timing attacks.
-func (s *Service) ValidateUser(username, password string) *User {
-	if s == nil {
-		return nil
-	}
-
-	// dummy hash for constant-time comparison when user doesn't exist.
-	// this is a valid bcrypt hash (cost=10) to ensure comparison takes similar time.
-	const dummyHash = "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
-
-	s.mu.RLock()
-	user, exists := s.users[username]
-	hashToCheck := dummyHash
-	if exists {
-		hashToCheck = user.PasswordHash
-	}
-	s.mu.RUnlock()
-
-	if err := bcrypt.CompareHashAndPassword([]byte(hashToCheck), []byte(password)); err != nil || !exists {
-		return nil
-	}
-	return &user
-}
-
-// IsValidUser checks if username/password are valid credentials.
-func (s *Service) IsValidUser(username, password string) bool {
-	return s.ValidateUser(username, password) != nil
-}
-
-// GetTokenACL returns the ACL for a token and whether it exists.
-func (s *Service) GetTokenACL(token string) (TokenACL, bool) {
-	if s == nil {
-		return TokenACL{}, false
-	}
-	s.mu.RLock()
-	acl, ok := s.tokens[token]
-	s.mu.RUnlock()
-	return acl, ok
-}
-
-// HasTokenACL checks if a token exists in the ACL.
-func (s *Service) HasTokenACL(token string) bool {
-	_, ok := s.GetTokenACL(token)
-	return ok
-}
-
-// CheckPermission checks if a token has the required permission for a key.
-// Returns true if the token has sufficient permissions.
-func (s *Service) CheckPermission(token, key string, needWrite bool) bool {
-	acl, ok := s.GetTokenACL(token)
-	if !ok {
-		return false
-	}
-	return acl.CheckKeyPermission(key, needWrite)
-}
-
-// CreateSession generates a new session token for the given username.
-func (s *Service) CreateSession(ctx context.Context, username string) (string, error) {
-	if s == nil {
-		return "", errors.New("auth not enabled")
-	}
-
-	token := uuid.NewString()
-	expiresAt := time.Now().Add(s.loginTTL)
-
-	if err := s.sessionStore.CreateSession(ctx, token, username, expiresAt); err != nil {
-		return "", fmt.Errorf("failed to create session: %w", err)
-	}
-	return token, nil
-}
-
-// GetSessionUser returns the username for a valid session.
-// Returns empty string and false if session is invalid or expired.
-// Note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
-func (s *Service) GetSessionUser(ctx context.Context, token string) (string, bool) {
-	if s == nil {
-		return "", false
-	}
-
-	username, _, err := s.sessionStore.GetSession(ctx, token)
-	if err != nil {
-		return "", false
-	}
-	return username, true
-}
-
-// CheckUserPermission checks if a user has the required permission for a key.
-// Returns true when auth is disabled (permissive by default).
-func (s *Service) CheckUserPermission(username, key string, needWrite bool) bool {
-	if s == nil || !s.Enabled() {
-		return true // no auth = everything allowed
-	}
-	s.mu.RLock()
-	user, exists := s.users[username]
-	s.mu.RUnlock()
-	if !exists {
-		return false
-	}
-	return user.ACL.CheckKeyPermission(key, needWrite)
-}
-
-// FilterUserKeys filters keys based on user's read permissions.
-// Returns all keys when auth is disabled (permissive by default).
-func (s *Service) FilterUserKeys(username string, keys []string) []string {
-	if s == nil || !s.Enabled() {
-		return keys // no auth = show all keys
-	}
-	s.mu.RLock()
-	user, exists := s.users[username]
-	s.mu.RUnlock()
-	if !exists {
-		return nil
-	}
-
-	var filtered []string
-	for _, key := range keys {
-		if user.ACL.CheckKeyPermission(key, false) {
-			filtered = append(filtered, key)
-		}
-	}
-	return filtered
-}
-
-// FilterTokenKeys filters keys based on token's read permissions.
-// Returns nil if token doesn't exist.
-func (s *Service) FilterTokenKeys(token string, keys []string) []string {
-	if s == nil {
-		return keys // no auth = show all keys
-	}
-	s.mu.RLock()
-	acl, ok := s.tokens[token]
-	s.mu.RUnlock()
-	if !ok {
-		return nil
-	}
-
-	var filtered []string
-	for _, key := range keys {
-		if acl.CheckKeyPermission(key, false) {
-			filtered = append(filtered, key)
-		}
-	}
-	return filtered
-}
-
-// FilterPublicKeys filters keys based on public ACL read permissions.
-// Returns nil if public access is not configured.
-func (s *Service) FilterPublicKeys(keys []string) []string {
-	if s == nil {
-		return nil
-	}
-	s.mu.RLock()
-	publicACL := s.publicACL
-	s.mu.RUnlock()
-	if publicACL == nil {
-		return nil
-	}
-
-	var filtered []string
-	for _, key := range keys {
-		if publicACL.CheckKeyPermission(key, false) {
-			filtered = append(filtered, key)
-		}
-	}
-	return filtered
-}
-
-// FilterKeysForRequest filters keys based on the request's authentication.
-// Determines actor type (token, session user, or public) and filters accordingly.
-// Returns all keys when auth is disabled.
-func (s *Service) FilterKeysForRequest(r *http.Request, keys []string) []string {
-	if s == nil || !s.Enabled() {
-		return keys
-	}
-
-	// check for API token first
-	if token := ExtractToken(r); token != "" {
-		if filtered := s.FilterTokenKeys(token, keys); filtered != nil {
-			return filtered
-		}
-	}
-
-	// check for session cookie
-	for _, cookieName := range cookie.SessionCookieNames {
-		if c, err := r.Cookie(cookieName); err == nil {
-			if username, ok := s.GetSessionUser(r.Context(), c.Value); ok {
-				return s.FilterUserKeys(username, keys)
-			}
-		}
-	}
-
-	// fall back to public access
-	if filtered := s.FilterPublicKeys(keys); filtered != nil {
-		return filtered
-	}
-	return nil
-}
-
-// IsRequestAdmin checks if the request is from an admin (user or token).
-// Returns false when auth is disabled.
-func (s *Service) IsRequestAdmin(r *http.Request) bool {
-	if s == nil || !s.Enabled() {
-		return false
-	}
-
-	// check for API token first
-	if token := ExtractToken(r); token != "" && s.HasTokenACL(token) {
-		return s.IsTokenAdmin(token)
-	}
-
-	// check for session cookie
-	for _, cookieName := range cookie.SessionCookieNames {
-		if c, err := r.Cookie(cookieName); err == nil {
-			if username, ok := s.GetSessionUser(r.Context(), c.Value); ok {
-				return s.IsAdmin(username)
-			}
-		}
-	}
-
-	return false
-}
-
-// GetRequestActor returns the actor type and name from the request.
-// Returns ("user", username), ("token", masked_token), or ("public", "").
-func (s *Service) GetRequestActor(r *http.Request) (actorType, actorName string) {
-	if s == nil || !s.Enabled() {
-		return "public", ""
-	}
-
-	// check for API token first
-	if token := ExtractToken(r); token != "" && s.HasTokenACL(token) {
-		masked := token
-		if len(masked) > 8 {
-			masked = masked[:8]
-		}
-		return "token", "token:" + masked
-	}
-
-	// check for session cookie
-	for _, cookieName := range cookie.SessionCookieNames {
-		if c, err := r.Cookie(cookieName); err == nil {
-			if username, ok := s.GetSessionUser(r.Context(), c.Value); ok {
-				return "user", username
-			}
-		}
-	}
-
-	return "public", ""
-}
-
-// UserCanWrite returns true if user has any write permission.
-// Returns true when auth is disabled (permissive by default).
-func (s *Service) UserCanWrite(username string) bool {
-	if s == nil || !s.Enabled() {
-		return true // no auth = write allowed
-	}
-	s.mu.RLock()
-	user, exists := s.users[username]
-	s.mu.RUnlock()
-	if !exists {
-		return false
-	}
-	for _, pp := range user.ACL.prefixes {
-		if pp.permission.CanWrite() {
-			return true
-		}
-	}
-	return false
-}
-
-// IsAdmin returns true if user has admin privileges.
-// Returns false when auth is disabled.
-func (s *Service) IsAdmin(username string) bool {
-	if s == nil || !s.Enabled() {
-		return false
-	}
-	s.mu.RLock()
-	user, exists := s.users[username]
-	s.mu.RUnlock()
-	if !exists {
-		return false
-	}
-	return user.Admin
-}
-
-// IsTokenAdmin checks if an API token has admin privileges.
-func (s *Service) IsTokenAdmin(token string) bool {
-	if s == nil || !s.Enabled() {
-		return false
-	}
-	s.mu.RLock()
-	acl, exists := s.tokens[token]
-	s.mu.RUnlock()
-	if !exists {
-		return false
-	}
-	return acl.Admin
-}
-
-// ValidateSession checks if a session token is valid and not expired.
-// Note: expiration is checked in store.GetSession, which returns ErrNotFound for expired sessions.
-func (s *Service) ValidateSession(ctx context.Context, token string) bool {
-	if s == nil {
-		return false
-	}
-
-	_, _, err := s.sessionStore.GetSession(ctx, token)
-	return err == nil
-}
-
-// InvalidateSession removes a session.
-func (s *Service) InvalidateSession(ctx context.Context, token string) {
-	if s == nil {
-		return
-	}
-	if err := s.sessionStore.DeleteSession(ctx, token); err != nil {
-		log.Printf("[WARN] failed to delete session: %v", err)
-	}
-}
-
 // startCleanup starts background cleanup of expired sessions.
 // runs periodically until context is canceled. default interval is 1 hour.
 func (s *Service) startCleanup(ctx context.Context) {
@@ -637,8 +647,8 @@ func (s *Service) startCleanup(ctx context.Context) {
 	log.Printf("[INFO] session cleanup started (interval: %s)", interval)
 }
 
-// PublicACL returns the public access ACL if configured.
-func (s *Service) PublicACL() *TokenACL {
+// getPublicACL returns the public access ACL if configured.
+func (s *Service) getPublicACL() *TokenACL {
 	if s == nil {
 		return nil
 	}
