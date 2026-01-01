@@ -40,11 +40,11 @@ Add audit logging to track all KV operations (read, create, update, delete) with
 **Files:**
 - Modify: `app/enum/enum.go`
 
-- [ ] Add AuditAction enum (read, create, update, delete)
-- [ ] Add AuditResult enum (success, denied, not_found)
-- [ ] Add ActorType enum (user, token, public)
-- [ ] Run go generate for enum code
-- [ ] Add tests for new enums
+- [x] Add AuditAction enum (read, create, update, delete)
+- [x] Add AuditResult enum (success, denied, not_found)
+- [x] Add ActorType enum (user, token, public)
+- [x] Run go generate for enum code
+- [x] Add tests for new enums
 
 ### 2. Add Admin Flag to Auth
 
@@ -53,28 +53,27 @@ Add audit logging to track all KV operations (read, create, update, delete) with
 - Modify: `app/server/verify.go` (JSON schema)
 - Modify: `app/server/auth_test.go`
 
-- [ ] Add `Admin bool` field to UserConfig
-- [ ] Add `Admin bool` field to User struct
-- [ ] Update parseUsers to copy admin flag
-- [ ] Add IsAdmin(username) method to Auth
-- [ ] Update JSON schema in verify.go
-- [ ] Add tests for admin flag parsing and IsAdmin method
+- [x] Add `Admin bool` field to UserConfig
+- [x] Add `Admin bool` field to User struct
+- [x] Update parseUsers to copy admin flag
+- [x] Add IsAdmin(username) method to Auth
+- [x] Update JSON schema in verify.go
+- [x] Add tests for admin flag parsing and IsAdmin method
 
 ### 3. Create Audit Store
 
 **Files:**
 - Create: `app/store/audit.go`
 - Modify: `app/store/db.go`
-- Create: `app/store/audit_test.go`
+- Modify: `app/store/db_test.go`
 
-- [ ] Define AuditEntry struct with all fields
-- [ ] Define AuditQuery struct for filtering
-- [ ] Define AuditStore interface (Log, Query, DeleteOlderThan)
-- [ ] Add audit_log table creation in db.go createTables
-- [ ] Implement Log method (insert entry)
-- [ ] Implement Query method (with filters, limit, ordering)
-- [ ] Implement DeleteOlderThan method (for cleanup)
-- [ ] Add tests for all methods
+- [x] Define AuditEntry struct with all fields
+- [x] Define AuditQuery struct for filtering
+- [x] Add audit_log table creation in db.go createSchema
+- [x] Implement LogAudit method (insert entry)
+- [x] Implement QueryAudit method (with filters, limit, ordering)
+- [x] Implement DeleteAuditOlderThan method (for cleanup)
+- [x] Add tests for all methods
 
 ### 4. Create Audit Middleware
 

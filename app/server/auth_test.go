@@ -1800,3 +1800,41 @@ func TestAuth_StartCleanup(t *testing.T) {
 		auth.StartCleanup(context.Background()) // should not panic
 	})
 }
+
+func TestAuth_IsAdmin(t *testing.T) {
+	t.Run("admin user", func(t *testing.T) {
+		content := `
+users:
+  - name: admin
+    password: "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
+    admin: true
+    permissions:
+      - prefix: "*"
+        access: rw
+  - name: regular
+    password: "$2a$10$C615A0mfUEFBupj9qcqhiuBEyf60EqrsakB90CozUoSON8d2Dc1uS"
+    permissions:
+      - prefix: "*"
+        access: r
+`
+		f := createTempFile(t, content)
+		ss := testSessionStore(t)
+		auth, err := NewAuth(f, time.Hour, ss)
+		require.NoError(t, err)
+
+		assert.True(t, auth.IsAdmin("admin"), "admin user should be admin")
+		assert.False(t, auth.IsAdmin("regular"), "regular user should not be admin")
+		assert.False(t, auth.IsAdmin("unknown"), "unknown user should not be admin")
+	})
+
+	t.Run("nil auth", func(t *testing.T) {
+		var auth *Auth
+		assert.False(t, auth.IsAdmin("anyone"), "nil auth should return false")
+	})
+
+	t.Run("auth disabled", func(t *testing.T) {
+		auth, err := NewAuth("", time.Hour, nil)
+		require.NoError(t, err)
+		require.Nil(t, auth)
+	})
+}

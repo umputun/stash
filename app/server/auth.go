@@ -38,6 +38,7 @@ type AuthConfig struct {
 type UserConfig struct {
 	Name        string             `yaml:"name" json:"name" jsonschema:"required"`
 	Password    string             `yaml:"password" json:"password" jsonschema:"required"` // bcrypt hash
+	Admin       bool               `yaml:"admin,omitempty" json:"admin,omitempty" jsonschema:"description=grants admin privileges (audit access)"`
 	Permissions []PermissionConfig `yaml:"permissions,omitempty" json:"permissions,omitempty"`
 }
 
@@ -57,6 +58,7 @@ type PermissionConfig struct {
 type User struct {
 	Name         string
 	PasswordHash string
+	Admin        bool     // grants admin privileges (audit access)
 	ACL          TokenACL // reuse ACL structure for permissions
 }
 
@@ -183,6 +185,7 @@ func parseUsers(configs []UserConfig) (map[string]User, error) {
 		users[uc.Name] = User{
 			Name:         uc.Name,
 			PasswordHash: uc.Password,
+			Admin:        uc.Admin,
 			ACL:          acl,
 		}
 	}
@@ -678,6 +681,21 @@ func (a *Auth) UserCanWrite(username string) bool {
 		}
 	}
 	return false
+}
+
+// IsAdmin returns true if user has admin privileges.
+// Returns false when auth is disabled.
+func (a *Auth) IsAdmin(username string) bool {
+	if a == nil || !a.Enabled() {
+		return false
+	}
+	a.mu.RLock()
+	user, exists := a.users[username]
+	a.mu.RUnlock()
+	if !exists {
+		return false
+	}
+	return user.Admin
 }
 
 // ValidateSession checks if a session token is valid and not expired.

@@ -53,3 +53,31 @@ const (
 	secretsFilterSecretsOnly                      // enum:alias=secrets,true
 	secretsFilterKeysOnly                         // enum:alias=keys,false
 )
+
+//go:generate go run github.com/go-pkgz/enum@latest -type auditAction -lower
+type auditAction int
+
+const (
+	auditActionRead auditAction = iota
+	auditActionCreate
+	auditActionUpdate
+	auditActionDelete
+)
+
+//go:generate go run github.com/go-pkgz/enum@latest -type auditResult -lower
+type auditResult int
+
+const (
+	auditResultSuccess auditResult = iota
+	auditResultDenied
+	auditResultNotFound // enum:alias=not_found
+)
+
+//go:generate go run github.com/go-pkgz/enum@latest -type actorType -lower
+type actorType int
+
+const (
+	actorTypeUser actorType = iota
+	actorTypeToken
+	actorTypePublic
+)

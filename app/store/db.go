@@ -144,9 +144,9 @@ func connectPostgres(dbURL string) (*sqlx.DB, error) {
 	return db, nil
 }
 
-// createSchema creates the kv and sessions tables if they don't exist.
+// createSchema creates the kv, sessions, and audit_log tables if they don't exist.
 func (s *Store) createSchema() error {
-	var kvSchema, sessionsSchema string
+	var kvSchema, sessionsSchema, auditSchema string
 	switch s.dbType {
 	case DBTypePostgres:
 		kvSchema = `
@@ -165,6 +165,23 @@ func (s *Store) createSchema() error {
 			);
 			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 			CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username)`
+		auditSchema = `
+			CREATE TABLE IF NOT EXISTS audit_log (
+				id SERIAL PRIMARY KEY,
+				timestamp TIMESTAMPTZ NOT NULL,
+				action TEXT NOT NULL,
+				key TEXT NOT NULL,
+				actor TEXT NOT NULL,
+				actor_type TEXT NOT NULL,
+				result TEXT NOT NULL,
+				ip TEXT,
+				user_agent TEXT,
+				value_size INTEGER,
+				request_id TEXT
+			);
+			CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+			CREATE INDEX IF NOT EXISTS idx_audit_key ON audit_log(key);
+			CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)`
 	default:
 		kvSchema = `
 			CREATE TABLE IF NOT EXISTS kv (
@@ -182,6 +199,23 @@ func (s *Store) createSchema() error {
 			);
 			CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 			CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username)`
+		auditSchema = `
+			CREATE TABLE IF NOT EXISTS audit_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				timestamp TEXT NOT NULL,
+				action TEXT NOT NULL,
+				key TEXT NOT NULL,
+				actor TEXT NOT NULL,
+				actor_type TEXT NOT NULL,
+				result TEXT NOT NULL,
+				ip TEXT,
+				user_agent TEXT,
+				value_size INTEGER,
+				request_id TEXT
+			);
+			CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+			CREATE INDEX IF NOT EXISTS idx_audit_key ON audit_log(key);
+			CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor)`
 	}
 
 	if _, err := s.db.Exec(kvSchema); err != nil { //nolint:noctx // init-time, no context available
@@ -189,6 +223,9 @@ func (s *Store) createSchema() error {
 	}
 	if _, err := s.db.Exec(sessionsSchema); err != nil { //nolint:noctx // init-time, no context available
 		return fmt.Errorf("failed to create sessions table: %w", err)
+	}
+	if _, err := s.db.Exec(auditSchema); err != nil { //nolint:noctx // init-time, no context available
+		return fmt.Errorf("failed to create audit_log table: %w", err)
 	}
 	return nil
 }

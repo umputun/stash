@@ -74,6 +74,10 @@
         "password": {
           "type": "string"
         },
+        "admin": {
+          "type": "boolean",
+          "description": "grants admin privileges (audit access)"
+        },
         "permissions": {
           "items": {
             "$ref": "#/$defs/PermissionConfig"
