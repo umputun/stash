@@ -10,17 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNoop(t *testing.T) {
-	handler := Noop(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest("GET", "/anything", http.NoBody)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusOK, rec.Code)
-}
-
 func TestService_SessionMiddleware(t *testing.T) {
 	content := `
 users:
@@ -402,6 +391,59 @@ tokens:
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+func TestTokenMiddleware_ListOperations(t *testing.T) {
+	content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+tokens:
+  - token: "*"
+    permissions:
+      - prefix: "public/*"
+        access: r
+  - token: "apitoken"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
+	require.NoError(t, err)
+
+	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("list with public ACL passes through", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/", http.NoBody)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "public ACL should allow list pass-through")
+	})
+
+	t.Run("list with session cookie passes through", func(t *testing.T) {
+		sessionToken, err := svc.CreateSession(t.Context(), "admin")
+		require.NoError(t, err)
+
+		req := httptest.NewRequest("GET", "/kv/", http.NoBody)
+		req.AddCookie(&http.Cookie{Name: "stash-auth", Value: sessionToken})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "session cookie should allow list pass-through")
+	})
+
+	t.Run("list with valid token passes through", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/kv/", http.NoBody)
+		req.Header.Set("Authorization", "Bearer apitoken")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "valid token should allow list pass-through")
 	})
 }
 

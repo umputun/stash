@@ -12,7 +12,11 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `audit.go` - Audit API handler (admin query endpoint)
   - `web.go` - Web UI handlers, templates, static file serving, per-user permission checks
   - `web/audit.go` - Audit web UI handler (full page and HTMX partials)
-  - `auth.go` - Authentication: YAML config (users + tokens), sessions, middleware, prefix-based ACL
+  - `auth/` - Authentication package
+    - `auth.go` - Service struct, session management, user/token validation, permission checks
+    - `config.go` - Config types (User, TokenACL, PermissionConfig), YAML loading
+    - `middleware.go` - SessionMiddleware, TokenMiddleware, token extraction
+    - `mocks/` - Generated mocks
   - `verify.go` - JSON schema validation for auth config (embedded schema)
   - `static/` - Embedded CSS, JS, HTMX library
   - `templates/` - Embedded HTML templates (base, index, login, audit, partials)

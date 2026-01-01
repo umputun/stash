@@ -178,12 +178,12 @@ func runServer(ctx context.Context) error {
 	}
 
 	// initialize auth service if config file is provided
-	authService, authSvc, err := initAuthService(ctx, rawStore)
+	authSvc, err := initAuthService(ctx, rawStore)
 	if err != nil {
 		return err
 	}
 
-	srv, err := server.New(kvStore, validator.NewService(), gitService, authService, auditStore, server.Config{
+	srv, err := server.New(kvStore, validator.NewService(), gitService, authSvc, auditStore, server.Config{
 		Address:          opts.Server.Address,
 		ReadTimeout:      opts.Server.ReadTimeout,
 		WriteTimeout:     opts.Server.WriteTimeout,
@@ -444,16 +444,16 @@ func initGitService() (server.GitService, error) {
 }
 
 // initAuthService creates auth service if enabled and activates it.
-func initAuthService(ctx context.Context, sessionStore auth.SessionStore) (server.AuthService, *auth.Service, error) {
+func initAuthService(ctx context.Context, sessionStore auth.SessionStore) (*auth.Service, error) {
 	if opts.Auth.File == "" {
-		return nil, nil, nil
+		return nil, nil //nolint:nilnil // nil auth service is valid when auth is disabled
 	}
 	authSvc, err := auth.New(opts.Auth.File, opts.Auth.LoginTTL, opts.Auth.HotReload, sessionStore, server.VerifyAuthConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize auth: %w", err)
+		return nil, fmt.Errorf("failed to initialize auth: %w", err)
 	}
 	if err := authSvc.Activate(ctx); err != nil {
-		return nil, nil, fmt.Errorf("failed to activate auth: %w", err)
+		return nil, fmt.Errorf("failed to activate auth: %w", err)
 	}
-	return authSvc, authSvc, nil
+	return authSvc, nil
 }

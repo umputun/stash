@@ -114,11 +114,6 @@ func (s *Service) TokenMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Noop returns a pass-through middleware (used when auth is disabled).
-func Noop(next http.Handler) http.Handler {
-	return next
-}
-
 // MaskToken returns a masked version of token for safe logging (shows first 4 chars).
 func MaskToken(token string) string {
 	if len(token) <= 4 {

@@ -157,6 +157,54 @@ tokens:
 	assert.Empty(t, svc.users)
 }
 
+func TestService_Activate(t *testing.T) {
+	t.Run("nil service returns nil", func(t *testing.T) {
+		var svc *Service
+		err := svc.Activate(t.Context())
+		assert.NoError(t, err)
+	})
+
+	t.Run("activates without hot-reload", func(t *testing.T) {
+		content := `
+users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		f := createTempFile(t, content)
+		svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		err = svc.Activate(ctx)
+		require.NoError(t, err)
+
+		cancel() // stop background goroutines
+	})
+
+	t.Run("activates with hot-reload", func(t *testing.T) {
+		content := `
+users:
+  - name: admin
+    password: "$2a$10$mYptn.gre3pNHlkiErjUkuCqVZgkOjWmSG5JzlKqPESw/TU5dtGB6"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		f := createTempFile(t, content)
+		svc, err := New(f, time.Hour, true, testSessionStore(t), nil)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		err = svc.Activate(ctx)
+		require.NoError(t, err)
+
+		cancel() // stop background goroutines (watcher + cleanup)
+	})
+}
+
 func TestService_ValidateUser(t *testing.T) {
 	// bcrypt hash for "testpass"
 	content := `
@@ -502,12 +550,6 @@ users:
 		var svc *Service
 		assert.False(t, svc.IsAdmin("anyone"), "nil service should return false")
 	})
-
-	t.Run("service disabled", func(t *testing.T) {
-		svc, err := New("", time.Hour, false, nil, nil)
-		require.NoError(t, err)
-		require.Nil(t, svc)
-	})
 }
 
 func TestService_IsTokenAdmin(t *testing.T) {
@@ -537,12 +579,6 @@ tokens:
 	t.Run("nil service", func(t *testing.T) {
 		var svc *Service
 		assert.False(t, svc.IsTokenAdmin("any-token"), "nil service should return false")
-	})
-
-	t.Run("service disabled", func(t *testing.T) {
-		svc, err := New("", time.Hour, false, nil, nil)
-		require.NoError(t, err)
-		require.Nil(t, svc)
 	})
 }
 

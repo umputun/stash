@@ -47,6 +47,48 @@ tokens:
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse auth config file")
 	})
+
+	t.Run("validator called and error propagates", func(t *testing.T) {
+		content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		f := createTempFile(t, content)
+		validatorCalled := false
+		validator := func(data []byte) error {
+			validatorCalled = true
+			return assert.AnError // return error to test propagation
+		}
+		_, err := LoadConfig(f, validator)
+		require.Error(t, err)
+		assert.True(t, validatorCalled, "validator should be called")
+		assert.ErrorIs(t, err, assert.AnError, "validator error should propagate")
+	})
+
+	t.Run("validator success", func(t *testing.T) {
+		content := `
+users:
+  - name: admin
+    password: "$2a$10$hash"
+    permissions:
+      - prefix: "*"
+        access: rw
+`
+		f := createTempFile(t, content)
+		validatorCalled := false
+		validator := func(data []byte) error {
+			validatorCalled = true
+			return nil
+		}
+		cfg, err := LoadConfig(f, validator)
+		require.NoError(t, err)
+		assert.True(t, validatorCalled, "validator should be called")
+		assert.Len(t, cfg.Users, 1)
+	})
 }
 
 func TestMatchPrefix(t *testing.T) {
