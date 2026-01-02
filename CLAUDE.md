@@ -81,11 +81,11 @@ make run      # run with logging enabled
 **Manual API testing**: Use `requests.http` with JetBrains IDE or CLI:
 ```bash
 # JetBrains HTTP Client CLI (ijhttp)
-ijhttp requests.http -e local -E http-client.env.json
+ijhttp requests.http -e local -v http-client.env.json
 
 # or with Docker
 docker run --rm -v $(pwd):/workdir jetbrains/intellij-http-client \
-  -e local -E http-client.env.json requests.http
+  -e local -v http-client.env.json requests.http
 ```
 
 **Background server for Playwright/browser testing**:
