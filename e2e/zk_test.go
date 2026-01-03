@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/lib/stash"
 )
 
 const apiToken = "e2e-admin-token-12345"
@@ -20,7 +20,7 @@ const apiToken = "e2e-admin-token-12345"
 // createValidZKValue creates a valid ZK-encrypted value using ZKCrypto
 func createValidZKValue(t *testing.T, plaintext string) string {
 	t.Helper()
-	zk, err := store.NewZKCrypto([]byte("e2e-test-passphrase"))
+	zk, err := stash.NewZKCrypto([]byte("e2e-test-passphrase"))
 	require.NoError(t, err)
 	encrypted, err := zk.Encrypt([]byte(plaintext))
 	require.NoError(t, err)

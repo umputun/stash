@@ -6,8 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/umputun/stash/app/store"
 )
 
 func TestIsZKEncrypted(t *testing.T) {
@@ -28,14 +26,45 @@ func TestIsZKEncrypted(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := isZKEncrypted(tc.value)
+			result := IsZKEncrypted(tc.value)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestIsValidZKPayload(t *testing.T) {
+	// create a real ZK encrypted value for valid case
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
+	require.NoError(t, err)
+	validEncrypted, err := zk.Encrypt([]byte("test data"))
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		value    []byte
+		expected bool
+	}{
+		{"empty value", []byte{}, false},
+		{"nil value", nil, false},
+		{"plain text", []byte("hello world"), false},
+		{"zk prefix only", []byte("$ZK$"), false},
+		{"zk prefix with plain text", []byte("$ZK$plaintext"), false},
+		{"zk prefix with short base64", []byte("$ZK$aGVsbG8="), false}, // "hello" = 5 bytes, too short
+		{"zk prefix with invalid base64", []byte("$ZK$not-valid-base64!!!"), false},
+		{"zk prefix with newlines", []byte("$ZK$aGVs\nbG8="), false},
+		{"valid zk encrypted value", validEncrypted, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsValidZKPayload(tc.value)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
 func TestZKCrypto_Encrypt(t *testing.T) {
-	zk, err := newZKCrypto("test-passphrase-min-16")
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -50,31 +79,31 @@ func TestZKCrypto_Encrypt(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			encrypted, err := zk.encrypt(tc.plaintext)
+			encrypted, err := zk.Encrypt(tc.plaintext)
 			require.NoError(t, err)
-			assert.True(t, isZKEncrypted(encrypted), "encrypted value should have $ZK$ prefix")
+			assert.True(t, IsZKEncrypted(encrypted), "encrypted value should have $ZK$ prefix")
 			assert.Greater(t, len(encrypted), len(tc.plaintext), "encrypted should be larger than plaintext")
 		})
 	}
 }
 
 func TestZKCrypto_Decrypt(t *testing.T) {
-	zk, err := newZKCrypto("test-passphrase-min-16")
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 
 	// first encrypt a value
 	plaintext := []byte("secret message")
-	encrypted, err := zk.encrypt(plaintext)
+	encrypted, err := zk.Encrypt(plaintext)
 	require.NoError(t, err)
 
 	// then decrypt it
-	decrypted, err := zk.decrypt(encrypted)
+	decrypted, err := zk.Decrypt(encrypted)
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, decrypted)
 }
 
 func TestZKCrypto_RoundTrip(t *testing.T) {
-	zk, err := newZKCrypto("test-passphrase-min-16")
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -90,10 +119,10 @@ func TestZKCrypto_RoundTrip(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			encrypted, err := zk.encrypt(tc.plaintext)
+			encrypted, err := zk.Encrypt(tc.plaintext)
 			require.NoError(t, err)
 
-			decrypted, err := zk.decrypt(encrypted)
+			decrypted, err := zk.Decrypt(encrypted)
 			require.NoError(t, err)
 			assert.Equal(t, tc.plaintext, decrypted)
 		})
@@ -101,24 +130,24 @@ func TestZKCrypto_RoundTrip(t *testing.T) {
 }
 
 func TestZKCrypto_WrongKey(t *testing.T) {
-	zk1, err := newZKCrypto("first-passphrase-16")
+	zk1, err := NewZKCrypto([]byte("first-passphrase-16"))
 	require.NoError(t, err)
 
-	zk2, err := newZKCrypto("second-passphrase-16")
+	zk2, err := NewZKCrypto([]byte("second-passphrase-16"))
 	require.NoError(t, err)
 
 	// encrypt with first key
 	plaintext := []byte("secret data")
-	encrypted, err := zk1.encrypt(plaintext)
+	encrypted, err := zk1.Encrypt(plaintext)
 	require.NoError(t, err)
 
 	// try to decrypt with second key
-	_, err = zk2.decrypt(encrypted)
+	_, err = zk2.Decrypt(encrypted)
 	assert.ErrorIs(t, err, ErrZKDecryptionFailed)
 }
 
 func TestZKCrypto_InvalidData(t *testing.T) {
-	zk, err := newZKCrypto("test-passphrase-min-16")
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -133,33 +162,33 @@ func TestZKCrypto_InvalidData(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := zk.decrypt(tc.value)
+			_, err := zk.Decrypt(tc.value)
 			assert.Error(t, err)
 		})
 	}
 }
 
 func TestZKCrypto_UniqueEncryptions(t *testing.T) {
-	zk, err := newZKCrypto("test-passphrase-min-16")
+	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 
 	plaintext := []byte("same message")
 
 	// encrypt same message twice
-	enc1, err := zk.encrypt(plaintext)
+	enc1, err := zk.Encrypt(plaintext)
 	require.NoError(t, err)
 
-	enc2, err := zk.encrypt(plaintext)
+	enc2, err := zk.Encrypt(plaintext)
 	require.NoError(t, err)
 
 	// should produce different ciphertexts (due to random salt/nonce)
 	assert.NotEqual(t, enc1, enc2, "same plaintext should produce different ciphertexts")
 
 	// but both should decrypt to the same value
-	dec1, err := zk.decrypt(enc1)
+	dec1, err := zk.Decrypt(enc1)
 	require.NoError(t, err)
 
-	dec2, err := zk.decrypt(enc2)
+	dec2, err := zk.Decrypt(enc2)
 	require.NoError(t, err)
 
 	assert.Equal(t, dec1, dec2)
@@ -169,18 +198,19 @@ func TestZKCrypto_UniqueEncryptions(t *testing.T) {
 func TestNewZKCrypto_Validation(t *testing.T) {
 	tests := []struct {
 		name       string
-		passphrase string
+		passphrase []byte
 		wantError  bool
 	}{
-		{"valid 16 chars", "1234567890123456", false},
-		{"valid 32 chars", "12345678901234567890123456789012", false},
-		{"too short", "short", true},
-		{"empty", "", true},
+		{"valid 16 chars", []byte("1234567890123456"), false},
+		{"valid 32 chars", []byte("12345678901234567890123456789012"), false},
+		{"too short", []byte("short"), true},
+		{"empty", []byte{}, true},
+		{"nil", nil, true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := newZKCrypto(tc.passphrase)
+			_, err := NewZKCrypto(tc.passphrase)
 			if tc.wantError {
 				assert.Error(t, err)
 			} else {
@@ -188,46 +218,6 @@ func TestNewZKCrypto_Validation(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestZKCrypto_CrossCompatibility(t *testing.T) {
-	// verify lib/stash.zkCrypto can decrypt what app/store.ZKCrypto encrypts (and vice versa)
-	// this ensures both implementations use identical crypto parameters
-
-	passphrase := "test-passphrase-min-16"
-	plaintext := "secret value to encrypt"
-
-	t.Run("lib can decrypt store encrypted value", func(t *testing.T) {
-		// encrypt with store.ZKCrypto
-		storeZK, err := store.NewZKCrypto([]byte(passphrase))
-		require.NoError(t, err)
-		encrypted, err := storeZK.Encrypt([]byte(plaintext))
-		require.NoError(t, err)
-
-		// decrypt with lib.zkCrypto
-		libZK, err := newZKCrypto(passphrase)
-		require.NoError(t, err)
-		decrypted, err := libZK.decrypt(encrypted)
-		require.NoError(t, err)
-
-		assert.Equal(t, plaintext, string(decrypted))
-	})
-
-	t.Run("store can decrypt lib encrypted value", func(t *testing.T) {
-		// encrypt with lib.zkCrypto
-		libZK, err := newZKCrypto(passphrase)
-		require.NoError(t, err)
-		encrypted, err := libZK.encrypt([]byte(plaintext))
-		require.NoError(t, err)
-
-		// decrypt with store.ZKCrypto
-		storeZK, err := store.NewZKCrypto([]byte(passphrase))
-		require.NoError(t, err)
-		decrypted, err := storeZK.Decrypt(encrypted)
-		require.NoError(t, err)
-
-		assert.Equal(t, plaintext, string(decrypted))
-	})
 }
 
 func TestZKCrypto_GeneratePythonFixture(t *testing.T) {
@@ -241,10 +231,10 @@ func TestZKCrypto_GeneratePythonFixture(t *testing.T) {
 		fixturePath = "../stash-python/tests/fixtures/"
 	)
 
-	zk, err := newZKCrypto(passphrase)
+	zk, err := NewZKCrypto([]byte(passphrase))
 	require.NoError(t, err)
 
-	encrypted, err := zk.encrypt([]byte(plaintext))
+	encrypted, err := zk.Encrypt([]byte(plaintext))
 	require.NoError(t, err)
 
 	// write encrypted data
@@ -277,10 +267,10 @@ func TestZKCrypto_DecryptPythonFixture(t *testing.T) {
 	expectedPlaintext, err := os.ReadFile(fixturePath + "python_plaintext.txt")
 	require.NoError(t, err)
 
-	zk, err := newZKCrypto(passphrase)
+	zk, err := NewZKCrypto([]byte(passphrase))
 	require.NoError(t, err)
 
-	decrypted, err := zk.decrypt(encrypted)
+	decrypted, err := zk.Decrypt(encrypted)
 	require.NoError(t, err)
 
 	assert.Equal(t, string(expectedPlaintext), string(decrypted))

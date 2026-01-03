@@ -17,6 +17,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/lib/stash"
 )
 
 // Encryptor defines the interface for encrypting and decrypting secret values.
@@ -324,7 +325,7 @@ func (s *Store) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 
 	// decrypt if this is a secret (skip if ZK-encrypted - client handles decryption)
-	if IsSecret(key) && !IsZKEncrypted(value) {
+	if IsSecret(key) && !stash.IsZKEncrypted(value) {
 		decrypted, err := s.encryptor.Decrypt(value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt key %q: %w", key, err)
@@ -362,7 +363,7 @@ func (s *Store) GetWithFormat(ctx context.Context, key string) ([]byte, string, 
 	}
 
 	// decrypt if this is a secret (skip if ZK-encrypted - client handles decryption)
-	if IsSecret(key) && !IsZKEncrypted(result.Value) {
+	if IsSecret(key) && !stash.IsZKEncrypted(result.Value) {
 		decrypted, err := s.encryptor.Decrypt(result.Value)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to decrypt key %q: %w", key, err)
@@ -402,7 +403,7 @@ func (s *Store) GetInfo(ctx context.Context, key string) (KeyInfo, error) {
 	// set secret flag based on key path
 	result.Secret = IsSecret(key)
 	// set ZK encrypted flag based on value prefix
-	result.ZKEncrypted = IsZKEncrypted(result.ValuePrefix)
+	result.ZKEncrypted = stash.IsZKEncrypted(result.ValuePrefix)
 
 	return result.KeyInfo, nil
 }
@@ -426,13 +427,13 @@ func (s *Store) Set(ctx context.Context, key string, value []byte, format string
 	}
 
 	// reject invalid ZK payloads in secrets paths
-	if IsSecret(key) && IsZKEncrypted(value) && !IsValidZKPayload(value) {
+	if IsSecret(key) && stash.IsZKEncrypted(value) && !stash.IsValidZKPayload(value) {
 		return false, ErrInvalidZKPayload
 	}
 
 	// encrypt secrets (skip if already ZK-encrypted)
 	storeValue := value
-	if IsSecret(key) && !IsZKEncrypted(value) {
+	if IsSecret(key) && !stash.IsZKEncrypted(value) {
 		var encrypted []byte
 		encrypted, err = s.encryptor.Encrypt(value)
 		if err != nil {
@@ -510,13 +511,13 @@ func (s *Store) SetWithVersion(ctx context.Context, key string, value []byte, fo
 	}
 
 	// reject invalid ZK payloads in secrets paths
-	if IsSecret(key) && IsZKEncrypted(value) && !IsValidZKPayload(value) {
+	if IsSecret(key) && stash.IsZKEncrypted(value) && !stash.IsValidZKPayload(value) {
 		return ErrInvalidZKPayload
 	}
 
 	// encrypt secrets (skip if already ZK-encrypted)
 	storeValue := value
-	if IsSecret(key) && !IsZKEncrypted(value) {
+	if IsSecret(key) && !stash.IsZKEncrypted(value) {
 		encrypted, err := s.encryptor.Encrypt(value)
 		if err != nil {
 			return fmt.Errorf("failed to encrypt key %q: %w", key, err)
@@ -565,7 +566,7 @@ func (s *Store) buildConflictError(ctx context.Context, key string, attemptedVer
 
 	// decrypt value if this is a secret key (skip if ZK-encrypted)
 	currentValue := result.Value
-	if IsSecret(key) && s.encryptor != nil && !IsZKEncrypted(result.Value) {
+	if IsSecret(key) && s.encryptor != nil && !stash.IsZKEncrypted(result.Value) {
 		if decrypted, decErr := s.encryptor.Decrypt(result.Value); decErr == nil {
 			currentValue = decrypted
 		} else {
@@ -629,7 +630,7 @@ func (s *Store) List(ctx context.Context, filter enum.SecretsFilter) ([]KeyInfo,
 	result := make([]KeyInfo, 0, len(keys))
 	for i := range keys {
 		keys[i].Secret = IsSecret(keys[i].Key)
-		keys[i].ZKEncrypted = IsZKEncrypted(keys[i].ValuePrefix)
+		keys[i].ZKEncrypted = stash.IsZKEncrypted(keys[i].ValuePrefix)
 
 		switch filter {
 		case enum.SecretsFilterSecretsOnly:

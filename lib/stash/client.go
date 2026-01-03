@@ -26,7 +26,7 @@ const (
 type Client struct {
 	baseURL   string
 	requester *requester.Requester
-	zkCrypto  *zkCrypto // for client-side ZK encryption (nil = disabled)
+	zkCrypto  *ZKCrypto // for client-side ZK encryption (nil = disabled)
 }
 
 // clientConfig holds configuration options during client construction.
@@ -130,10 +130,10 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	}
 
 	// initialize ZK encryption if passphrase provided
-	var zk *zkCrypto
+	var zk *ZKCrypto
 	if cfg.zkPassphrase != "" {
 		var err error
-		zk, err = newZKCrypto(cfg.zkPassphrase)
+		zk, err = NewZKCrypto([]byte(cfg.zkPassphrase))
 		if err != nil {
 			return nil, fmt.Errorf("invalid ZK passphrase: %w", err)
 		}
@@ -196,8 +196,8 @@ func (c *Client) GetBytes(ctx context.Context, key string) ([]byte, error) {
 	}
 
 	// decrypt if ZK-encrypted and we have the key
-	if c.zkCrypto != nil && isZKEncrypted(body) {
-		decrypted, err := c.zkCrypto.decrypt(body)
+	if c.zkCrypto != nil && IsZKEncrypted(body) {
+		decrypted, err := c.zkCrypto.Decrypt(body)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt ZK value: %w", err)
 		}
@@ -249,7 +249,7 @@ func (c *Client) SetWithFormat(ctx context.Context, key, value string, format Fo
 	// encrypt if ZK key is configured
 	body := value
 	if c.zkCrypto != nil {
-		encrypted, encErr := c.zkCrypto.encrypt([]byte(value))
+		encrypted, encErr := c.zkCrypto.Encrypt([]byte(value))
 		if encErr != nil {
 			return fmt.Errorf("failed to encrypt value: %w", encErr)
 		}
@@ -350,7 +350,7 @@ func (c *Client) Ping(ctx context.Context) error {
 // Call this when the client is no longer needed.
 func (c *Client) Close() {
 	if c.zkCrypto != nil {
-		c.zkCrypto.clear()
+		c.zkCrypto.Clear()
 	}
 }
 

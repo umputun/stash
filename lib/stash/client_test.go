@@ -562,9 +562,9 @@ func TestClient_ZKEncryption(t *testing.T) {
 
 	t.Run("Get decrypts $ZK$ value", func(t *testing.T) {
 		// first encrypt a value
-		zk, err := newZKCrypto(passphrase)
+		zk, err := NewZKCrypto([]byte(passphrase))
 		require.NoError(t, err)
-		encrypted, err := zk.encrypt([]byte("secret message"))
+		encrypted, err := zk.Encrypt([]byte("secret message"))
 		require.NoError(t, err)
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,9 +583,9 @@ func TestClient_ZKEncryption(t *testing.T) {
 
 	t.Run("Get returns raw value when no ZK key configured", func(t *testing.T) {
 		// create encrypted value
-		zk, err := newZKCrypto(passphrase)
+		zk, err := NewZKCrypto([]byte(passphrase))
 		require.NoError(t, err)
-		encrypted, err := zk.encrypt([]byte("secret message"))
+		encrypted, err := zk.Encrypt([]byte("secret message"))
 		require.NoError(t, err)
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -606,9 +606,9 @@ func TestClient_ZKEncryption(t *testing.T) {
 
 	t.Run("Get fails with wrong passphrase", func(t *testing.T) {
 		// encrypt with one passphrase
-		zk, err := newZKCrypto(passphrase)
+		zk, err := NewZKCrypto([]byte(passphrase))
 		require.NoError(t, err)
-		encrypted, err := zk.encrypt([]byte("secret message"))
+		encrypted, err := zk.Encrypt([]byte("secret message"))
 		require.NoError(t, err)
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

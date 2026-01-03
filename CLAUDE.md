@@ -29,7 +29,6 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `db.go` - Unified Store with SQLite and PostgreSQL support
   - `cached.go` - Loading cache wrapper using lcw
   - `crypto.go` - Secrets encryption (NaCl secretbox + Argon2id)
-  - `zkcrypto.go` - Zero-knowledge encryption detection (AES-256-GCM + Argon2id)
 - **app/git/** - Git versioning for key-value storage
   - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
   - `git_test.go` - Unit tests
@@ -209,9 +208,9 @@ POST   /logout                   # clear session, redirect to login
 - Secrets API: returns 400 if secret path but --secrets.key not configured
 - Secrets size: GetInfo returns encrypted storage size (larger than plaintext due to salt, nonce, auth tag)
 - ZK encryption: client-side encryption, server stores opaque `$ZK$<base64>` blobs unchanged
-- ZK detection: `IsZKEncrypted()` in zkcrypto.go, `ZKEncrypted` field in KeyInfo (db.go uses SUBSTR)
+- ZK detection: `stash.IsZKEncrypted()` from lib/stash, `ZKEncrypted` field in KeyInfo (db.go uses SUBSTR)
 - ZK web UI: green shield icon, "Zero-Knowledge Encrypted" badge, edit disabled (server can't decrypt)
-- ZK client library: `lib/stash/zk.go` with `WithZKKey(passphrase)` option, auto encrypt/decrypt
+- ZK crypto: unified in `lib/stash/zk.go`, used by both server (detection) and client (encrypt/decrypt)
 - Changelog: CHANGELOG.md (uppercase) in project root, update only on releases (no [Unreleased] placeholder)
 - Keep it simple - no over-engineering
 

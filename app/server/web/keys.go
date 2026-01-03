@@ -149,7 +149,7 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		HighlightedVal: highlightedVal,
 		Format:         format,
 		IsBinary:       isBinary,
-		ZKEncrypted:    store.IsZKEncrypted(value),
+		ZKEncrypted:    stash.IsZKEncrypted(value),
 		Theme:          h.getTheme(r),
 		BaseURL:        h.baseURL,
 		ModalWidth:     modalWidth,
@@ -191,7 +191,7 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// block editing of ZK-encrypted keys (must use client library with passphrase)
-	if store.IsZKEncrypted(value) {
+	if stash.IsZKEncrypted(value) {
 		h.renderError(w, "Cannot edit: this key is encrypted with zero-knowledge encryption. Use the client library with your passphrase to modify it.")
 		return
 	}

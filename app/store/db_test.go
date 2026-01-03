@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/lib/stash"
 )
 
 // pgConnString is set by TestMain; read-only after initialization.
@@ -298,7 +299,7 @@ func TestStore_GetInfo(t *testing.T) {
 
 func TestStore_ZKEncrypted(t *testing.T) {
 	// create valid ZK payload
-	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
+	zk, err := stash.NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 	zkValue, err := zk.Encrypt([]byte("encrypted-data"))
 	require.NoError(t, err)
@@ -938,7 +939,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 	// ZK encryption takes precedence over server-side encryption.
 
 	// create valid ZK payloads using ZKCrypto
-	zk, err := NewZKCrypto([]byte("test-passphrase-min-16"))
+	zk, err := stash.NewZKCrypto([]byte("test-passphrase-min-16"))
 	require.NoError(t, err)
 
 	for _, engine := range testEngines {
@@ -987,7 +988,7 @@ func TestStore_Secrets_ZKPrecedence(t *testing.T) {
 				var rawValue []byte
 				err = store.db.Get(&rawValue, store.adoptQuery("SELECT value FROM kv WHERE key = ?"), key)
 				require.NoError(t, err)
-				assert.True(t, IsZKEncrypted(rawValue), "raw stored value should have $ZK$ prefix")
+				assert.True(t, stash.IsZKEncrypted(rawValue), "raw stored value should have $ZK$ prefix")
 				assert.Equal(t, zkValue, rawValue, "raw value should match original ZK value")
 			})
 
