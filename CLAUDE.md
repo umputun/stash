@@ -20,6 +20,10 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
     - `config.go` - Config types (User, TokenACL, PermissionConfig), YAML loading
     - `middleware.go` - SessionMiddleware, TokenMiddleware, token extraction
     - `mocks/` - Generated mocks
+  - `sse/` - Server-Sent Events for real-time key subscriptions
+    - `sse.go` - Service struct, OnSession callback, Publish method, ServeHTTP handler
+    - `sse_test.go` - Unit tests
+    - `mocks/` - Generated mocks
   - `verify.go` - JSON schema validation for auth config (embedded schema)
   - `static/` - Embedded CSS, JS, HTMX library
   - `templates/` - Embedded HTML templates (base, index, login, audit, partials)

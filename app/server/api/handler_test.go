@@ -676,6 +676,68 @@ func TestHandler_HandleDelete_WithGit(t *testing.T) {
 	require.Len(t, gitMock.DeleteCalls(), 1, "git delete should be called")
 }
 
+func TestHandler_HandleSet_PublishesEvent(t *testing.T) {
+	t.Run("create event", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
+		}
+		eventsMock := &mocks.EventPublisherMock{
+			PublishFunc: func(key string, action enum.AuditAction) {},
+		}
+		h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Events: eventsMock})
+
+		req := httptest.NewRequest(http.MethodPut, "/kv/test/key", strings.NewReader("value"))
+		req.SetPathValue("key", "test/key")
+		rec := httptest.NewRecorder()
+		h.handleSet(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+		require.Len(t, eventsMock.PublishCalls(), 1)
+		assert.Equal(t, "test/key", eventsMock.PublishCalls()[0].Key)
+		assert.Equal(t, enum.AuditActionCreate, eventsMock.PublishCalls()[0].Action)
+	})
+
+	t.Run("update event", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return false, nil },
+		}
+		eventsMock := &mocks.EventPublisherMock{
+			PublishFunc: func(key string, action enum.AuditAction) {},
+		}
+		h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Events: eventsMock})
+
+		req := httptest.NewRequest(http.MethodPut, "/kv/test/key", strings.NewReader("updated"))
+		req.SetPathValue("key", "test/key")
+		rec := httptest.NewRecorder()
+		h.handleSet(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		require.Len(t, eventsMock.PublishCalls(), 1)
+		assert.Equal(t, "test/key", eventsMock.PublishCalls()[0].Key)
+		assert.Equal(t, enum.AuditActionUpdate, eventsMock.PublishCalls()[0].Action)
+	})
+}
+
+func TestHandler_HandleDelete_PublishesEvent(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		DeleteFunc: func(context.Context, string) error { return nil },
+	}
+	eventsMock := &mocks.EventPublisherMock{
+		PublishFunc: func(key string, action enum.AuditAction) {},
+	}
+	h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Events: eventsMock})
+
+	req := httptest.NewRequest(http.MethodDelete, "/kv/test/key", http.NoBody)
+	req.SetPathValue("key", "test/key")
+	rec := httptest.NewRecorder()
+	h.handleDelete(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	require.Len(t, eventsMock.PublishCalls(), 1)
+	assert.Equal(t, "test/key", eventsMock.PublishCalls()[0].Key)
+	assert.Equal(t, enum.AuditActionDelete, eventsMock.PublishCalls()[0].Action)
+}
+
 // defaultFormatValidator returns a format validator mock that accepts standard formats.
 func defaultFormatValidator() FormatValidator {
 	return &mocks.FormatValidatorMock{

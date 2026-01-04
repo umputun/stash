@@ -53,7 +53,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
 		// if we can't disable timeout, set a very long one (24 hours)
-		_ = rc.SetWriteDeadline(time.Now().Add(24 * time.Hour))
+		if err2 := rc.SetWriteDeadline(time.Now().Add(24 * time.Hour)); err2 != nil {
+			log.Printf("[DEBUG] sse: could not set write deadline: %v, %v", err, err2)
+		}
 	}
 
 	s.server.ServeHTTP(w, r)

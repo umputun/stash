@@ -157,3 +157,54 @@ func TestService_Shutdown(t *testing.T) {
 	err := svc.Shutdown(ctx)
 	require.NoError(t, err)
 }
+
+func TestService_Shutdown_WithActiveConnection(t *testing.T) {
+	svc := New(nil)
+
+	// start a test server with the SSE handler
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.SetPathValue("key", "test/key")
+		svc.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	// create a client connection
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, http.NoBody)
+	require.NoError(t, err)
+
+	// start connection in background (will block until context canceled or server shutdown)
+	connErr := make(chan error, 1)
+	go func() {
+		resp, doErr := http.DefaultClient.Do(req)
+		if doErr != nil {
+			connErr <- doErr
+			return
+		}
+		_ = resp.Body.Close()
+		connErr <- nil
+	}()
+
+	// give the connection time to establish
+	time.Sleep(50 * time.Millisecond)
+
+	// shutdown should complete even with active connection
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+
+	err = svc.Shutdown(shutdownCtx)
+	require.NoError(t, err)
+
+	// cancel client context to trigger connection termination
+	cancel()
+
+	// wait for connection goroutine to complete and verify it was terminated
+	select {
+	case connResult := <-connErr:
+		require.Error(t, connResult, "connection should be terminated after shutdown")
+	case <-time.After(time.Second):
+		t.Fatal("connection goroutine did not complete after shutdown")
+	}
+}

@@ -255,6 +255,8 @@ for {
 
 Event actions: `create`, `update`, `delete`
 
+Subscriptions retry indefinitely with exponential backoff (1s initial, up to 30s max). Use context cancellation or `Close()` to terminate.
+
 ### Types
 
 ```go
