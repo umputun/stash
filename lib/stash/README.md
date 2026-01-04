@@ -208,6 +208,53 @@ func (c *Client) Ping(ctx context.Context) error
 
 Checks server connectivity.
 
+#### Subscribe
+
+```go
+func (c *Client) Subscribe(ctx context.Context, key string) (*Subscription, error)
+```
+
+Subscribes to changes for an exact key. Returns a `Subscription` that delivers events in real-time.
+
+#### SubscribePrefix
+
+```go
+func (c *Client) SubscribePrefix(ctx context.Context, prefix string) (*Subscription, error)
+```
+
+Subscribes to changes for all keys matching the prefix (e.g., `"app"` matches `"app/config"`, `"app/db"`).
+
+#### SubscribeAll
+
+```go
+func (c *Client) SubscribeAll(ctx context.Context) (*Subscription, error)
+```
+
+Subscribes to changes for all keys.
+
+**Subscription example:**
+
+```go
+sub, err := client.Subscribe(ctx, "app/config")
+if err != nil {
+    log.Fatal(err)
+}
+defer sub.Close()
+
+for {
+    select {
+    case ev := <-sub.Events():
+        log.Printf("Key %s changed: %s at %s", ev.Key, ev.Action, ev.Timestamp)
+    case err := <-sub.Errors():
+        log.Printf("Subscription error: %v", err)
+    case <-ctx.Done():
+        return
+    }
+}
+```
+
+Event actions: `create`, `update`, `delete`
+
 ### Types
 
 ```go
@@ -219,6 +266,18 @@ type KeyInfo struct {
     ZKEncrypted bool      // true if value is ZK-encrypted
     CreatedAt   time.Time
     UpdatedAt   time.Time
+}
+
+type Subscription struct {}
+
+func (s *Subscription) Events() <-chan Event  // channel for receiving events
+func (s *Subscription) Errors() <-chan error  // channel for connection errors
+func (s *Subscription) Close()                // terminate subscription
+
+type Event struct {
+    Key       string // the key that changed
+    Action    string // create, update, or delete
+    Timestamp string // RFC3339 timestamp
 }
 ```
 

@@ -71,7 +71,7 @@ func (c *Client) SubscribeAll(ctx context.Context) (*Subscription, error) {
 func (c *Client) subscribe(ctx context.Context, path string) (*Subscription, error) {
 	u, err := url.JoinPath(c.baseURL, "kv", "subscribe", path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build URL: %w", err)
+		return nil, fmt.Errorf("build URL: %w", err)
 	}
 
 	// create cancellable context so Close() can terminate the connection
@@ -80,12 +80,12 @@ func (c *Client) subscribe(ctx context.Context, path string) (*Subscription, err
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	sub := &Subscription{
-		events: make(chan Event, 16),
-		errors: make(chan error, 1),
+		events: make(chan Event, 16), // buffered to prevent blocking on slow consumers
+		errors: make(chan error, 1),  // single buffer for connection errors
 		cancel: cancel,
 	}
 
@@ -104,7 +104,7 @@ func (c *Client) subscribe(ctx context.Context, path string) (*Subscription, err
 		var ev Event
 		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
 			select {
-			case sub.errors <- fmt.Errorf("failed to parse event: %w", err):
+			case sub.errors <- fmt.Errorf("parse event: %w", err):
 			default:
 			}
 			return

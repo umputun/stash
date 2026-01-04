@@ -22,7 +22,7 @@ func TestKeyToTopics(t *testing.T) {
 		{key: "app/config", topics: []string{"app/config", "app/", ""}},
 		{key: "app/config/db", topics: []string{"app/config/db", "app/config/", "app/", ""}},
 		{key: "/app/config/", topics: []string{"app/config", "app/", ""}}, // normalized
-		{key: "", topics: []string{"", ""}},
+		{key: "", topics: []string{""}},                                   // empty key returns single topic
 	}
 
 	for _, tt := range tests {
@@ -110,7 +110,7 @@ func TestService_OnSession_ValidParams(t *testing.T) {
 }
 
 func TestService_OnSession_AuthDenied(t *testing.T) {
-	auth := &mocks.AuthMock{
+	auth := &mocks.AuthProviderMock{
 		EnabledFunc: func() bool { return true },
 		FilterKeysForRequestFunc: func(r *http.Request, keys []string) []string {
 			return nil // deny all
@@ -130,7 +130,7 @@ func TestService_OnSession_AuthDenied(t *testing.T) {
 }
 
 func TestService_OnSession_AuthAllowed(t *testing.T) {
-	auth := &mocks.AuthMock{
+	auth := &mocks.AuthProviderMock{
 		EnabledFunc: func() bool { return true },
 		FilterKeysForRequestFunc: func(r *http.Request, keys []string) []string {
 			return keys // allow all

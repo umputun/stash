@@ -15,10 +15,10 @@ import (
 	"github.com/umputun/stash/app/enum"
 )
 
-//go:generate moq -out mocks/auth.go -pkg mocks -skip-ensure -fmt goimports . Auth
+//go:generate moq -out mocks/auth.go -pkg mocks -skip-ensure -fmt goimports . AuthProvider
 
-// Auth defines the interface for auth operations needed by SSE.
-type Auth interface {
+// AuthProvider defines the interface for auth operations needed by SSE.
+type AuthProvider interface {
 	Enabled() bool
 	FilterKeysForRequest(r *http.Request, keys []string) []string
 }
@@ -33,11 +33,11 @@ type Event struct {
 // Service handles SSE subscriptions for key change events.
 type Service struct {
 	server *sse.Server
-	auth   Auth
+	auth   AuthProvider
 }
 
 // New creates a new SSE service.
-func New(auth Auth) *Service {
+func New(auth AuthProvider) *Service {
 	s := &Service{auth: auth}
 	s.server = &sse.Server{
 		OnSession: s.onSession,
@@ -147,7 +147,11 @@ func keyToTopics(key string) []string {
 	key = normalizeKey(key)
 	topics := []string{key} // exact key topic
 
-	// add prefix topics
+	// add prefix topics (skip if key is empty to avoid duplicate)
+	if key == "" {
+		return topics
+	}
+
 	parts := strings.Split(key, "/")
 	for i := len(parts) - 1; i >= 0; i-- {
 		prefix := strings.Join(parts[:i], "/")

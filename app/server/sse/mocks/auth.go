@@ -8,12 +8,12 @@ import (
 	"sync"
 )
 
-// AuthMock is a mock implementation of sse.Auth.
+// AuthProviderMock is a mock implementation of sse.AuthProvider.
 //
-//	func TestSomethingThatUsesAuth(t *testing.T) {
+//	func TestSomethingThatUsesAuthProvider(t *testing.T) {
 //
-//		// make and configure a mocked sse.Auth
-//		mockedAuth := &AuthMock{
+//		// make and configure a mocked sse.AuthProvider
+//		mockedAuthProvider := &AuthProviderMock{
 //			EnabledFunc: func() bool {
 //				panic("mock out the Enabled method")
 //			},
@@ -22,11 +22,11 @@ import (
 //			},
 //		}
 //
-//		// use mockedAuth in code that requires sse.Auth
+//		// use mockedAuthProvider in code that requires sse.AuthProvider
 //		// and then make assertions.
 //
 //	}
-type AuthMock struct {
+type AuthProviderMock struct {
 	// EnabledFunc mocks the Enabled method.
 	EnabledFunc func() bool
 
@@ -51,9 +51,9 @@ type AuthMock struct {
 }
 
 // Enabled calls EnabledFunc.
-func (mock *AuthMock) Enabled() bool {
+func (mock *AuthProviderMock) Enabled() bool {
 	if mock.EnabledFunc == nil {
-		panic("AuthMock.EnabledFunc: method is nil but Auth.Enabled was just called")
+		panic("AuthProviderMock.EnabledFunc: method is nil but AuthProvider.Enabled was just called")
 	}
 	callInfo := struct {
 	}{}
@@ -66,8 +66,8 @@ func (mock *AuthMock) Enabled() bool {
 // EnabledCalls gets all the calls that were made to Enabled.
 // Check the length with:
 //
-//	len(mockedAuth.EnabledCalls())
-func (mock *AuthMock) EnabledCalls() []struct {
+//	len(mockedAuthProvider.EnabledCalls())
+func (mock *AuthProviderMock) EnabledCalls() []struct {
 } {
 	var calls []struct {
 	}
@@ -78,9 +78,9 @@ func (mock *AuthMock) EnabledCalls() []struct {
 }
 
 // FilterKeysForRequest calls FilterKeysForRequestFunc.
-func (mock *AuthMock) FilterKeysForRequest(r *http.Request, keys []string) []string {
+func (mock *AuthProviderMock) FilterKeysForRequest(r *http.Request, keys []string) []string {
 	if mock.FilterKeysForRequestFunc == nil {
-		panic("AuthMock.FilterKeysForRequestFunc: method is nil but Auth.FilterKeysForRequest was just called")
+		panic("AuthProviderMock.FilterKeysForRequestFunc: method is nil but AuthProvider.FilterKeysForRequest was just called")
 	}
 	callInfo := struct {
 		R    *http.Request
@@ -98,8 +98,8 @@ func (mock *AuthMock) FilterKeysForRequest(r *http.Request, keys []string) []str
 // FilterKeysForRequestCalls gets all the calls that were made to FilterKeysForRequest.
 // Check the length with:
 //
-//	len(mockedAuth.FilterKeysForRequestCalls())
-func (mock *AuthMock) FilterKeysForRequestCalls() []struct {
+//	len(mockedAuthProvider.FilterKeysForRequestCalls())
+func (mock *AuthProviderMock) FilterKeysForRequestCalls() []struct {
 	R    *http.Request
 	Keys []string
 } {

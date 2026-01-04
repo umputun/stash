@@ -158,17 +158,20 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		log.Printf("[INFO] shutting down server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.ShutdownTimeout)
-		defer cancel()
 
-		// shutdown SSE first to close active connections
+		// shutdown SSE first to close active connections (half the timeout budget)
 		if s.SSE != nil {
-			if err := s.SSE.Shutdown(shutdownCtx); err != nil {
+			sseCtx, sseCancel := context.WithTimeout(context.Background(), s.ShutdownTimeout/2)
+			if err := s.SSE.Shutdown(sseCtx); err != nil {
 				log.Printf("[WARN] SSE shutdown error: %v", err)
 			}
+			sseCancel()
 		}
 
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		// shutdown HTTP server with remaining timeout budget
+		httpCtx, httpCancel := context.WithTimeout(context.Background(), s.ShutdownTimeout/2)
+		defer httpCancel()
+		if err := httpServer.Shutdown(httpCtx); err != nil {
 			log.Printf("[WARN] shutdown error: %v", err)
 		}
 	}()

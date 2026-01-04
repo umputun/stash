@@ -33,6 +33,12 @@ func (a *logger) middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// skip SSE subscription endpoints (long-lived streaming connections)
+		if strings.HasPrefix(path, "/kv/subscribe/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// skip list operation (GET /kv or GET /kv/)
 		if (path == "/kv" || path == "/kv/") && r.Method == http.MethodGet {
 			next.ServeHTTP(w, r)
