@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,4 +162,70 @@ func TestClient_SubscribePrefix_EmptyPrefix(t *testing.T) {
 	_, err = client.SubscribePrefix(context.Background(), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prefix is required")
+}
+
+func TestClient_Subscribe_CloseTerminatesConnection(t *testing.T) {
+	// track if server connection was closed (use sync.Once to guard against retries)
+	connClosed := make(chan struct{})
+	var closeOnce sync.Once
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+
+		// send initial event
+		event := Event{Key: "test/key", Action: "create", Timestamp: "2025-01-03T10:30:00Z"}
+		data, _ := json.Marshal(event)
+		_, _ = w.Write([]byte("event: change\ndata: " + string(data) + "\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		// wait for client to disconnect (context canceled)
+		<-r.Context().Done()
+		closeOnce.Do(func() { close(connClosed) })
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	require.NoError(t, err)
+
+	// use background context (no timeout) to verify Close() terminates
+	sub, err := client.Subscribe(context.Background(), "test/key")
+	require.NoError(t, err)
+
+	// wait for event to confirm connection is established
+	select {
+	case <-sub.Events():
+		// got event, connection established
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for initial event")
+	}
+
+	// call Close() - should terminate connection
+	sub.Close()
+
+	// verify server saw the connection close
+	select {
+	case <-connClosed:
+		// connection was properly terminated
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close() did not terminate the connection")
+	}
+
+	// verify both channels are closed
+	select {
+	case _, ok := <-sub.Events():
+		assert.False(t, ok, "events channel should be closed")
+	case <-time.After(time.Second):
+		t.Fatal("events channel not closed after Close()")
+	}
+
+	select {
+	case _, ok := <-sub.Errors():
+		assert.False(t, ok, "errors channel should be closed")
+	case <-time.After(time.Second):
+		t.Fatal("errors channel not closed after Close()")
+	}
 }

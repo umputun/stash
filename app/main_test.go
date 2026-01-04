@@ -2284,8 +2284,8 @@ func TestIntegration_SSE(t *testing.T) {
 		require.NoError(t, err)
 		defer sub.Close()
 
-		// give subscription time to establish
-		time.Sleep(100 * time.Millisecond)
+		// give subscription time to establish (200ms is robust for slow CI)
+		time.Sleep(200 * time.Millisecond)
 
 		// create key
 		require.NoError(t, client.Set(subCtx, "sse-test/key1", "value1"))
@@ -2310,7 +2310,7 @@ func TestIntegration_SSE(t *testing.T) {
 		require.NoError(t, err)
 		defer sub.Close()
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 
 		// create key under prefix
 		require.NoError(t, client.Set(subCtx, "sse-prefix/config/db", "postgres"))
@@ -2338,7 +2338,7 @@ func TestIntegration_SSE(t *testing.T) {
 		require.NoError(t, err)
 		defer sub.Close()
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 
 		// update
 		require.NoError(t, client.Set(subCtx, "sse-events/key", "updated"))
@@ -2402,7 +2402,7 @@ func TestIntegration_SSE_MultipleEvents(t *testing.T) {
 	require.NoError(t, err)
 	defer sub.Close()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	keys := []string{"sse-multi/key1", "sse-multi/key2", "sse-multi/key3"}
 	for _, key := range keys {
@@ -2426,7 +2426,7 @@ func TestIntegration_SSE_MultipleEvents(t *testing.T) {
 	// update all keys
 	for _, key := range keys {
 		require.NoError(t, client.Set(subCtx, key, "updated"))
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	// verify all update events received
@@ -2445,7 +2445,7 @@ func TestIntegration_SSE_MultipleEvents(t *testing.T) {
 	// delete all keys
 	for _, key := range keys {
 		require.NoError(t, client.Delete(subCtx, key))
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	// verify all delete events received

@@ -23,7 +23,7 @@ type Event struct {
 type Subscription struct {
 	events chan Event
 	errors chan error
-	done   chan struct{}
+	cancel context.CancelFunc
 }
 
 // Events returns the channel for receiving events.
@@ -36,9 +36,9 @@ func (s *Subscription) Errors() <-chan error {
 	return s.errors
 }
 
-// Close terminates the subscription.
+// Close terminates the subscription and releases resources.
 func (s *Subscription) Close() {
-	close(s.done)
+	s.cancel()
 }
 
 // Subscribe creates a subscription for exact key changes.
@@ -74,15 +74,19 @@ func (c *Client) subscribe(ctx context.Context, path string) (*Subscription, err
 		return nil, fmt.Errorf("failed to build URL: %w", err)
 	}
 
+	// create cancellable context so Close() can terminate the connection
+	ctx, cancel := context.WithCancel(ctx)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	sub := &Subscription{
 		events: make(chan Event, 16),
 		errors: make(chan error, 1),
-		done:   make(chan struct{}),
+		cancel: cancel,
 	}
 
 	// create SSE client with the same HTTP client (to inherit auth headers via requester)
@@ -107,7 +111,7 @@ func (c *Client) subscribe(ctx context.Context, path string) (*Subscription, err
 		}
 		select {
 		case sub.events <- ev:
-		case <-sub.done:
+		case <-ctx.Done():
 		}
 	})
 
@@ -116,10 +120,11 @@ func (c *Client) subscribe(ctx context.Context, path string) (*Subscription, err
 		defer close(sub.events)
 		defer close(sub.errors)
 
-		if err := conn.Connect(); err != nil {
+		if err := conn.Connect(); err != nil && ctx.Err() == nil {
+			// only send error if not canceled (normal Close)
 			select {
 			case sub.errors <- err:
-			case <-sub.done:
+			default:
 			}
 		}
 	}()
