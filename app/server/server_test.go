@@ -334,7 +334,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 	t.Run("without base URL routes work at root", func(t *testing.T) {
 		cfg := Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: ""}
-		srv, err := New(st, validator.NewService(), nil, nil, nil, cfg)
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, cfg)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/testkey", http.NoBody)
@@ -347,7 +347,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 	t.Run("with base URL routes work under prefix", func(t *testing.T) {
 		cfg := Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"}
-		srv, err := New(st, validator.NewService(), nil, nil, nil, cfg)
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, cfg)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash/kv/testkey", http.NoBody)
@@ -360,7 +360,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 	t.Run("base URL redirects to trailing slash", func(t *testing.T) {
 		cfg := Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"}
-		srv, err := New(st, validator.NewService(), nil, nil, nil, cfg)
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, cfg)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash", http.NoBody)
@@ -373,7 +373,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 	t.Run("with base URL root path still accessible via prefix", func(t *testing.T) {
 		cfg := Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/stash"}
-		srv, err := New(st, validator.NewService(), nil, nil, nil, cfg)
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, cfg)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodGet, "/stash/ping", http.NoBody)
@@ -386,7 +386,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 	t.Run("with base URL set correctly passes to KV API", func(t *testing.T) {
 		cfg := Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", BaseURL: "/app/stash"}
-		srv, err := New(st, validator.NewService(), nil, nil, nil, cfg)
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, cfg)
 		require.NoError(t, err)
 
 		body := bytes.NewBufferString("newvalue")
@@ -402,7 +402,7 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 
 func newTestServer(t *testing.T, st KVStore) *Server {
 	t.Helper()
-	srv, err := New(st, validator.NewService(), nil, nil, nil, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
+	srv, err := New(Deps{Store: st, Validator: validator.NewService()}, Config{Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test"})
 	require.NoError(t, err)
 	return srv
 }
@@ -516,7 +516,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService(), Auth: authSvc}, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
@@ -543,7 +543,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService(), Auth: authSvc}, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
@@ -569,7 +569,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService(), Auth: authSvc}, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
@@ -600,7 +600,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService(), Auth: authSvc}, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
@@ -632,7 +632,7 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		st := &mocks.KVStoreMock{
 			ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return testKeys, nil },
 		}
-		srv, err := New(st, validator.NewService(), nil, authSvc, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService(), Auth: authSvc}, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
@@ -656,7 +656,7 @@ func TestServer_LimitHelpers(t *testing.T) {
 	}
 
 	t.Run("defaults when not configured", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), nil, nil, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, Config{
 			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test",
 		})
 		require.NoError(t, err)
@@ -667,7 +667,7 @@ func TestServer_LimitHelpers(t *testing.T) {
 	})
 
 	t.Run("uses configured values", func(t *testing.T) {
-		srv, err := New(st, validator.NewService(), nil, nil, nil, Config{
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, Config{
 			Address:          ":8080",
 			ReadTimeout:      5 * time.Second,
 			Version:          "test",

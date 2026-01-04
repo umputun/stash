@@ -22,7 +22,7 @@ import (
 func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	params := h.getListParams(w, r)
 
-	keys, err := h.store.List(r.Context(), params.secretsFilter)
+	keys, err := h.Store.List(r.Context(), params.secretsFilter)
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -52,7 +52,7 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 			page = parsed
 		}
 	}
-	pr := h.paginate(filteredKeys, page, h.pageSize)
+	pr := h.paginate(filteredKeys, page, h.PageSize)
 
 	data := templateData{
 		Keys:     pr.keys,
@@ -60,8 +60,8 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		Theme:    h.getTheme(r),
 		ViewMode: params.viewMode,
 		SortMode: params.sortMode,
-		BaseURL:  h.baseURL,
-		CanWrite: h.auth.UserCanWrite(username),
+		BaseURL:  h.BaseURL,
+		CanWrite: h.Auth.UserCanWrite(username),
 		Username: username,
 		paginationData: paginationData{
 			Page:       pr.page,
@@ -72,7 +72,7 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 		},
 		secretsData: secretsData{
 			SecretsFilter:  params.secretsFilter,
-			SecretsEnabled: h.store.SecretsEnabled(),
+			SecretsEnabled: h.Store.SecretsEnabled(),
 		},
 	}
 
@@ -85,7 +85,7 @@ func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 	// check if user can write at all
 	username := h.getCurrentUser(r)
-	if !h.auth.UserCanWrite(username) {
+	if !h.Auth.UserCanWrite(username) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -93,9 +93,9 @@ func (h *Handler) handleKeyNew(w http.ResponseWriter, r *http.Request) {
 	data := templateData{
 		IsNew:    true,
 		Format:   stash.FormatText.String(),
-		Formats:  h.validator.SupportedFormats(),
+		Formats:  h.Validator.SupportedFormats(),
 		Theme:    h.getTheme(r),
-		BaseURL:  h.baseURL,
+		BaseURL:  h.BaseURL,
 		CanWrite: true,
 		Username: username,
 	}
@@ -110,12 +110,12 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 
 	// check read permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, false) {
+	if !h.Auth.CheckUserPermission(username, key, false) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	value, format, err := h.store.GetWithFormat(r.Context(), key)
+	value, format, err := h.Store.GetWithFormat(r.Context(), key)
 	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderError(w, "Secrets not configured: keys with 'secrets' in path require --secrets.key")
@@ -151,12 +151,12 @@ func (h *Handler) handleKeyView(w http.ResponseWriter, r *http.Request) {
 		IsBinary:       isBinary,
 		ZKEncrypted:    stash.IsZKEncrypted(value),
 		Theme:          h.getTheme(r),
-		BaseURL:        h.baseURL,
+		BaseURL:        h.BaseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
-		CanWrite:       h.auth.CheckUserPermission(username, key, true),
+		CanWrite:       h.Auth.CheckUserPermission(username, key, true),
 		Username:       username,
-		historyData:    historyData{GitEnabled: h.git != nil},
+		historyData:    historyData{GitEnabled: h.Git != nil},
 	}
 
 	if err := h.tmpl.ExecuteTemplate(w, "view", data); err != nil {
@@ -170,12 +170,12 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 
 	// check write permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, true) {
+	if !h.Auth.CheckUserPermission(username, key, true) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	value, format, err := h.store.GetWithFormat(r.Context(), key)
+	value, format, err := h.Store.GetWithFormat(r.Context(), key)
 	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderError(w, "Secrets not configured: keys with 'secrets' in path require --secrets.key")
@@ -198,7 +198,7 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 
 	// get key info for conflict detection (updated_at timestamp as nanoseconds)
 	var updatedAt int64
-	if info, infoErr := h.store.GetInfo(r.Context(), key); infoErr == nil {
+	if info, infoErr := h.Store.GetInfo(r.Context(), key); infoErr == nil {
 		updatedAt = info.UpdatedAt.UnixNano()
 	}
 
@@ -208,10 +208,10 @@ func (h *Handler) handleKeyEdit(w http.ResponseWriter, r *http.Request) {
 		Key:            key,
 		Value:          displayValue,
 		Format:         format,
-		Formats:        h.validator.SupportedFormats(),
+		Formats:        h.Validator.SupportedFormats(),
 		IsBinary:       isBinary,
 		Theme:          h.getTheme(r),
-		BaseURL:        h.baseURL,
+		BaseURL:        h.BaseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
 		CanWrite:       true,
@@ -235,7 +235,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
-	if !h.validator.IsValidFormat(format) {
+	if !h.Validator.IsValidFormat(format) {
 		format = stash.FormatText.String()
 	}
 
@@ -246,23 +246,23 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 
 	// check write permission for this specific key
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, true) {
+	if !h.Auth.CheckUserPermission(username, key, true) {
 		h.renderFormError(w, templateData{
-			Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+			Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 			IsNew: true, Error: "Access denied: you don't have write permission for this key prefix",
-			BaseURL: h.baseURL, CanWrite: false, Username: username,
+			BaseURL: h.BaseURL, CanWrite: false, Username: username,
 		})
 		return
 	}
 
 	// check if key already exists
-	_, _, getErr := h.store.GetWithFormat(r.Context(), key)
+	_, _, getErr := h.Store.GetWithFormat(r.Context(), key)
 	if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
 		if errors.Is(getErr, store.ErrSecretsNotConfigured) {
 			h.renderFormError(w, templateData{
-				Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+				Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 				IsNew: true, Error: "Secrets not configured: keys with 'secrets' in path require --secrets.key",
-				BaseURL: h.baseURL, CanWrite: true, Username: username,
+				BaseURL: h.BaseURL, CanWrite: true, Username: username,
 			})
 			return
 		}
@@ -272,9 +272,9 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if getErr == nil {
 		h.renderFormError(w, templateData{
-			Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+			Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 			IsNew: true, Error: fmt.Sprintf("key %q already exists", key),
-			BaseURL: h.baseURL, CanWrite: true, Username: username,
+			BaseURL: h.BaseURL, CanWrite: true, Username: username,
 		})
 		return
 	}
@@ -288,22 +288,22 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	// validate value unless force flag is set or value is binary
 	force := r.FormValue("force") == "true"
 	if !force && !isBinary {
-		if err := h.validator.Validate(format, value); err != nil {
+		if err := h.Validator.Validate(format, value); err != nil {
 			h.renderFormError(w, templateData{
-				Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+				Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 				IsNew: true, Error: err.Error(), CanForce: true,
-				BaseURL: h.baseURL, CanWrite: true, Username: username,
+				BaseURL: h.BaseURL, CanWrite: true, Username: username,
 			})
 			return
 		}
 	}
 
-	if _, err := h.store.Set(r.Context(), key, value, format); err != nil {
+	if _, err := h.Store.Set(r.Context(), key, value, format); err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderFormError(w, templateData{
-				Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+				Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 				IsNew: true, Error: "Secrets not configured: keys with 'secrets' in path require --secrets.key",
-				BaseURL: h.baseURL, CanWrite: true, Username: username,
+				BaseURL: h.BaseURL, CanWrite: true, Username: username,
 			})
 			return
 		}
@@ -316,6 +316,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	valueSize := len(value)
 	h.logAudit(r, key, enum.AuditActionCreate, enum.AuditResultSuccess, &valueSize)
 	h.commitToGit(key, value, "set", format, username)
+	h.publishEvent(key, enum.AuditActionCreate)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -331,18 +332,18 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	valueStr := r.FormValue("value")
 	isBinary := r.FormValue("is_binary") == "true"
 	format := r.FormValue("format")
-	if !h.validator.IsValidFormat(format) {
+	if !h.Validator.IsValidFormat(format) {
 		format = stash.FormatText.String()
 	}
 
 	// check write permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, true) {
+	if !h.Auth.CheckUserPermission(username, key, true) {
 		modalWidth, textareaHeight := h.calculateModalDimensions(valueStr)
 		h.renderFormError(w, templateData{
-			Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+			Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 			IsBinary: isBinary, IsNew: false, Error: "Access denied: you don't have write permission for this key",
-			BaseURL: h.baseURL, ModalWidth: modalWidth, TextareaHeight: textareaHeight, CanWrite: false, Username: username,
+			BaseURL: h.BaseURL, ModalWidth: modalWidth, TextareaHeight: textareaHeight, CanWrite: false, Username: username,
 		})
 		return
 	}
@@ -357,7 +358,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	force := r.FormValue("force") == "true"
 	formUpdatedAt, _ := strconv.ParseInt(r.FormValue("updated_at"), 10, 64)
 	if !force && !isBinary {
-		if validationErr := h.validator.Validate(format, value); validationErr != nil {
+		if validationErr := h.Validator.Validate(format, value); validationErr != nil {
 			h.renderValidationError(w, validationErrorParams{
 				Key: key, Value: valueStr, Format: format, IsBinary: isBinary,
 				Username: username, Error: validationErr.Error(), UpdatedAt: formUpdatedAt,
@@ -373,13 +374,13 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		expectedVersion = time.Unix(0, formUpdatedAt).UTC()
 	}
 
-	if err := h.store.SetWithVersion(r.Context(), key, value, format, expectedVersion); err != nil {
+	if err := h.Store.SetWithVersion(r.Context(), key, value, format, expectedVersion); err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			modalWidth, textareaHeight := h.calculateModalDimensions(valueStr)
 			h.renderFormError(w, templateData{
-				Key: key, Value: valueStr, Format: format, Formats: h.validator.SupportedFormats(),
+				Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
 				IsBinary: isBinary, IsNew: false, Error: "Secrets not configured: keys with 'secrets' in path require --secrets.key",
-				BaseURL: h.baseURL, ModalWidth: modalWidth, TextareaHeight: textareaHeight, CanWrite: true, Username: username,
+				BaseURL: h.BaseURL, ModalWidth: modalWidth, TextareaHeight: textareaHeight, CanWrite: true, Username: username,
 			})
 			return
 		}
@@ -400,6 +401,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	valueSize := len(value)
 	h.logAudit(r, key, enum.AuditActionUpdate, enum.AuditResultSuccess, &valueSize)
 	h.commitToGit(key, value, "set", format, username)
+	h.publishEvent(key, enum.AuditActionUpdate)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -409,12 +411,12 @@ func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 
 	// check write permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, true) {
+	if !h.Auth.CheckUserPermission(username, key, true) {
 		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
 
-	if err := h.store.Delete(r.Context(), key); err != nil {
+	if err := h.Store.Delete(r.Context(), key); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
@@ -428,12 +430,13 @@ func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 	h.logAudit(r, key, enum.AuditActionDelete, enum.AuditResultSuccess, nil)
 
 	// delete from git if enabled
-	if h.git != nil {
-		if err := h.git.Delete(key, h.getAuthor(username)); err != nil {
+	if h.Git != nil {
+		if err := h.Git.Delete(key, h.getAuthor(username)); err != nil {
 			log.Printf("[WARN] git delete failed for %s: %v", key, err)
 		}
 	}
 
+	h.publishEvent(key, enum.AuditActionDelete)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -442,19 +445,19 @@ func (h *Handler) handleKeyHistory(w http.ResponseWriter, r *http.Request) {
 	key := store.NormalizeKey(r.PathValue("key"))
 
 	// check if git is enabled
-	if h.git == nil {
+	if h.Git == nil {
 		http.Error(w, "git not enabled", http.StatusServiceUnavailable)
 		return
 	}
 
 	// check read permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, false) {
+	if !h.Auth.CheckUserPermission(username, key, false) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
-	history, err := h.git.History(key, 50)
+	history, err := h.Git.History(key, 50)
 	if err != nil {
 		log.Printf("[ERROR] failed to get history for %s: %v", key, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -464,8 +467,8 @@ func (h *Handler) handleKeyHistory(w http.ResponseWriter, r *http.Request) {
 	data := templateData{
 		Key:         key,
 		Theme:       h.getTheme(r),
-		BaseURL:     h.baseURL,
-		CanWrite:    h.auth.CheckUserPermission(username, key, true),
+		BaseURL:     h.BaseURL,
+		CanWrite:    h.Auth.CheckUserPermission(username, key, true),
 		Username:    username,
 		historyData: historyData{History: history, GitEnabled: true},
 	}
@@ -481,14 +484,14 @@ func (h *Handler) handleKeyRevision(w http.ResponseWriter, r *http.Request) {
 	rev := r.URL.Query().Get("rev")
 
 	// check if git is enabled
-	if h.git == nil {
+	if h.Git == nil {
 		http.Error(w, "git not enabled", http.StatusServiceUnavailable)
 		return
 	}
 
 	// check read permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, false) {
+	if !h.Auth.CheckUserPermission(username, key, false) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -498,7 +501,7 @@ func (h *Handler) handleKeyRevision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, format, err := h.git.GetRevision(key, rev)
+	value, format, err := h.Git.GetRevision(key, rev)
 	if err != nil {
 		log.Printf("[ERROR] failed to get revision %s for %s: %v", rev, key, err)
 		http.Error(w, "revision not found", http.StatusNotFound)
@@ -520,10 +523,10 @@ func (h *Handler) handleKeyRevision(w http.ResponseWriter, r *http.Request) {
 		Format:         format,
 		IsBinary:       isBinary,
 		Theme:          h.getTheme(r),
-		BaseURL:        h.baseURL,
+		BaseURL:        h.BaseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
-		CanWrite:       h.auth.CheckUserPermission(username, key, true),
+		CanWrite:       h.Auth.CheckUserPermission(username, key, true),
 		Username:       username,
 		historyData:    historyData{GitEnabled: true, RevHash: rev},
 	}
@@ -538,14 +541,14 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	key := store.NormalizeKey(r.PathValue("key"))
 
 	// check if git is enabled
-	if h.git == nil {
+	if h.Git == nil {
 		http.Error(w, "git not enabled", http.StatusServiceUnavailable)
 		return
 	}
 
 	// check write permission
 	username := h.getCurrentUser(r)
-	if !h.auth.CheckUserPermission(username, key, true) {
+	if !h.Auth.CheckUserPermission(username, key, true) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -557,7 +560,7 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get value at revision
-	value, format, err := h.git.GetRevision(key, rev)
+	value, format, err := h.Git.GetRevision(key, rev)
 	if err != nil {
 		log.Printf("[ERROR] failed to get revision %s for %s: %v", rev, key, err)
 		http.Error(w, "revision not found", http.StatusNotFound)
@@ -565,7 +568,7 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// save to store
-	if _, err := h.store.Set(r.Context(), key, value, format); err != nil {
+	if _, err := h.Store.Set(r.Context(), key, value, format); err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderError(w, "Secrets not configured: keys with 'secrets' in path require --secrets.key")
 			return
@@ -579,6 +582,7 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	valueSize := len(value)
 	h.logAudit(r, key, enum.AuditActionUpdate, enum.AuditResultSuccess, &valueSize)
 	h.commitToGit(key, value, "restore", format, username)
+	h.publishEvent(key, enum.AuditActionUpdate)
 	h.handleKeyList(w, r) // return updated keys table
 }
 
@@ -641,12 +645,12 @@ func (h *Handler) renderValidationError(w http.ResponseWriter, p validationError
 		Key:            p.Key,
 		Value:          p.Value,
 		Format:         p.Format,
-		Formats:        h.validator.SupportedFormats(),
+		Formats:        h.Validator.SupportedFormats(),
 		IsBinary:       p.IsBinary,
 		IsNew:          false,
 		Error:          p.Error,
 		CanForce:       true,
-		BaseURL:        h.baseURL,
+		BaseURL:        h.BaseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
 		CanWrite:       true,
@@ -697,10 +701,10 @@ func (h *Handler) renderConflictError(w http.ResponseWriter, p conflictErrorPara
 		Key:            p.Key,
 		Value:          p.Value,
 		Format:         p.Format,
-		Formats:        h.validator.SupportedFormats(),
+		Formats:        h.Validator.SupportedFormats(),
 		IsBinary:       p.IsBinary,
 		IsNew:          false,
-		BaseURL:        h.baseURL,
+		BaseURL:        h.BaseURL,
 		ModalWidth:     modalWidth,
 		TextareaHeight: textareaHeight,
 		CanWrite:       true,
@@ -722,11 +726,19 @@ func (h *Handler) renderConflictError(w http.ResponseWriter, p conflictErrorPara
 
 // commitToGit commits a key change to git if git is enabled.
 func (h *Handler) commitToGit(key string, value []byte, op, format, username string) {
-	if h.git == nil {
+	if h.Git == nil {
 		return
 	}
 	req := git.CommitRequest{Key: key, Value: value, Operation: op, Format: format, Author: h.getAuthor(username)}
-	if err := h.git.Commit(req); err != nil {
+	if err := h.Git.Commit(req); err != nil {
 		log.Printf("[WARN] git commit failed for %s: %v", key, err)
 	}
+}
+
+// publishEvent publishes a key change event to SSE subscribers if events are enabled.
+func (h *Handler) publishEvent(key string, action enum.AuditAction) {
+	if h.Events == nil {
+		return
+	}
+	h.Events.Publish(key, action)
 }

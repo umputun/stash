@@ -94,6 +94,11 @@ type AuditLogger interface {
 	LogAudit(ctx context.Context, entry store.AuditEntry) error
 }
 
+// EventPublisher defines the interface for publishing key change events.
+type EventPublisher interface {
+	Publish(key string, action enum.AuditAction)
+}
+
 // Config holds web handler configuration.
 type Config struct {
 	BaseURL      string
@@ -101,39 +106,36 @@ type Config struct {
 	AuditEnabled bool
 }
 
+// Deps holds dependencies for the web handler.
+type Deps struct {
+	Store     KVStore
+	Auth      AuthProvider
+	Validator Validator
+	Git       GitService     // optional
+	Audit     AuditLogger    // optional
+	Events    EventPublisher // optional
+}
+
 // Handler handles web UI requests.
 type Handler struct {
-	store        KVStore
-	validator    Validator
-	auth         AuthProvider
-	highlighter  *Highlighter
-	tmpl         *template.Template
-	baseURL      string
-	pageSize     int
-	auditEnabled bool
-	git          GitService
-	audit        AuditLogger
+	Deps
+	Config
+	highlighter *Highlighter
+	tmpl        *template.Template
 }
 
 // New creates a new web handler.
-// auditLogger is optional, pass nil to disable audit logging in web handlers.
-func New(st KVStore, auth AuthProvider, val Validator, gs GitService, auditLogger AuditLogger, cfg Config) (*Handler, error) {
+func New(deps Deps, cfg Config) (*Handler, error) {
 	tmpl, err := parseTemplates()
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
 
 	return &Handler{
-		store:        st,
-		validator:    val,
-		auth:         auth,
-		highlighter:  NewHighlighter(),
-		tmpl:         tmpl,
-		baseURL:      cfg.BaseURL,
-		pageSize:     cfg.PageSize,
-		auditEnabled: cfg.AuditEnabled,
-		git:          gs,
-		audit:        auditLogger,
+		Deps:        deps,
+		Config:      cfg,
+		highlighter: NewHighlighter(),
+		tmpl:        tmpl,
 	}, nil
 }
 
@@ -421,22 +423,22 @@ func (h *Handler) getListParams(w http.ResponseWriter, r *http.Request) listPara
 
 // url returns a URL path with the base URL prefix.
 func (h *Handler) url(path string) string {
-	return h.baseURL + path
+	return h.BaseURL + path
 }
 
 // cookiePath returns the path for cookies (base URL with trailing slash or "/").
 func (h *Handler) cookiePath() string {
-	if h.baseURL == "" {
+	if h.BaseURL == "" {
 		return "/"
 	}
-	return h.baseURL + "/"
+	return h.BaseURL + "/"
 }
 
 // getCurrentUser returns the username from the session cookie, or empty string if not logged in.
 func (h *Handler) getCurrentUser(r *http.Request) string {
 	for _, cookieName := range cookie.SessionCookieNames {
 		if c, err := r.Cookie(cookieName); err == nil {
-			if username, ok := h.auth.GetSessionUser(r.Context(), c.Value); ok {
+			if username, ok := h.Auth.GetSessionUser(r.Context(), c.Value); ok {
 				return username
 			}
 		}
@@ -563,7 +565,7 @@ func (h *Handler) filterKeysByPermission(username string, keys []store.KeyInfo) 
 	for i, k := range keys {
 		keyNames[i] = k.Key
 	}
-	allowedKeys := h.auth.FilterUserKeys(username, keyNames)
+	allowedKeys := h.Auth.FilterUserKeys(username, keyNames)
 	allowedSet := make(map[string]bool, len(allowedKeys))
 	for _, k := range allowedKeys {
 		allowedSet[k] = true
@@ -573,7 +575,7 @@ func (h *Handler) filterKeysByPermission(username string, keys []store.KeyInfo) 
 		if allowedSet[k.Key] {
 			filtered = append(filtered, keyWithPermission{
 				KeyInfo:  k,
-				CanWrite: h.auth.CheckUserPermission(username, k.Key, true),
+				CanWrite: h.Auth.CheckUserPermission(username, k.Key, true),
 			})
 		}
 	}
@@ -582,7 +584,7 @@ func (h *Handler) filterKeysByPermission(username string, keys []store.KeyInfo) 
 
 // logAudit logs an audit entry if audit logging is enabled.
 func (h *Handler) logAudit(r *http.Request, key string, action enum.AuditAction, result enum.AuditResult, valueSize *int) {
-	if h.audit == nil {
+	if h.Audit == nil {
 		return
 	}
 
@@ -609,7 +611,7 @@ func (h *Handler) logAudit(r *http.Request, key string, action enum.AuditAction,
 		ValueSize: valueSize,
 	}
 
-	if err := h.audit.LogAudit(r.Context(), entry); err != nil {
+	if err := h.Audit.LogAudit(r.Context(), entry); err != nil {
 		log.Printf("[WARN] failed to log audit entry for web operation: %v", err)
 	}
 }

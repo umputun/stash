@@ -169,7 +169,7 @@ func newTestHandlerWithStore(t *testing.T, st KVStore) *Handler {
 		UserCanWriteFunc:        func(username string) bool { return true },
 		IsAdminFunc:             func(username string) bool { return false },
 	}
-	h, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 	require.NoError(t, err)
 	return h
 }

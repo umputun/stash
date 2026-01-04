@@ -18,6 +18,7 @@ import (
 	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server"
 	"github.com/umputun/stash/app/server/auth"
+	"github.com/umputun/stash/app/server/sse"
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/app/validator"
 )
@@ -183,22 +184,34 @@ func runServer(ctx context.Context) error {
 		return err
 	}
 
-	srv, err := server.New(kvStore, validator.NewService(), gitService, authSvc, auditStore, server.Config{
-		Address:          opts.Server.Address,
-		ReadTimeout:      opts.Server.ReadTimeout,
-		WriteTimeout:     opts.Server.WriteTimeout,
-		IdleTimeout:      opts.Server.IdleTimeout,
-		ShutdownTimeout:  opts.Server.ShutdownTimeout,
-		Version:          revision,
-		BaseURL:          baseURL,
-		BodySizeLimit:    opts.Limits.BodySize,
-		RequestsPerSec:   opts.Limits.RequestsPerSec,
-		MaxConcurrent:    opts.Limits.MaxConcurrent,
-		LoginConcurrency: opts.Limits.LoginConcurrency,
-		PageSize:         opts.Server.PageSize,
-		AuditEnabled:     opts.Audit.Enabled,
-		AuditQueryLimit:  opts.Audit.QueryLimit,
-	})
+	// create SSE service for key change subscriptions
+	sseService := sse.New(authSvc)
+
+	srv, err := server.New(
+		server.Deps{
+			Store:      kvStore,
+			Validator:  validator.NewService(),
+			Git:        gitService,
+			Auth:       authSvc,
+			AuditStore: auditStore,
+			SSE:        sseService,
+		},
+		server.Config{
+			Address:          opts.Server.Address,
+			ReadTimeout:      opts.Server.ReadTimeout,
+			WriteTimeout:     opts.Server.WriteTimeout,
+			IdleTimeout:      opts.Server.IdleTimeout,
+			ShutdownTimeout:  opts.Server.ShutdownTimeout,
+			Version:          revision,
+			BaseURL:          baseURL,
+			BodySizeLimit:    opts.Limits.BodySize,
+			RequestsPerSec:   opts.Limits.RequestsPerSec,
+			MaxConcurrent:    opts.Limits.MaxConcurrent,
+			LoginConcurrency: opts.Limits.LoginConcurrency,
+			PageSize:         opts.Server.PageSize,
+			AuditEnabled:     opts.Audit.Enabled,
+			AuditQueryLimit:  opts.Audit.QueryLimit,
+		})
 	if err != nil {
 		return fmt.Errorf("failed to initialize server: %w", err)
 	}

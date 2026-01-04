@@ -504,7 +504,7 @@ func newTestHandler(t *testing.T) *Handler {
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 		UserCanWriteFunc:        func(username string) bool { return true },
 	}
-	h, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 	require.NoError(t, err)
 	return h
 }
@@ -523,7 +523,7 @@ func newTestHandlerWithBaseURL(t *testing.T, baseURL string) *Handler {
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 		UserCanWriteFunc:        func(username string) bool { return true },
 	}
-	h, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{BaseURL: baseURL})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{BaseURL: baseURL})
 	require.NoError(t, err)
 	return h
 }
@@ -557,7 +557,7 @@ func newTestHandlerWithAuth(t *testing.T, auth AuthProvider) *Handler {
 		ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
 		SecretsEnabledFunc: func() bool { return false },
 	}
-	h, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 	require.NoError(t, err)
 	return h
 }
@@ -578,7 +578,7 @@ func newTestHandlerWithGit(t *testing.T, gitSvc GitService) *Handler {
 		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 		UserCanWriteFunc:        func(username string) bool { return true },
 	}
-	h, err := New(st, auth, defaultValidatorMock(), gitSvc, nil, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
 	require.NoError(t, err)
 	return h
 }

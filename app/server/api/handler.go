@@ -24,13 +24,11 @@ import (
 //go:generate moq -out mocks/authprovider.go -pkg mocks -skip-ensure -fmt goimports . AuthProvider
 //go:generate moq -out mocks/formatvalidator.go -pkg mocks -skip-ensure -fmt goimports . FormatValidator
 //go:generate moq -out mocks/gitservice.go -pkg mocks -skip-ensure -fmt goimports . GitService
+//go:generate moq -out mocks/eventpublisher.go -pkg mocks -skip-ensure -fmt goimports . EventPublisher
 
 // Handler handles API requests for /kv/* endpoints.
 type Handler struct {
-	store           KVStore
-	auth            AuthProvider
-	formatValidator FormatValidator
-	git             GitService
+	Deps
 }
 
 // GitService defines the interface for git operations.
@@ -63,14 +61,23 @@ type FormatValidator interface {
 	IsValidFormat(format string) bool
 }
 
+// EventPublisher defines the interface for publishing key change events.
+type EventPublisher interface {
+	Publish(key string, action enum.AuditAction)
+}
+
+// Deps holds dependencies for the API handler.
+type Deps struct {
+	Store     KVStore
+	Auth      AuthProvider
+	Validator FormatValidator
+	Git       GitService     // optional
+	Events    EventPublisher // optional
+}
+
 // New creates a new API handler.
-func New(st KVStore, auth AuthProvider, fv FormatValidator, gs GitService) *Handler {
-	return &Handler{
-		store:           st,
-		auth:            auth,
-		formatValidator: fv,
-		git:             gs,
-	}
+func New(deps Deps) *Handler {
+	return &Handler{Deps: deps}
 }
 
 // Register registers API routes on the given router.
@@ -98,7 +105,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 		filter = parsed
 	}
 
-	keys, err := h.store.List(r.Context(), filter)
+	keys, err := h.Store.List(r.Context(), filter)
 	if err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to list keys")
 		return
@@ -149,10 +156,10 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 // filterKeysByAuth filters keys based on the request's authentication.
 // Returns nil if auth is required but caller has no valid credentials.
 func (h *Handler) filterKeysByAuth(r *http.Request, keys []string) []string {
-	if h.auth == nil || !h.auth.Enabled() {
+	if h.Auth == nil || !h.Auth.Enabled() {
 		return keys
 	}
-	return h.auth.FilterKeysForRequest(r, keys)
+	return h.Auth.FilterKeysForRequest(r, keys)
 }
 
 // handleGet retrieves the value for a key.
@@ -164,7 +171,7 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	value, format, err := h.store.GetWithFormat(r.Context(), key)
+	value, format, err := h.Store.GetWithFormat(r.Context(), key)
 	if errors.Is(err, store.ErrSecretsNotConfigured) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
 		return
@@ -216,11 +223,11 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = r.URL.Query().Get("format")
 	}
-	if !h.formatValidator.IsValidFormat(format) {
+	if !h.Validator.IsValidFormat(format) {
 		format = "text"
 	}
 
-	created, err := h.store.Set(r.Context(), key, value, format)
+	created, err := h.Store.Set(r.Context(), key, value, format)
 	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
@@ -241,11 +248,20 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] %s %q (%d bytes, format=%s) by %s", operation, key, len(value), format, h.getIdentityForLog(r))
 
 	// commit to git if enabled
-	if h.git != nil {
+	if h.Git != nil {
 		req := git.CommitRequest{Key: key, Value: value, Operation: operation, Format: format, Author: h.getAuthorFromRequest(r)}
-		if err := h.git.Commit(req); err != nil {
+		if err := h.Git.Commit(req); err != nil {
 			log.Printf("[WARN] git commit failed for %s: %v", key, err)
 		}
+	}
+
+	// publish event for SSE subscribers
+	if h.Events != nil {
+		action := enum.AuditActionUpdate
+		if created {
+			action = enum.AuditActionCreate
+		}
+		h.Events.Publish(key, action)
 	}
 
 	if created {
@@ -264,7 +280,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.store.Delete(r.Context(), key)
+	err := h.Store.Delete(r.Context(), key)
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -277,10 +293,15 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] delete %q by %s", key, h.getIdentityForLog(r))
 
 	// delete from git if enabled
-	if h.git != nil {
-		if err := h.git.Delete(key, h.getAuthorFromRequest(r)); err != nil {
+	if h.Git != nil {
+		if err := h.Git.Delete(key, h.getAuthorFromRequest(r)); err != nil {
 			log.Printf("[WARN] git delete failed for %s: %v", key, err)
 		}
+	}
+
+	// publish event for SSE subscribers
+	if h.Events != nil {
+		h.Events.Publish(key, enum.AuditActionDelete)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -299,7 +320,7 @@ type historyResponse struct {
 // handleHistory returns the commit history for a key.
 // GET /kv/history/{key...}
 func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
-	if h.git == nil {
+	if h.Git == nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusServiceUnavailable, nil, "git integration not enabled")
 		return
 	}
@@ -317,7 +338,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := h.git.History(key, 50)
+	history, err := h.Git.History(key, 50)
 	if err != nil {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusInternalServerError, err, "failed to get history")
 		return
@@ -357,11 +378,11 @@ type identity struct {
 // getIdentity extracts identity from request.
 // Returns user identity, token identity, or anonymous.
 func (h *Handler) getIdentity(r *http.Request) identity {
-	if h.auth == nil || !h.auth.Enabled() {
+	if h.Auth == nil || !h.Auth.Enabled() {
 		return identity{typ: identityAnonymous}
 	}
 
-	actorType, actorName := h.auth.GetRequestActor(r)
+	actorType, actorName := h.Auth.GetRequestActor(r)
 	switch actorType {
 	case "user":
 		return identity{typ: identityUser, name: actorName}

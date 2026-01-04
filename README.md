@@ -47,6 +47,7 @@ Web UI available at http://localhost:8080
 - Optional git versioning with full audit trail and point-in-time recovery
 - Optional in-memory cache for read operations
 - Optional audit logging with retention and admin-only web UI
+- Real-time key change notifications via Server-Sent Events (SSE)
 - Go, Python, TypeScript/JavaScript, and Java client libraries with full API support and client-side, zero-knowledge encryption
 
 ## Security Note
@@ -751,6 +752,49 @@ Returns JSON array of historical revisions (requires git versioning enabled). Re
 
 The `value` field contains base64-encoded content for each revision.
 
+### Subscribe to key changes (SSE)
+
+Subscribe to real-time key change notifications via Server-Sent Events:
+
+```bash
+# subscribe to exact key
+curl -N http://localhost:8080/kv/subscribe/app/config
+
+# subscribe to prefix (all keys under app/)
+curl -N http://localhost:8080/kv/subscribe/app/*
+
+# subscribe to all keys
+curl -N http://localhost:8080/kv/subscribe/*
+```
+
+Events are delivered as JSON in SSE format:
+
+```
+event: change
+data: {"key":"app/config","action":"update","timestamp":"2025-01-03T10:30:00Z"}
+
+event: change
+data: {"key":"app/db","action":"delete","timestamp":"2025-01-03T10:31:00Z"}
+```
+
+Actions: `create`, `update`, `delete`
+
+Using the Go client:
+
+```go
+sub, err := client.Subscribe(ctx, "app/config")
+if err != nil {
+    log.Fatal(err)
+}
+defer sub.Close()
+
+for ev := range sub.Events() {
+    log.Printf("Key %s: %s at %s", ev.Key, ev.Action, ev.Timestamp)
+}
+```
+
+For prefix subscription use `client.SubscribePrefix(ctx, "app")` and for all keys use `client.SubscribeAll(ctx)`.
+
 ### Health check
 
 ```bash
@@ -852,6 +896,14 @@ err = client.SetWithFormat(ctx, "app/config", `{"debug": true}`, stash.FormatJSO
 err = client.Delete(ctx, "app/config")
 keys, err := client.List(ctx, "app/")
 
+// subscribe to key changes (SSE)
+sub, err := client.Subscribe(ctx, "app/config")     // exact key
+sub, err := client.SubscribePrefix(ctx, "app")      // prefix (app/*)
+sub, err := client.SubscribeAll(ctx)                // all keys
+for ev := range sub.Events() {
+    log.Printf("%s: %s", ev.Action, ev.Key)
+}
+
 // with zero-knowledge encryption (server never sees plaintext)
 zkClient, err := stash.New("http://localhost:8080",
     stash.WithZKKey("your-secret-passphrase"),
@@ -859,7 +911,7 @@ zkClient, err := stash.New("http://localhost:8080",
 err = zkClient.Set(ctx, "app/secrets/api-key", "secret-value") // encrypted client-side
 ```
 
-Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
+Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption, SSE subscriptions. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
 
 ## Python Client Library
 

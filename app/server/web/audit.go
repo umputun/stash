@@ -29,7 +29,7 @@ type AuditHandler struct {
 
 // NewAuditHandler creates a new audit handler.
 func NewAuditHandler(auditStore AuditStore, auth AuthProvider, h *Handler) *AuditHandler {
-	pageSize := h.pageSize
+	pageSize := h.PageSize
 	if pageSize == 0 {
 		pageSize = 100 // audit log always paginates (unlike keys which can disable with 0)
 	}
@@ -72,7 +72,7 @@ type auditTemplateData struct {
 func (h *AuditHandler) HandleAuditPage(w http.ResponseWriter, r *http.Request) {
 	username := h.parent.getCurrentUser(r)
 	if username == "" {
-		http.Redirect(w, r, h.parent.baseURL+"/login?return="+url.QueryEscape(h.parent.baseURL+"/audit"), http.StatusFound)
+		http.Redirect(w, r, h.parent.BaseURL+"/login?return="+url.QueryEscape(h.parent.BaseURL+"/audit"), http.StatusFound)
 		return
 	}
 
@@ -80,7 +80,7 @@ func (h *AuditHandler) HandleAuditPage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_ = h.parent.tmpl.ExecuteTemplate(w, "error", map[string]any{
 			"Error":   "Admin access required",
-			"BaseURL": h.parent.baseURL,
+			"BaseURL": h.parent.BaseURL,
 		})
 		return
 	}
@@ -170,7 +170,7 @@ func (h *AuditHandler) buildAuditData(r *http.Request) auditTemplateData {
 			Error:       "Failed to query audit log",
 			Theme:       h.parent.getTheme(r),
 			AuthEnabled: h.auth.Enabled(),
-			BaseURL:     h.parent.baseURL,
+			BaseURL:     h.parent.BaseURL,
 		}
 	}
 
@@ -190,7 +190,7 @@ func (h *AuditHandler) buildAuditData(r *http.Request) auditTemplateData {
 				Error:       "Failed to query audit log",
 				Theme:       h.parent.getTheme(r),
 				AuthEnabled: h.auth.Enabled(),
-				BaseURL:     h.parent.baseURL,
+				BaseURL:     h.parent.BaseURL,
 			}
 		}
 	}
@@ -215,7 +215,7 @@ func (h *AuditHandler) buildAuditData(r *http.Request) auditTemplateData {
 		HasNext:     page < totalPages,
 		Theme:       h.parent.getTheme(r),
 		AuthEnabled: h.auth.Enabled(),
-		BaseURL:     h.parent.baseURL,
+		BaseURL:     h.parent.BaseURL,
 	}
 }
 

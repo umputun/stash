@@ -869,7 +869,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return !write }, // read only
 			UserCanWriteFunc:        func(username string) bool { return false },
 		}
-		h, err := New(st, auth, defaultValidatorMock(), gitSvc, nil, Config{})
+		h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", strings.NewReader("rev=abc1234"))
@@ -899,7 +899,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 			CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
 			UserCanWriteFunc:        func(username string) bool { return true },
 		}
-		h, err := New(st, auth, defaultValidatorMock(), gitSvc, nil, Config{})
+		h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
 		require.NoError(t, err)
 
 		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", strings.NewReader("rev=abc1234"))
@@ -1030,7 +1030,7 @@ func TestHandler_SecretsNotConfigured(t *testing.T) {
 			SecretsEnabledFunc: func() bool { return false },
 		}
 		auth := &mocks.AuthProviderMock{CheckUserPermissionFunc: func(string, string, bool) bool { return true }}
-		h, err := New(st, auth, defaultValidatorMock(), gitSvc, nil, Config{})
+		h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
 		require.NoError(t, err)
 
 		body := "rev=abc123"
@@ -1048,7 +1048,7 @@ func TestHandler_SecretsNotConfigured(t *testing.T) {
 // newTestHandlerWithStoreAndAuth creates a test handler with custom store and auth.
 func newTestHandlerWithStoreAndAuth(t *testing.T, st KVStore, auth AuthProvider) *Handler {
 	t.Helper()
-	h, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 	require.NoError(t, err)
 	return h
 }
@@ -1056,7 +1056,7 @@ func newTestHandlerWithStoreAndAuth(t *testing.T, st KVStore, auth AuthProvider)
 // newTestHandlerWithAll creates a test handler with all custom dependencies.
 func newTestHandlerWithAll(t *testing.T, st KVStore, val Validator, auth AuthProvider) *Handler {
 	t.Helper()
-	h, err := New(st, auth, val, nil, nil, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: val}, Config{})
 	require.NoError(t, err)
 	return h
 }
@@ -1091,7 +1091,7 @@ func TestHandler_AuditLogging(t *testing.T) {
 		UserCanWriteFunc:        func(username string) bool { return true },
 	}
 
-	h, err := New(st, auth, defaultValidatorMock(), nil, auditLogger, Config{})
+	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock(), Audit: auditLogger}, Config{})
 	require.NoError(t, err)
 
 	t.Run("create logs audit entry", func(t *testing.T) {
@@ -1168,7 +1168,7 @@ func TestHandler_AuditLogging(t *testing.T) {
 
 	t.Run("no audit when audit logger is nil", func(t *testing.T) {
 		// create handler without audit logger
-		hNoAudit, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{})
+		hNoAudit, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 		require.NoError(t, err)
 
 		capturedEntries = nil

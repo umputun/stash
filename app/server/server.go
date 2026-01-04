@@ -20,6 +20,7 @@ import (
 	"github.com/umputun/stash/app/server/api"
 	"github.com/umputun/stash/app/server/audit"
 	"github.com/umputun/stash/app/server/auth"
+	"github.com/umputun/stash/app/server/sse"
 	"github.com/umputun/stash/app/server/web"
 	"github.com/umputun/stash/app/store"
 )
@@ -29,13 +30,8 @@ import (
 
 // Server represents the HTTP server.
 type Server struct {
-	store           KVStore
-	auditStore      *store.Store
-	validator       Validator // format validator
-	cfg             Config
-	version         string
-	baseURL         string
-	auth            *auth.Service
+	Deps
+	Config
 	apiHandler      *api.Handler
 	webHandler      *web.Handler
 	auditHandler    *audit.Handler
@@ -90,36 +86,41 @@ type Config struct {
 	AuditQueryLimit int  // max entries per audit query (default 10000)
 }
 
+// Deps holds server dependencies.
+type Deps struct {
+	Store      KVStore
+	Validator  Validator
+	Git        GitService    // optional, nil to disable git versioning
+	Auth       *auth.Service // optional, nil to disable authentication
+	AuditStore *store.Store  // optional, nil to disable audit logging
+	SSE        *sse.Service  // optional, nil to disable key change subscriptions
+}
+
 // New creates a new Server instance.
-// gs is optional git service, pass nil to disable git versioning.
-// as is optional audit store, pass nil to disable audit logging.
-// authSvc is optional auth service, pass nil to disable authentication.
-func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as *store.Store, cfg Config) (*Server, error) {
+func New(deps Deps, cfg Config) (*Server, error) {
 	staticContent, err := web.StaticFS()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load static files: %w", err)
 	}
 
 	s := &Server{
-		store:      st,
-		auditStore: as,
-		validator:  val,
-		cfg:        cfg,
-		version:    cfg.Version,
-		baseURL:    cfg.BaseURL,
-		auth:       authSvc,
-		staticFS:   staticContent,
+		Deps:     deps,
+		Config:   cfg,
+		staticFS: staticContent,
 	}
 
-	// create web handler with optional audit logger
-	var webAuditLogger web.AuditLogger
-	if cfg.AuditEnabled && as != nil {
-		webAuditLogger = as
+	// create web handler with optional audit logger and events
+	webDeps := web.Deps{Store: deps.Store, Auth: deps.Auth, Validator: deps.Validator, Git: deps.Git}
+	if cfg.AuditEnabled && deps.AuditStore != nil {
+		webDeps.Audit = deps.AuditStore
 	}
-	webHandler, err := web.New(st, authSvc, val, gs, webAuditLogger, web.Config{
+	if deps.SSE != nil {
+		webDeps.Events = deps.SSE
+	}
+	webHandler, err := web.New(webDeps, web.Config{
 		BaseURL:      cfg.BaseURL,
 		PageSize:     cfg.PageSize,
-		AuditEnabled: cfg.AuditEnabled && as != nil,
+		AuditEnabled: cfg.AuditEnabled && deps.AuditStore != nil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web handler: %w", err)
@@ -127,12 +128,17 @@ func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as *st
 	s.webHandler = webHandler
 
 	// create api handler
-	s.apiHandler = api.New(st, authSvc, val, gs)
+	// note: only set Events if SSE is not nil to avoid nil interface issue
+	apiDeps := api.Deps{Store: deps.Store, Auth: deps.Auth, Validator: deps.Validator, Git: deps.Git}
+	if deps.SSE != nil {
+		apiDeps.Events = deps.SSE
+	}
+	s.apiHandler = api.New(apiDeps)
 
 	// create audit handlers if audit is enabled
-	if cfg.AuditEnabled && as != nil {
-		s.auditHandler = audit.NewHandler(as, authSvc, cfg.AuditQueryLimit)
-		s.webAuditHandler = web.NewAuditHandler(as, authSvc, webHandler)
+	if cfg.AuditEnabled && deps.AuditStore != nil {
+		s.auditHandler = audit.NewHandler(deps.AuditStore, deps.Auth, cfg.AuditQueryLimit)
+		s.webAuditHandler = web.NewAuditHandler(deps.AuditStore, deps.Auth, webHandler)
 	}
 
 	return s, nil
@@ -141,25 +147,33 @@ func New(st KVStore, val Validator, gs GitService, authSvc *auth.Service, as *st
 // Run starts the HTTP server and blocks until context is canceled.
 func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{
-		Addr:              s.cfg.Address,
+		Addr:              s.Address,
 		Handler:           s.handler(),
-		ReadHeaderTimeout: s.cfg.ReadTimeout,
-		WriteTimeout:      s.cfg.WriteTimeout,
-		IdleTimeout:       s.cfg.IdleTimeout,
+		ReadHeaderTimeout: s.ReadTimeout,
+		WriteTimeout:      s.WriteTimeout,
+		IdleTimeout:       s.IdleTimeout,
 	}
 
 	// graceful shutdown
 	go func() {
 		<-ctx.Done()
 		log.Printf("[INFO] shutting down server")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.ShutdownTimeout)
 		defer cancel()
+
+		// shutdown SSE first to close active connections
+		if s.SSE != nil {
+			if err := s.SSE.Shutdown(shutdownCtx); err != nil {
+				log.Printf("[WARN] SSE shutdown error: %v", err)
+			}
+		}
+
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			log.Printf("[WARN] shutdown error: %v", err)
 		}
 	}()
 
-	log.Printf("[DEBUG] started server on %s", s.cfg.Address)
+	log.Printf("[DEBUG] started server on %s", s.Address)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server error: %w", err)
 	}
@@ -169,16 +183,16 @@ func (s *Server) Run(ctx context.Context) error {
 // handler returns the HTTP handler, wrapping routes with base URL support if configured.
 func (s *Server) handler() http.Handler {
 	routes := s.routes()
-	if s.baseURL == "" {
+	if s.BaseURL == "" {
 		return routes
 	}
 	mux := http.NewServeMux()
 	// redirect /base to /base/
-	mux.HandleFunc(s.baseURL, func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, s.baseURL+"/", http.StatusMovedPermanently)
+	mux.HandleFunc(s.BaseURL, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, s.BaseURL+"/", http.StatusMovedPermanently)
 	})
 	// strip prefix for all routes under base URL
-	mux.Handle(s.baseURL+"/", http.StripPrefix(s.baseURL, routes))
+	mux.Handle(s.BaseURL+"/", http.StripPrefix(s.BaseURL, routes))
 	return mux
 }
 
@@ -194,20 +208,20 @@ func (s *Server) routes() http.Handler {
 		rest.Throttle(s.maxConcurrent()),
 		rest.Trace,
 		rest.SizeLimit(s.bodySizeLimit()),
-		rest.AppInfo("stash", "umputun", s.version),
+		rest.AppInfo("stash", "umputun", s.Version),
 		rest.Ping,
 	)
 
 	// determine auth middleware for protected routes
 	sessionAuth, tokenAuth := noopMiddleware, noopMiddleware
-	if s.auth != nil && s.auth.Enabled() {
-		sessionAuth = s.auth.SessionMiddleware(s.url("/login"))
-		tokenAuth = s.auth.TokenMiddleware
+	if s.Auth != nil && s.Auth.Enabled() {
+		sessionAuth = s.Auth.SessionMiddleware(s.url("/login"))
+		tokenAuth = s.Auth.TokenMiddleware
 	}
 
 	// public routes (no auth required)
 	router.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(s.staticFS))))
-	if s.auth != nil && s.auth.Enabled() {
+	if s.Auth != nil && s.Auth.Enabled() {
 		s.webHandler.RegisterAuth(router)
 		// stricter throttle on login to prevent brute-force
 		s.webHandler.RegisterLogin(router, rest.Throttle(s.loginConcurrency()))
@@ -230,6 +244,12 @@ func (s *Server) routes() http.Handler {
 		kv.Use(s.auditMiddleware())
 		kv.Use(tokenAuth)
 		s.apiHandler.Register(kv)
+
+		// SSE subscription endpoint (if enabled)
+		// GET /subscribe/{key...} for exact key, GET /subscribe/{prefix...}/* for prefix
+		if s.SSE != nil {
+			kv.Handle("GET /subscribe/{key...}", s.SSE)
+		}
 	})
 
 	// audit query route (admin only, requires auth)
@@ -242,32 +262,32 @@ func (s *Server) routes() http.Handler {
 
 // bodySizeLimit returns the configured body size limit, or default 1MB if not set.
 func (s *Server) bodySizeLimit() int64 {
-	if s.cfg.BodySizeLimit > 0 {
-		return s.cfg.BodySizeLimit
+	if s.BodySizeLimit > 0 {
+		return s.BodySizeLimit
 	}
 	return 1024 * 1024
 }
 
 // requestsPerSec returns the configured rate limit (requests per second), or default 100 if not set.
 func (s *Server) requestsPerSec() float64 {
-	if s.cfg.RequestsPerSec > 0 {
-		return s.cfg.RequestsPerSec
+	if s.RequestsPerSec > 0 {
+		return s.RequestsPerSec
 	}
 	return 100
 }
 
 // maxConcurrent returns the configured max concurrent in-flight requests, or default 1000 if not set.
 func (s *Server) maxConcurrent() int64 {
-	if s.cfg.MaxConcurrent > 0 {
-		return s.cfg.MaxConcurrent
+	if s.MaxConcurrent > 0 {
+		return s.MaxConcurrent
 	}
 	return 1000
 }
 
 // loginConcurrency returns the configured login concurrency limit, or default 5 if not set.
 func (s *Server) loginConcurrency() int64 {
-	if s.cfg.LoginConcurrency > 0 {
-		return s.cfg.LoginConcurrency
+	if s.LoginConcurrency > 0 {
+		return s.LoginConcurrency
 	}
 	return 5
 }
@@ -284,7 +304,7 @@ func (s *Server) rateLimiter() func(http.Handler) http.Handler {
 
 // url returns a URL path with the base URL prefix.
 func (s *Server) url(path string) string {
-	return s.baseURL + path
+	return s.BaseURL + path
 }
 
 // noopMiddleware is a pass-through middleware (used when auth is disabled).
@@ -294,8 +314,8 @@ func noopMiddleware(next http.Handler) http.Handler {
 
 // auditMiddleware returns the audit middleware or noop if audit is disabled.
 func (s *Server) auditMiddleware() func(http.Handler) http.Handler {
-	if !s.cfg.AuditEnabled || s.auditStore == nil {
+	if !s.AuditEnabled || s.AuditStore == nil {
 		return audit.NoopMiddleware
 	}
-	return audit.Middleware(s.auditStore, s.auth)
+	return audit.Middleware(s.AuditStore, s.Auth)
 }

@@ -10,7 +10,7 @@ import (
 // handleIndex renders the main page.
 func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 	secretsFilter := h.getSecretsFilter(r)
-	keys, err := h.store.List(r.Context(), secretsFilter)
+	keys, err := h.Store.List(r.Context(), secretsFilter)
 	if err != nil {
 		log.Printf("[ERROR] failed to list keys: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -31,19 +31,19 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 			page = parsed
 		}
 	}
-	pr := h.paginate(filteredKeys, page, h.pageSize)
+	pr := h.paginate(filteredKeys, page, h.PageSize)
 
 	data := templateData{
 		Keys:         pr.keys,
 		Theme:        h.getTheme(r),
 		ViewMode:     h.getViewMode(r),
 		SortMode:     sortMode,
-		AuthEnabled:  h.auth.Enabled(),
-		AuditEnabled: h.auditEnabled,
-		BaseURL:      h.baseURL,
-		CanWrite:     h.auth.UserCanWrite(username),
+		AuthEnabled:  h.Auth.Enabled(),
+		AuditEnabled: h.AuditEnabled,
+		BaseURL:      h.BaseURL,
+		CanWrite:     h.Auth.UserCanWrite(username),
 		Username:     username,
-		IsAdmin:      h.auth.IsAdmin(username),
+		IsAdmin:      h.Auth.IsAdmin(username),
 		paginationData: paginationData{
 			Page:       pr.page,
 			TotalPages: pr.totalPages,
@@ -53,7 +53,7 @@ func (h *Handler) handleIndex(w http.ResponseWriter, r *http.Request) {
 		},
 		secretsData: secretsData{
 			SecretsFilter:  secretsFilter,
-			SecretsEnabled: h.store.SecretsEnabled(),
+			SecretsEnabled: h.Store.SecretsEnabled(),
 		},
 	}
 

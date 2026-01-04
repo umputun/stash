@@ -112,17 +112,37 @@ pkill -f "stash server.*18080"; rm -f /tmp/stash-test.db
 ## API
 
 ```
-GET    /kv/                  # list keys (returns JSON array of KeyInfo, supports ?prefix=)
-GET    /kv/history/{key...}  # get key history (requires git, returns JSON array)
-GET    /kv/{key...}          # get value (returns raw body, 200/404)
-PUT    /kv/{key...}          # set value (body is value, returns 200)
-DELETE /kv/{key...}          # delete key (returns 204/404)
-GET    /ping                 # health check (returns "pong")
+GET    /kv/                      # list keys (returns JSON array of KeyInfo, supports ?prefix=)
+GET    /kv/history/{key...}      # get key history (requires git, returns JSON array)
+GET    /kv/{key...}              # get value (returns raw body, 200/404)
+PUT    /kv/{key...}              # set value (body is value, returns 200)
+DELETE /kv/{key...}              # delete key (returns 204/404)
+GET    /kv/subscribe/{key...}    # SSE subscription (exact key or prefix with /*)
+GET    /ping                     # health check (returns "pong")
 ```
 
 Keys can contain slashes (e.g., `app/config/database`).
 
 List endpoint returns only keys the caller has read permission for when auth is enabled.
+
+## SSE Subscriptions
+
+Subscribe to real-time key change events via Server-Sent Events:
+- `/kv/subscribe/app/config` - exact key subscription
+- `/kv/subscribe/app/*` - prefix subscription (all keys under app/)
+- `/kv/subscribe/*` - all keys
+
+Events are JSON: `{"key":"app/config","action":"update","timestamp":"2025-01-03T10:30:00Z"}`
+
+Actions: `create`, `update`, `delete`
+
+Go client example:
+```go
+sub, _ := client.Subscribe(ctx, "app/config")
+for ev := range sub.Events() {
+    log.Printf("%s: %s", ev.Action, ev.Key)
+}
+```
 
 ## Audit API (admin only)
 

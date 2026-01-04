@@ -23,6 +23,7 @@ require (
 	github.com/playwright-community/playwright-go v0.5200.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/stretchr/testify v1.11.1
+	github.com/tmaxmax/go-sse v0.11.0
 	golang.org/x/crypto v0.46.0
 	gopkg.in/ini.v1 v1.67.0
 	gopkg.in/yaml.v3 v3.0.1

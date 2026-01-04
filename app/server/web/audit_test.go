@@ -336,7 +336,7 @@ func newTestAuditHandler(t *testing.T, auditStore AuditStore, auth AuthProvider)
 			EnabledFunc: func() bool { return true },
 		}
 	}
-	parentHandler, err := New(st, auth, defaultValidatorMock(), nil, nil, Config{})
+	parentHandler, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 	require.NoError(t, err)
 
 	return NewAuditHandler(auditStore, auth, parentHandler)

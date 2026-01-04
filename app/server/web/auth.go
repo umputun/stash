@@ -12,7 +12,7 @@ import (
 func (h *Handler) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 	data := templateData{
 		Theme:   h.getTheme(r),
-		BaseURL: h.baseURL,
+		BaseURL: h.BaseURL,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.tmpl.ExecuteTemplate(w, "login.html", data); err != nil {
@@ -34,13 +34,13 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.auth.IsValidUser(username, password) {
+	if !h.Auth.IsValidUser(username, password) {
 		h.renderLoginError(w, r, "Invalid username or password")
 		return
 	}
 
 	// create session
-	token, err := h.auth.CreateSession(r.Context(), username)
+	token, err := h.Auth.CreateSession(r.Context(), username)
 	if err != nil {
 		log.Printf("[ERROR] failed to create session: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -51,7 +51,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// __Host- prefix requires Path="/" which doesn't work with base URL
 	cookieName := cookie.NameFallback
 	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	if secure && h.baseURL == "" {
+	if secure && h.BaseURL == "" {
 		cookieName = cookie.NameSecure
 	}
 
@@ -59,7 +59,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Name:     cookieName,
 		Value:    token,
 		Path:     h.cookiePath(),
-		MaxAge:   int(h.auth.LoginTTL().Seconds()),
+		MaxAge:   int(h.Auth.LoginTTL().Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		Secure:   secure,
@@ -73,7 +73,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// invalidate session
 	for _, cookieName := range cookie.SessionCookieNames {
 		if c, err := r.Cookie(cookieName); err == nil {
-			h.auth.InvalidateSession(r.Context(), c.Value)
+			h.Auth.InvalidateSession(r.Context(), c.Value)
 		}
 	}
 
@@ -91,7 +91,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// clear __Host- cookie if baseURL is empty (it requires Path="/")
-	if h.baseURL == "" {
+	if h.BaseURL == "" {
 		http.SetCookie(w, &http.Cookie{
 			Name:     cookie.NameSecure,
 			Value:    "",
@@ -113,7 +113,7 @@ func (h *Handler) renderLoginError(w http.ResponseWriter, r *http.Request, errMs
 	data := templateData{
 		Theme:   h.getTheme(r),
 		Error:   errMsg,
-		BaseURL: h.baseURL,
+		BaseURL: h.BaseURL,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusUnauthorized)

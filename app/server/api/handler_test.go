@@ -263,7 +263,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/newkey", strings.NewReader("newvalue"))
 		req.SetPathValue("key", "newkey")
@@ -282,7 +282,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/config", strings.NewReader(`{"key":"value"}`))
 		req.SetPathValue("key", "config")
@@ -300,7 +300,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/config?format=yaml", strings.NewReader("key: value"))
 		req.SetPathValue("key", "config")
@@ -317,7 +317,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/key", strings.NewReader("value"))
 		req.SetPathValue("key", "key")
@@ -333,7 +333,7 @@ func TestHandler_HandleSet(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		st := &mocks.KVStoreMock{}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/", strings.NewReader("value"))
 		req.SetPathValue("key", "")
@@ -348,7 +348,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return false, errors.New("db error") },
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/key", strings.NewReader("value"))
 		req.SetPathValue("key", "key")
@@ -365,7 +365,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			},
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/secrets/db", strings.NewReader("secret-value"))
 		req.SetPathValue("key", "secrets/db")
@@ -383,7 +383,7 @@ func TestHandler_HandleSet(t *testing.T) {
 			},
 		}
 		auth := noopAuthMock()
-		h := New(st, auth, defaultFormatValidator(), nil)
+		h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 
 		req := httptest.NewRequest(http.MethodPut, "/kv/secrets/zk-key", strings.NewReader("$ZK$invalid"))
 		req.SetPathValue("key", "secrets/zk-key")
@@ -531,7 +531,7 @@ func TestHandler_FilterKeysByAuth(t *testing.T) {
 
 func TestHandler_GetIdentity(t *testing.T) {
 	t.Run("no auth returns anonymous", func(t *testing.T) {
-		h := &Handler{auth: nil}
+		h := &Handler{}
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		id := h.getIdentity(req)
 		assert.Equal(t, identityAnonymous, id.typ)
@@ -541,7 +541,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 		auth := &mocks.AuthProviderMock{
 			EnabledFunc: func() bool { return false },
 		}
-		h := &Handler{auth: auth}
+		h := &Handler{Deps: Deps{Auth: auth}}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		id := h.getIdentity(req)
@@ -555,7 +555,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 				return "user", "testuser"
 			},
 		}
-		h := &Handler{auth: auth}
+		h := &Handler{Deps: Deps{Auth: auth}}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		id := h.getIdentity(req)
@@ -570,7 +570,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 				return "token", "token:api-toke"
 			},
 		}
-		h := &Handler{auth: auth}
+		h := &Handler{Deps: Deps{Auth: auth}}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		id := h.getIdentity(req)
@@ -585,7 +585,7 @@ func TestHandler_GetIdentity(t *testing.T) {
 				return "public", ""
 			},
 		}
-		h := &Handler{auth: auth}
+		h := &Handler{Deps: Deps{Auth: auth}}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		id := h.getIdentity(req)
@@ -601,7 +601,7 @@ func TestHandler_GetIdentityForLog(t *testing.T) {
 				return "user", "admin"
 			},
 		}
-		h := &Handler{auth: auth}
+		h := &Handler{Deps: Deps{Auth: auth}}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		result := h.getIdentityForLog(req)
@@ -615,7 +615,7 @@ func TestHandler_GetIdentityForLog(t *testing.T) {
 				return "token", "token:api-key"
 			},
 		}
-		h := &Handler{auth: auth}
+		h := &Handler{Deps: Deps{Auth: auth}}
 
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		result := h.getIdentityForLog(req)
@@ -623,7 +623,7 @@ func TestHandler_GetIdentityForLog(t *testing.T) {
 	})
 
 	t.Run("anonymous identity", func(t *testing.T) {
-		h := &Handler{auth: nil}
+		h := &Handler{}
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 		result := h.getIdentityForLog(req)
 		assert.Equal(t, "anonymous", result)
@@ -643,7 +643,7 @@ func TestHandler_HandleSet_WithGit(t *testing.T) {
 			return nil
 		},
 	}
-	h := New(st, auth, defaultFormatValidator(), gitMock)
+	h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator(), Git: gitMock})
 
 	req := httptest.NewRequest(http.MethodPut, "/kv/testkey", strings.NewReader("testvalue"))
 	req.SetPathValue("key", "testkey")
@@ -665,7 +665,7 @@ func TestHandler_HandleDelete_WithGit(t *testing.T) {
 			return nil
 		},
 	}
-	h := New(st, auth, defaultFormatValidator(), gitMock)
+	h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator(), Git: gitMock})
 
 	req := httptest.NewRequest(http.MethodDelete, "/kv/testkey", http.NoBody)
 	req.SetPathValue("key", "testkey")
@@ -689,7 +689,7 @@ func defaultFormatValidator() FormatValidator {
 // helper to create test handler with default format validator
 func newTestHandler(t *testing.T, st KVStore, auth AuthProvider) *Handler {
 	t.Helper()
-	return New(st, auth, defaultFormatValidator(), nil)
+	return New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator()})
 }
 
 // noopAuthMock returns an auth mock that is disabled (auth not configured)
@@ -763,7 +763,7 @@ func TestHandler_HandleHistory(t *testing.T) {
 				return nil, nil
 			},
 		}
-		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+		h := New(Deps{Store: &mocks.KVStoreMock{}, Auth: auth, Validator: defaultFormatValidator(), Git: gitSvc})
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
 		req.SetPathValue("key", "testkey")
@@ -778,7 +778,7 @@ func TestHandler_HandleHistory(t *testing.T) {
 
 	t.Run("git not enabled returns 503", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
-		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), nil) // no git
+		h := New(Deps{Store: &mocks.KVStoreMock{}, Auth: auth, Validator: defaultFormatValidator()}) // no git
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
 		req.SetPathValue("key", "testkey")
@@ -791,7 +791,7 @@ func TestHandler_HandleHistory(t *testing.T) {
 	t.Run("empty key returns 400", func(t *testing.T) {
 		auth := &mocks.AuthProviderMock{EnabledFunc: func() bool { return false }}
 		gitSvc := &mocks.GitServiceMock{}
-		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+		h := New(Deps{Store: &mocks.KVStoreMock{}, Auth: auth, Validator: defaultFormatValidator(), Git: gitSvc})
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/history/", http.NoBody)
 		req.SetPathValue("key", "")
@@ -809,7 +809,7 @@ func TestHandler_HandleHistory(t *testing.T) {
 			},
 		}
 		gitSvc := &mocks.GitServiceMock{}
-		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+		h := New(Deps{Store: &mocks.KVStoreMock{}, Auth: auth, Validator: defaultFormatValidator(), Git: gitSvc})
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
 		req.SetPathValue("key", "testkey")
@@ -824,7 +824,7 @@ func TestHandler_HandleHistory(t *testing.T) {
 		gitSvc := &mocks.GitServiceMock{
 			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) { return nil, nil },
 		}
-		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+		h := New(Deps{Store: &mocks.KVStoreMock{}, Auth: auth, Validator: defaultFormatValidator(), Git: gitSvc})
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/history/newkey", http.NoBody)
 		req.SetPathValue("key", "newkey")
@@ -842,7 +842,7 @@ func TestHandler_HandleHistory(t *testing.T) {
 				return nil, errors.New("git error")
 			},
 		}
-		h := New(&mocks.KVStoreMock{}, auth, defaultFormatValidator(), gitSvc)
+		h := New(Deps{Store: &mocks.KVStoreMock{}, Auth: auth, Validator: defaultFormatValidator(), Git: gitSvc})
 
 		req := httptest.NewRequest(http.MethodGet, "/kv/history/testkey", http.NoBody)
 		req.SetPathValue("key", "testkey")
