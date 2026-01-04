@@ -1,6 +1,6 @@
 # Stash [![Build Status](https://github.com/umputun/stash/workflows/build/badge.svg)](https://github.com/umputun/stash/actions) [![Coverage Status](https://coveralls.io/repos/github/umputun/stash/badge.svg?branch=master)](https://coveralls.io/github/umputun/stash?branch=master)
 
-Lightweight key-value configuration service for centralized config management. Store application settings, feature flags, and shared configuration with a simple HTTP API and web UI. A minimal alternative to Consul KV or etcd for microservices and containerized applications that need a straightforward way to manage configuration without complex infrastructure. Not a secrets vault - see [Security Note](#security-note).
+Lightweight key-value configuration service for centralized config management. Store application settings, feature flags, and shared configuration with a simple HTTP API and web UI. A minimal alternative to Consul KV or etcd for microservices and containerized applications that need a straightforward way to manage configuration without complex infrastructure.
 
 ## Why Stash?
 
@@ -515,22 +515,7 @@ The master key (`--secrets.key`) is held in memory during server operation. If c
 
 ## Zero-Knowledge Encryption
 
-Optional client-side encryption where the server never sees plaintext values. Encryption and decryption happen entirely in the Go client library - the server stores and serves opaque encrypted blobs unchanged.
-
-### How It Works
-
-```go
-client, err := stash.New("http://localhost:8080",
-    stash.WithZKKey("your-secret-passphrase"), // min 16 characters
-)
-
-// values are encrypted before sending to server
-err = client.Set(ctx, "app/credentials", `{"api_key": "secret123"}`)
-
-// values are decrypted automatically when retrieved
-value, err := client.Get(ctx, "app/credentials")
-// value = `{"api_key": "secret123"}`
-```
+Optional client-side encryption where the server never sees plaintext values. Encryption and decryption happen entirely in client libraries - the server stores and serves opaque encrypted blobs unchanged. See [Go Client Library](lib/stash/README.md) for usage examples.
 
 ### Encrypted Storage Format
 
@@ -760,8 +745,9 @@ Subscribe to real-time key change notifications via Server-Sent Events:
 # subscribe to exact key
 curl -N http://localhost:8080/kv/subscribe/app/config
 
-# subscribe to prefix (all keys under app/)
+# subscribe to prefix (all keys under app/) - both forms work
 curl -N http://localhost:8080/kv/subscribe/app/*
+curl -N http://localhost:8080/kv/subscribe/app/
 
 # subscribe to all keys
 curl -N http://localhost:8080/kv/subscribe/*
@@ -779,21 +765,7 @@ data: {"key":"app/db","action":"delete","timestamp":"2025-01-03T10:31:00Z"}
 
 Actions: `create`, `update`, `delete`
 
-Using the Go client:
-
-```go
-sub, err := client.Subscribe(ctx, "app/config")
-if err != nil {
-    log.Fatal(err)
-}
-defer sub.Close()
-
-for ev := range sub.Events() {
-    log.Printf("Key %s: %s at %s", ev.Key, ev.Action, ev.Timestamp)
-}
-```
-
-For prefix subscription use `client.SubscribePrefix(ctx, "app")` and for all keys use `client.SubscribeAll(ctx)`.
+Go client supports SSE subscriptions via `Subscribe`, `SubscribePrefix`, and `SubscribeAll` methods. See [Go Client Library](lib/stash/README.md) for details.
 
 ### Health check
 
@@ -881,37 +853,11 @@ curl -X DELETE http://localhost:8080/kv/app/env
 
 ## Go Client Library
 
-A Go client library is available for programmatic access:
-
-```go
-import "github.com/umputun/stash/lib/stash"
-
-client, err := stash.New("http://localhost:8080",
-    stash.WithToken("your-api-token"),
-)
-
-// get/set/delete/list operations
-value, err := client.Get(ctx, "app/config")
-err = client.SetWithFormat(ctx, "app/config", `{"debug": true}`, stash.FormatJSON)
-err = client.Delete(ctx, "app/config")
-keys, err := client.List(ctx, "app/")
-
-// subscribe to key changes (SSE)
-sub, err := client.Subscribe(ctx, "app/config")     // exact key
-sub, err := client.SubscribePrefix(ctx, "app")      // prefix (app/*)
-sub, err := client.SubscribeAll(ctx)                // all keys
-for ev := range sub.Events() {
-    log.Printf("%s: %s", ev.Action, ev.Key)
-}
-
-// with zero-knowledge encryption (server never sees plaintext)
-zkClient, err := stash.New("http://localhost:8080",
-    stash.WithZKKey("your-secret-passphrase"),
-)
-err = zkClient.Set(ctx, "app/secrets/api-key", "secret-value") // encrypted client-side
+```bash
+go get github.com/umputun/stash/lib/stash
 ```
 
-Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption, SSE subscriptions. See [lib/stash/README.md](lib/stash/README.md) for full documentation.
+Features: CRUD operations, SSE subscriptions, automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption. See [full documentation](lib/stash/README.md) for details and examples.
 
 ## Python Client Library
 

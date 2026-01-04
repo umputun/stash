@@ -121,7 +121,7 @@ GET    /kv/history/{key...}      # get key history (requires git, returns JSON a
 GET    /kv/{key...}              # get value (returns raw body, 200/404)
 PUT    /kv/{key...}              # set value (body is value, returns 200)
 DELETE /kv/{key...}              # delete key (returns 204/404)
-GET    /kv/subscribe/{key...}    # SSE subscription (exact key or prefix with /*)
+GET    /kv/subscribe/{key...}    # SSE subscription (exact key or prefix with /* or /)
 GET    /ping                     # health check (returns "pong")
 ```
 
@@ -133,7 +133,7 @@ List endpoint returns only keys the caller has read permission for when auth is 
 
 Subscribe to real-time key change events via Server-Sent Events:
 - `/kv/subscribe/app/config` - exact key subscription
-- `/kv/subscribe/app/*` - prefix subscription (all keys under app/)
+- `/kv/subscribe/app/*` or `/kv/subscribe/app/` - prefix subscription (all keys under app/)
 - `/kv/subscribe/*` - all keys
 
 Events are JSON: `{"key":"app/config","action":"update","timestamp":"2025-01-03T10:30:00Z"}`

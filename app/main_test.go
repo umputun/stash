@@ -2469,3 +2469,132 @@ func TestIntegration_SSE_MultipleEvents(t *testing.T) {
 		t.Fatal("server did not shut down in time")
 	}
 }
+
+// TestIntegration_SSE_NoEventsForNonSubscribedKeys verifies that subscription filtering works correctly.
+func TestIntegration_SSE_NoEventsForNonSubscribedKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18505"
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServer(ctx) }()
+	waitForServer(t, "http://127.0.0.1:18505/ping")
+
+	client, err := stash.New("http://127.0.0.1:18505")
+	require.NoError(t, err)
+
+	subCtx, subCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer subCancel()
+
+	// subscribe to specific key
+	sub, err := client.Subscribe(subCtx, "subscribed/key")
+	require.NoError(t, err)
+	defer sub.Close()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// create a DIFFERENT key (not subscribed)
+	require.NoError(t, client.Set(subCtx, "other/key", "value"))
+
+	// wait briefly - should NOT receive event
+	select {
+	case ev := <-sub.Events():
+		t.Fatalf("received unexpected event for non-subscribed key: %+v", ev)
+	case err := <-sub.Errors():
+		t.Fatalf("subscription error: %v", err)
+	case <-time.After(500 * time.Millisecond):
+		// expected - no event for non-subscribed key
+	}
+
+	// now create subscribed key - SHOULD receive event
+	require.NoError(t, client.Set(subCtx, "subscribed/key", "value"))
+
+	select {
+	case ev := <-sub.Events():
+		assert.Equal(t, "subscribed/key", ev.Key)
+		assert.Equal(t, "create", ev.Action)
+	case err := <-sub.Errors():
+		t.Fatalf("subscription error: %v", err)
+	case <-subCtx.Done():
+		t.Fatal("timeout waiting for subscribed key event")
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+}
+
+// TestIntegration_SSE_AuthDenied verifies that subscription to unauthorized keys is rejected.
+func TestIntegration_SSE_AuthDenied(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18506"
+	opts.Server.ReadTimeout = 5 * time.Second
+
+	// create auth config with scoped token
+	authContent := `tokens:
+  - token: scoped-token
+    permissions:
+      - prefix: "allowed/*"
+        access: rw
+`
+	authFile := filepath.Join(tmpDir, "auth.yml")
+	require.NoError(t, os.WriteFile(authFile, []byte(authContent), 0o600))
+	opts.Auth.File = authFile
+	opts.Auth.LoginTTL = time.Hour
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServer(ctx) }()
+	waitForServer(t, "http://127.0.0.1:18506/ping")
+
+	// client with scoped token
+	client, err := stash.New("http://127.0.0.1:18506", stash.WithToken("scoped-token"))
+	require.NoError(t, err)
+
+	subCtx, subCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer subCancel()
+
+	t.Run("subscribe to allowed key succeeds", func(t *testing.T) {
+		sub, err := client.Subscribe(subCtx, "allowed/config")
+		require.NoError(t, err)
+		sub.Close()
+	})
+
+	t.Run("subscribe to denied key fails", func(t *testing.T) {
+		sub, err := client.Subscribe(subCtx, "denied/secret")
+		require.NoError(t, err) // subscribe() returns without error, connection happens async
+		defer sub.Close()
+
+		// should receive error from connection (403 Forbidden)
+		select {
+		case err := <-sub.Errors():
+			require.Error(t, err, "expected error for denied subscription")
+			assert.Contains(t, err.Error(), "403")
+		case <-sub.Events():
+			t.Fatal("should not receive events for denied key")
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected error for subscription to denied key")
+		}
+	})
+
+	cancel()
+	opts.Auth.File = "" // reset for other tests
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+	}
+}
