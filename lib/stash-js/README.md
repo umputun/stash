@@ -71,6 +71,9 @@ new Client(baseUrl: string, options?: ClientOptions)
 | `info(key: string): Promise<KeyInfo>` | Get key metadata |
 | `ping(): Promise<void>` | Check server connectivity |
 | `close(): void` | Clear ZK passphrase from memory |
+| `subscribe(key: string): Subscription` | Subscribe to exact key changes |
+| `subscribePrefix(prefix: string): Subscription` | Subscribe to prefix changes |
+| `subscribeAll(): Subscription` | Subscribe to all key changes |
 
 ### Format
 
@@ -100,6 +103,53 @@ interface KeyInfo {
   readonly updatedAt: Date;
 }
 ```
+
+### Subscriptions
+
+Real-time key change notifications via Server-Sent Events:
+
+```typescript
+import { Client } from '@umputun/stash-client';
+
+const client = new Client('http://localhost:8080', { token: 'your-token' });
+
+// subscribe to exact key
+const sub = client.subscribe('app/config');
+try {
+  for await (const event of sub) {
+    console.log(`${event.action}: ${event.key} at ${event.timestamp}`);
+  }
+} finally {
+  sub.close();
+}
+
+// subscribe to prefix (all keys under app/)
+const prefixSub = client.subscribePrefix('app');
+try {
+  for await (const event of prefixSub) {
+    console.log(`${event.action}: ${event.key}`);
+  }
+} finally {
+  prefixSub.close();
+}
+
+// subscribe to all keys
+const allSub = client.subscribeAll();
+try {
+  for await (const event of allSub) {
+    console.log(`${event.action}: ${event.key}`);
+  }
+} finally {
+  allSub.close();
+}
+```
+
+**SubscriptionEvent:**
+- `key: string` - The key that changed
+- `action: 'create' | 'update' | 'delete'` - The action performed
+- `timestamp: string` - RFC3339 timestamp
+
+Subscriptions automatically reconnect on connection failure with exponential backoff (1s initial, 30s max).
 
 ### Errors
 

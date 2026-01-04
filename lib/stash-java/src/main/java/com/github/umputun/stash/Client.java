@@ -6,7 +6,10 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonDeserializer;
 import com.google.gson.reflect.TypeToken;
 
+import java.io.BufferedReader;
 import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -15,7 +18,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Client for the Stash key-value configuration service.
@@ -211,6 +220,44 @@ public final class Client implements Closeable {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Subscribes to changes for an exact key.
+     *
+     * @param key the key to monitor
+     * @return subscription that yields events
+     * @throws StashException if key is empty
+     */
+    public Subscription subscribe(String key) {
+        validateKey(key);
+        String url = baseUrl + "/kv/subscribe/" + encodePath(key);
+        return new SubscriptionImpl(url, options.getToken(), gson);
+    }
+
+    /**
+     * Subscribes to changes for all keys with a prefix.
+     *
+     * @param prefix the prefix to monitor (e.g., "app" matches "app/config", "app/db")
+     * @return subscription that yields events
+     * @throws StashException if prefix is empty
+     */
+    public Subscription subscribePrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            throw new StashException("prefix cannot be empty");
+        }
+        String url = baseUrl + "/kv/subscribe/" + encodePath(prefix) + "/*";
+        return new SubscriptionImpl(url, options.getToken(), gson);
+    }
+
+    /**
+     * Subscribes to changes for all keys.
+     *
+     * @return subscription that yields events
+     */
+    public Subscription subscribeAll() {
+        String url = baseUrl + "/kv/subscribe/*";
+        return new SubscriptionImpl(url, options.getToken(), gson);
     }
 
     @Override
@@ -421,6 +468,150 @@ public final class Client implements Closeable {
          */
         public Client build() {
             return new Client(baseUrl, optionsBuilder.build());
+        }
+    }
+
+    /**
+     * Internal SSE subscription implementation with auto-reconnection.
+     */
+    private static class SubscriptionImpl implements Subscription {
+        private final String url;
+        private final String token;
+        private final Gson gson;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+        private final BlockingQueue<SubscriptionEvent> queue = new LinkedBlockingQueue<>();
+        private final Thread workerThread;
+
+        SubscriptionImpl(String url, String token, Gson gson) {
+            this.url = url;
+            this.token = token;
+            this.gson = gson;
+
+            // start background thread to read SSE events
+            this.workerThread = new Thread(this::runWithReconnect, "stash-subscription");
+            this.workerThread.setDaemon(true);
+            this.workerThread.start();
+        }
+
+        private void runWithReconnect() {
+            long delay = 1000; // 1s initial
+
+            while (!closed.get()) {
+                try {
+                    streamEvents();
+                    delay = 1000; // reset on successful connection
+                } catch (Exception e) {
+                    if (closed.get()) {
+                        break;
+                    }
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    delay = Math.min(delay * 2, 30_000); // max 30s
+                }
+            }
+        }
+
+        private void streamEvents() throws IOException, InterruptedException {
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(30))
+                    .build();
+
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .GET();
+
+            if (token != null) {
+                requestBuilder.header("Authorization", "Bearer " + token);
+            }
+
+            HttpResponse<java.io.InputStream> response = client.send(
+                    requestBuilder.build(),
+                    HttpResponse.BodyHandlers.ofInputStream()
+            );
+
+            if (response.statusCode() != 200) {
+                throw new IOException("HTTP " + response.statusCode());
+            }
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+
+                String eventType = "";
+                String eventData = "";
+
+                String line;
+                while (!closed.get() && (line = reader.readLine()) != null) {
+                    if (line.startsWith("event:")) {
+                        eventType = line.substring(6).trim();
+                    } else if (line.startsWith("data:")) {
+                        eventData = line.substring(5).trim();
+                    } else if (line.isEmpty() && !eventData.isEmpty()) {
+                        // end of event
+                        if ("change".equals(eventType)) {
+                            try {
+                                SubscriptionEvent event = gson.fromJson(eventData, SubscriptionEvent.class);
+                                queue.put(event);
+                            } catch (Exception e) {
+                                // ignore malformed events
+                            }
+                        }
+                        eventType = "";
+                        eventData = "";
+                    }
+                }
+            }
+        }
+
+        @Override
+        public Iterator<SubscriptionEvent> iterator() {
+            return new Iterator<SubscriptionEvent>() {
+                private SubscriptionEvent next = null;
+
+                @Override
+                public boolean hasNext() {
+                    if (closed.get() && queue.isEmpty()) {
+                        return false;
+                    }
+                    if (next != null) {
+                        return true;
+                    }
+                    try {
+                        // poll with timeout to allow checking closed flag
+                        while (!closed.get()) {
+                            next = queue.poll(100, TimeUnit.MILLISECONDS);
+                            if (next != null) {
+                                return true;
+                            }
+                        }
+                        // drain remaining queue after close
+                        next = queue.poll();
+                        return next != null;
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                }
+
+                @Override
+                public SubscriptionEvent next() {
+                    if (next == null && !hasNext()) {
+                        throw new NoSuchElementException();
+                    }
+                    SubscriptionEvent result = next;
+                    next = null;
+                    return result;
+                }
+            };
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+            workerThread.interrupt();
         }
     }
 }

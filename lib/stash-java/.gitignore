@@ -8,6 +8,10 @@ build/
 *.iml
 *.ipr
 *.iws
+.classpath
+.project
+.settings/
+bin/
 
 # misc
 *.log

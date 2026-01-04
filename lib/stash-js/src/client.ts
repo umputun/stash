@@ -1,4 +1,4 @@
-import type { ClientOptions, KeyInfo, KeyInfoResponse } from './types.js';
+import type { ClientOptions, KeyInfo, KeyInfoResponse, Subscription, SubscriptionEvent } from './types.js';
 import { DEFAULT_OPTIONS, Format, parseKeyInfo } from './types.js';
 import {
   ConnectionError,
@@ -196,6 +196,56 @@ export class Client {
   }
 
   /**
+   * Subscribe to changes for an exact key.
+   *
+   * @param key - Key to monitor
+   * @returns Subscription with async iterator
+   *
+   * @example
+   * ```typescript
+   * const sub = client.subscribe('app/config');
+   * try {
+   *   for await (const event of sub) {
+   *     console.log(`${event.action}: ${event.key}`);
+   *   }
+   * } finally {
+   *   sub.close();
+   * }
+   * ```
+   */
+  subscribe(key: string): Subscription {
+    if (key === '') {
+      throw new StashError('key cannot be empty');
+    }
+    const url = `${this.#baseUrl}/kv/subscribe/${this.#encodeKey(key)}`;
+    return new SubscriptionImpl(url, this.#token);
+  }
+
+  /**
+   * Subscribe to changes for all keys with a prefix.
+   *
+   * @param prefix - Prefix to monitor (e.g., "app" matches "app/config", "app/db")
+   * @returns Subscription with async iterator
+   */
+  subscribePrefix(prefix: string): Subscription {
+    if (prefix === '') {
+      throw new StashError('prefix cannot be empty');
+    }
+    const url = `${this.#baseUrl}/kv/subscribe/${this.#encodeKey(prefix)}/*`;
+    return new SubscriptionImpl(url, this.#token);
+  }
+
+  /**
+   * Subscribe to changes for all keys.
+   *
+   * @returns Subscription with async iterator
+   */
+  subscribeAll(): Subscription {
+    const url = `${this.#baseUrl}/kv/subscribe/*`;
+    return new SubscriptionImpl(url, this.#token);
+  }
+
+  /**
    * Clear sensitive data from memory.
    * Call this when done with the client if using ZK encryption.
    */
@@ -294,5 +344,96 @@ export class Client {
     return new Promise((resolve) => {
       setTimeout(resolve, ms);
     });
+  }
+}
+
+/**
+ * Internal SSE subscription implementation with auto-reconnection.
+ */
+class SubscriptionImpl implements Subscription {
+  readonly #url: string;
+  readonly #token: string | undefined;
+  #controller = new AbortController();
+  #closed = false;
+
+  constructor(url: string, token: string | undefined) {
+    this.#url = url;
+    this.#token = token;
+  }
+
+  async *[Symbol.asyncIterator](): AsyncGenerator<SubscriptionEvent> {
+    let delay = 1000; // 1s initial
+
+    while (!this.#closed) {
+      try {
+        this.#controller = new AbortController();
+        const headers: Record<string, string> = {};
+        if (this.#token !== undefined) {
+          headers['Authorization'] = `Bearer ${this.#token}`;
+        }
+
+        const response = await fetch(this.#url, {
+          headers,
+          signal: this.#controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${String(response.status)}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('response body is not readable');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        delay = 1000; // reset on successful connection
+
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- close() modifies #closed externally
+        while (!this.#closed) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // parse SSE events from buffer
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          let eventType = '';
+          let eventData = '';
+
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              eventData = line.slice(5).trim();
+            } else if (line === '' && eventData !== '') {
+              // end of event
+              if (eventType === 'change' && eventData !== '') {
+                try {
+                  const parsed = JSON.parse(eventData) as SubscriptionEvent;
+                  yield parsed;
+                } catch {
+                  // ignore malformed events
+                }
+              }
+              eventType = '';
+              eventData = '';
+            }
+          }
+        }
+      } catch {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- close() modifies #closed externally
+        if (this.#closed) break;
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 30_000); // max 30s
+      }
+    }
+  }
+
+  close(): void {
+    this.#closed = true;
+    this.#controller.abort();
   }
 }

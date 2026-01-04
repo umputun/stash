@@ -110,6 +110,41 @@ Client(
 | `info(key: str) -> KeyInfo` | Get key metadata |
 | `ping() -> None` | Check server connectivity |
 | `close() -> None` | Clear ZK passphrase from memory |
+| `subscribe(key: str) -> Subscription` | Subscribe to exact key changes |
+| `subscribe_prefix(prefix: str) -> Subscription` | Subscribe to prefix changes |
+| `subscribe_all() -> Subscription` | Subscribe to all key changes |
+
+### Subscriptions
+
+Real-time key change notifications via Server-Sent Events:
+
+```python
+from stash import Client
+
+client = Client("http://localhost:8080", token="your-token")
+
+# subscribe to exact key
+with client.subscribe("app/config") as sub:
+    for event in sub:
+        print(f"{event.action}: {event.key} at {event.timestamp}")
+
+# subscribe to prefix (all keys under app/)
+with client.subscribe_prefix("app") as sub:
+    for event in sub:
+        print(f"{event.action}: {event.key}")
+
+# subscribe to all keys
+with client.subscribe_all() as sub:
+    for event in sub:
+        print(f"{event.action}: {event.key}")
+```
+
+**SubscriptionEvent:**
+- `key`: The key that changed
+- `action`: `create`, `update`, or `delete`
+- `timestamp`: RFC3339 timestamp
+
+Subscriptions automatically reconnect on connection failure with exponential backoff (1s initial, 30s max).
 
 ### KeyInfo
 

@@ -110,3 +110,25 @@ export const DEFAULT_OPTIONS = {
   timeout: 30_000,
   retries: 3,
 } as const;
+
+/**
+ * Event from SSE subscription.
+ */
+export interface SubscriptionEvent {
+  /** The key that changed. */
+  readonly key: string;
+  /** The action: create, update, or delete. */
+  readonly action: 'create' | 'update' | 'delete';
+  /** RFC3339 timestamp when the change occurred. */
+  readonly timestamp: string;
+}
+
+/**
+ * SSE subscription with async iteration support.
+ */
+export interface Subscription {
+  /** Async iterator for events - use with `for await...of` */
+  [Symbol.asyncIterator](): AsyncIterator<SubscriptionEvent>;
+  /** Terminate the subscription */
+  close(): void;
+}

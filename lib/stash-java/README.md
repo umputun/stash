@@ -111,6 +111,9 @@ Client client = Client.builder("http://localhost:8080")
 | `list(prefix)` | List keys with prefix filter |
 | `info(key)` | Get metadata for a key |
 | `ping()` | Check server health |
+| `subscribe(key)` | Subscribe to exact key changes |
+| `subscribePrefix(prefix)` | Subscribe to prefix changes |
+| `subscribeAll()` | Subscribe to all key changes |
 
 ### Formats
 
@@ -133,6 +136,49 @@ Client client = Client.builder("http://localhost:8080")
 | `DecryptionError` | - | ZK decryption failed |
 | `ConnectionError` | - | Network error |
 | `StashException` | - | Base exception |
+
+### Subscriptions
+
+Real-time key change notifications via Server-Sent Events:
+
+```java
+import io.github.umputun.stash.Client;
+import io.github.umputun.stash.Subscription;
+import io.github.umputun.stash.SubscriptionEvent;
+
+Client client = Client.builder("http://localhost:8080")
+    .token("your-token")
+    .build();
+
+// subscribe to exact key
+try (Subscription sub = client.subscribe("app/config")) {
+    for (SubscriptionEvent event : sub) {
+        System.out.printf("%s: %s at %s%n",
+            event.getAction(), event.getKey(), event.getTimestamp());
+    }
+}
+
+// subscribe to prefix (all keys under app/)
+try (Subscription sub = client.subscribePrefix("app")) {
+    for (SubscriptionEvent event : sub) {
+        System.out.printf("%s: %s%n", event.getAction(), event.getKey());
+    }
+}
+
+// subscribe to all keys
+try (Subscription sub = client.subscribeAll()) {
+    for (SubscriptionEvent event : sub) {
+        System.out.printf("%s: %s%n", event.getAction(), event.getKey());
+    }
+}
+```
+
+**SubscriptionEvent:**
+- `getKey()` - The key that changed
+- `getAction()` - The action: `create`, `update`, or `delete`
+- `getTimestamp()` - RFC3339 timestamp
+
+Subscriptions automatically reconnect on connection failure with exponential backoff (1s initial, 30s max).
 
 ## Zero-Knowledge Encryption
 

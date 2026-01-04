@@ -25,6 +25,7 @@ dependencies = [
     "urllib3>=2.0",
     "cryptography>=41.0",
     "argon2-cffi>=23.0",
+    "sseclient-py>=1.8",
 ]
 
 [project.optional-dependencies]
