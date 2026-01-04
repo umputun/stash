@@ -386,41 +386,49 @@ class SubscriptionImpl implements Subscription {
           throw new Error('response body is not readable');
         }
 
-        const decoder = new TextDecoder();
-        let buffer = '';
-        delay = 1000; // reset on successful connection
+        try {
+          const decoder = new TextDecoder();
+          let buffer = '';
+          delay = 1000; // reset on successful connection
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- close() modifies #closed externally
-        while (!this.#closed) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- close() modifies #closed externally
+          while (!this.#closed) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
 
-          // parse SSE events from buffer
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
+            // parse SSE events from buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
 
-          let eventType = '';
-          let eventData = '';
+            let eventType = '';
+            let eventData = '';
 
-          for (const line of lines) {
-            if (line.startsWith('event:')) {
-              eventType = line.slice(6).trim();
-            } else if (line.startsWith('data:')) {
-              eventData = line.slice(5).trim();
-            } else if (line === '' && eventData !== '') {
-              // end of event
-              if (eventType === 'change' && eventData !== '') {
-                try {
-                  const parsed = JSON.parse(eventData) as SubscriptionEvent;
-                  yield parsed;
-                } catch {
-                  // ignore malformed events
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventType = line.slice(6).trim();
+              } else if (line.startsWith('data:')) {
+                eventData = line.slice(5).trim();
+              } else if (line === '' && eventData !== '') {
+                // end of event
+                if (eventType === 'change' && eventData !== '') {
+                  try {
+                    const parsed = JSON.parse(eventData) as SubscriptionEvent;
+                    yield parsed;
+                  } catch {
+                    // ignore malformed events
+                  }
                 }
+                eventType = '';
+                eventData = '';
               }
-              eventType = '';
-              eventData = '';
             }
+          }
+        } finally {
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore errors during reader cancellation
           }
         }
       } catch {

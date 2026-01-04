@@ -1,6 +1,6 @@
-package com.github.umputun.stash;
+package io.github.umputun.stash;
 
-import com.github.umputun.stash.errors.StashException;
+import io.github.umputun.stash.errors.StashException;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;

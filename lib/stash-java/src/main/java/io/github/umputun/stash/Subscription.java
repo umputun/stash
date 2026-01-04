@@ -1,4 +1,4 @@
-package com.github.umputun.stash;
+package io.github.umputun.stash;
 
 import java.util.Iterator;
 

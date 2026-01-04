@@ -1,6 +1,6 @@
-package com.github.umputun.stash;
+package io.github.umputun.stash;
 
-import com.github.umputun.stash.errors.StashException;
+import io.github.umputun.stash.errors.StashException;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;

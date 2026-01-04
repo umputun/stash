@@ -1,4 +1,4 @@
-package com.github.umputun.stash.errors;
+package io.github.umputun.stash.errors;
 
 /**
  * Thrown when authentication fails (HTTP 401).

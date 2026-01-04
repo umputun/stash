@@ -1,6 +1,6 @@
-package com.github.umputun.stash;
+package io.github.umputun.stash;
 
-import com.github.umputun.stash.errors.*;
+import io.github.umputun.stash.errors.*;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonDeserializer;
@@ -478,6 +478,7 @@ public final class Client implements Closeable {
         private final String url;
         private final String token;
         private final Gson gson;
+        private final HttpClient httpClient;
         private final AtomicBoolean closed = new AtomicBoolean(false);
         private final BlockingQueue<SubscriptionEvent> queue = new LinkedBlockingQueue<>();
         private final Thread workerThread;
@@ -486,6 +487,9 @@ public final class Client implements Closeable {
             this.url = url;
             this.token = token;
             this.gson = gson;
+            this.httpClient = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(30))
+                    .build();
 
             // start background thread to read SSE events
             this.workerThread = new Thread(this::runWithReconnect, "stash-subscription");
@@ -516,10 +520,6 @@ public final class Client implements Closeable {
         }
 
         private void streamEvents() throws IOException, InterruptedException {
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(30))
-                    .build();
-
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .GET();
@@ -528,7 +528,7 @@ public final class Client implements Closeable {
                 requestBuilder.header("Authorization", "Bearer " + token);
             }
 
-            HttpResponse<java.io.InputStream> response = client.send(
+            HttpResponse<java.io.InputStream> response = httpClient.send(
                     requestBuilder.build(),
                     HttpResponse.BodyHandlers.ofInputStream()
             );

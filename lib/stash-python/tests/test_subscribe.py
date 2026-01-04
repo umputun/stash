@@ -5,6 +5,7 @@ import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
+import urllib3
 
 from stash.client import Client, Subscription, SubscriptionEvent
 
@@ -33,27 +34,31 @@ class TestSubscription:
     """Tests for Subscription class."""
 
     def test_subscription_is_iterable(self):
-        pool = MagicMock()
-        sub = Subscription("http://test/subscribe/key", {}, pool)
+        sub = Subscription("http://test/subscribe/key", {}, 30.0)
         assert hasattr(sub, "__iter__")
 
     def test_subscription_close(self):
-        pool = MagicMock()
-        sub = Subscription("http://test/subscribe/key", {}, pool)
+        sub = Subscription("http://test/subscribe/key", {}, 30.0)
         assert not sub._closed.is_set()
         sub.close()
         assert sub._closed.is_set()
 
     def test_subscription_context_manager(self):
-        pool = MagicMock()
-        with Subscription("http://test/subscribe/key", {}, pool) as sub:
+        with Subscription("http://test/subscribe/key", {}, 30.0) as sub:
             assert not sub._closed.is_set()
         assert sub._closed.is_set()
 
+    def test_subscription_uses_connect_only_timeout(self):
+        """Test that subscription uses connect-only timeout (no read timeout)."""
+        sub = Subscription("http://test/subscribe/key", {}, 30.0)
+        # verify pool has connect-only timeout
+        timeout = sub._pool.connection_pool_kw.get("timeout")
+        assert timeout is not None
+        assert timeout.connect_timeout == 30.0
+        assert timeout.read_timeout is None  # no read timeout for streaming
+
     def test_subscription_events_parsing(self):
         """Test that events are parsed correctly from SSE stream."""
-        pool = MagicMock()
-
         # create a mock SSE client that returns events
         mock_sse_event = MagicMock()
         mock_sse_event.event = "change"
@@ -61,11 +66,12 @@ class TestSubscription:
 
         mock_response = MagicMock()
 
-        with patch("stash.client.sseclient.SSEClient") as mock_sse_client:
+        with patch("stash.client.sseclient.SSEClient") as mock_sse_client, patch.object(
+            urllib3.PoolManager, "request", return_value=mock_response
+        ):
             mock_sse_client.return_value.events.return_value = iter([mock_sse_event])
-            pool.request.return_value = mock_response
 
-            sub = Subscription("http://test/subscribe/key", {}, pool)
+            sub = Subscription("http://test/subscribe/key", {}, 30.0)
 
             # get one event and close
             events = []
@@ -80,8 +86,6 @@ class TestSubscription:
 
     def test_subscription_ignores_non_change_events(self):
         """Test that non-change events are ignored."""
-        pool = MagicMock()
-
         # create mock SSE events with different types
         mock_ping_event = MagicMock()
         mock_ping_event.event = "ping"
@@ -93,11 +97,12 @@ class TestSubscription:
 
         mock_response = MagicMock()
 
-        with patch("stash.client.sseclient.SSEClient") as mock_sse_client:
+        with patch("stash.client.sseclient.SSEClient") as mock_sse_client, patch.object(
+            urllib3.PoolManager, "request", return_value=mock_response
+        ):
             mock_sse_client.return_value.events.return_value = iter([mock_ping_event, mock_change_event])
-            pool.request.return_value = mock_response
 
-            sub = Subscription("http://test/subscribe/key", {}, pool)
+            sub = Subscription("http://test/subscribe/key", {}, 30.0)
 
             events = []
             for event in sub:
@@ -111,7 +116,6 @@ class TestSubscription:
 
     def test_subscription_reconnects_on_error(self):
         """Test that subscription reconnects on connection error."""
-        pool = MagicMock()
         call_count = [0]
 
         def mock_request(*args, **kwargs):
@@ -121,16 +125,16 @@ class TestSubscription:
             # second call succeeds
             return MagicMock()
 
-        pool.request.side_effect = mock_request
-
         mock_sse_event = MagicMock()
         mock_sse_event.event = "change"
         mock_sse_event.data = json.dumps({"key": "test", "action": "update", "timestamp": "2025-01-03T10:30:00Z"})
 
-        with patch("stash.client.sseclient.SSEClient") as mock_sse_client:
+        with patch("stash.client.sseclient.SSEClient") as mock_sse_client, patch.object(
+            urllib3.PoolManager, "request", side_effect=mock_request
+        ):
             mock_sse_client.return_value.events.return_value = iter([mock_sse_event])
 
-            sub = Subscription("http://test/subscribe/key", {}, pool)
+            sub = Subscription("http://test/subscribe/key", {}, 30.0)
 
             # start consuming in a thread
             events = []

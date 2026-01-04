@@ -1,4 +1,4 @@
-package com.github.umputun.stash.errors;
+package io.github.umputun.stash.errors;
 
 /**
  * Base exception for all Stash client errors.

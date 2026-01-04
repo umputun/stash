@@ -43,17 +43,18 @@ class SubscriptionEvent:
 class Subscription:
     """SSE subscription with Pythonic iterator protocol and auto-reconnection."""
 
-    def __init__(self, url: str, headers: dict[str, str], pool: urllib3.PoolManager):
+    def __init__(self, url: str, headers: dict[str, str], connect_timeout: float):
         """Create a new subscription.
 
         Args:
             url: SSE endpoint URL
             headers: HTTP headers for the request
-            pool: urllib3 PoolManager for making requests
+            connect_timeout: Connection timeout in seconds (no read timeout for streaming)
         """
         self._url = url
         self._headers = headers
-        self._pool = pool
+        # use connect-only timeout for SSE streaming (no total/read timeout)
+        self._pool = urllib3.PoolManager(timeout=urllib3.Timeout(connect=connect_timeout))
         self._closed = threading.Event()
 
     def __iter__(self) -> Iterator[SubscriptionEvent]:
@@ -70,6 +71,7 @@ class Subscription:
         """
         delay = 1.0  # 1s initial
         while not self._closed.is_set():
+            response = None
             try:
                 response = self._pool.request("GET", self._url, headers=self._headers, preload_content=False)
                 client = sseclient.SSEClient(response)
@@ -78,13 +80,19 @@ class Subscription:
                     if self._closed.is_set():
                         break
                     if sse_event.event == "change":
-                        data = json.loads(sse_event.data)
-                        yield SubscriptionEvent(key=data["key"], action=data["action"], timestamp=data["timestamp"])
+                        try:
+                            data = json.loads(sse_event.data)
+                            yield SubscriptionEvent(key=data["key"], action=data["action"], timestamp=data["timestamp"])
+                        except (json.JSONDecodeError, KeyError, TypeError):
+                            continue  # skip malformed events
             except Exception:
                 if self._closed.is_set():
                     break
                 time.sleep(delay)
                 delay = min(delay * 2, 30.0)  # max 30s
+            finally:
+                if response is not None:
+                    response.release_conn()
 
     def close(self) -> None:
         """Terminate the subscription."""
@@ -132,6 +140,7 @@ class Client:
         # normalize base URL
         self._base_url = base_url.rstrip("/")
         self._token = token
+        self._timeout = timeout
 
         # configure HTTP pool with retries
         self._pool = urllib3.PoolManager(
@@ -345,7 +354,7 @@ class Client:
         if not key:
             raise ValueError("key is required")
         url = urljoin(self._base_url + "/", f"kv/subscribe/{quote(key, safe='/')}")
-        return Subscription(url, self._headers(), self._pool)
+        return Subscription(url, self._headers(), self._timeout)
 
     def subscribe_prefix(self, prefix: str) -> Subscription:
         """Subscribe to changes for all keys with a prefix.
@@ -364,7 +373,7 @@ class Client:
         if not prefix:
             raise ValueError("prefix is required")
         url = urljoin(self._base_url + "/", f"kv/subscribe/{quote(prefix, safe='/')}/*")
-        return Subscription(url, self._headers(), self._pool)
+        return Subscription(url, self._headers(), self._timeout)
 
     def subscribe_all(self) -> Subscription:
         """Subscribe to changes for all keys.
@@ -378,7 +387,7 @@ class Client:
                     print(f"{event.action}: {event.key}")
         """
         url = urljoin(self._base_url + "/", "kv/subscribe/*")
-        return Subscription(url, self._headers(), self._pool)
+        return Subscription(url, self._headers(), self._timeout)
 
     def close(self) -> None:
         """Clear ZK passphrase from memory.

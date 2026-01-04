@@ -1,7 +1,7 @@
-package com.github.umputun.stash;
+package io.github.umputun.stash;
 
-import com.github.umputun.stash.errors.DecryptionError;
-import com.github.umputun.stash.errors.StashException;
+import io.github.umputun.stash.errors.DecryptionError;
+import io.github.umputun.stash.errors.StashException;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
