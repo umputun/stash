@@ -534,6 +534,7 @@ public final class Client implements Closeable {
             );
 
             if (response.statusCode() != 200) {
+                response.body().close();
                 throw new IOException("HTTP " + response.statusCode());
             }
 
@@ -548,7 +549,8 @@ public final class Client implements Closeable {
                     if (line.startsWith("event:")) {
                         eventType = line.substring(6).trim();
                     } else if (line.startsWith("data:")) {
-                        eventData = line.substring(5).trim();
+                        String data = line.substring(5).trim();
+                        eventData = eventData.isEmpty() ? data : eventData + "\n" + data;
                     } else if (line.isEmpty() && !eventData.isEmpty()) {
                         // end of event
                         if ("change".equals(eventType)) {
@@ -612,6 +614,11 @@ public final class Client implements Closeable {
         public void close() {
             closed.set(true);
             workerThread.interrupt();
+            try {
+                workerThread.join(1000); // wait up to 1 second for thread to terminate
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

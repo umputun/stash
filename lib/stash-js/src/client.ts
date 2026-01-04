@@ -408,7 +408,8 @@ class SubscriptionImpl implements Subscription {
               if (line.startsWith('event:')) {
                 eventType = line.slice(6).trim();
               } else if (line.startsWith('data:')) {
-                eventData = line.slice(5).trim();
+                const data = line.slice(5).trim();
+                eventData = eventData === '' ? data : eventData + '\n' + data;
               } else if (line === '' && eventData !== '') {
                 // end of event
                 if (eventType === 'change' && eventData !== '') {

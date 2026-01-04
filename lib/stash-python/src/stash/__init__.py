@@ -13,7 +13,7 @@ Example:
     {"debug": true}
 """
 
-from stash.client import Client
+from stash.client import Client, Subscription, SubscriptionEvent
 from stash.errors import (
     ConnectionError,
     DecryptionError,
@@ -36,6 +36,8 @@ __all__ = [
     "NotFoundError",
     "ResponseError",
     "StashError",
+    "Subscription",
+    "SubscriptionEvent",
     "UnauthorizedError",
     "__version__",
 ]

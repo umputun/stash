@@ -29,6 +29,8 @@ export type {
   KeyInfo,
   KeyInfoResponse,
   ClientOptions,
+  Subscription,
+  SubscriptionEvent,
 } from './types.js';
 
 // client
