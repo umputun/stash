@@ -53,13 +53,13 @@ logging:
     println!("6. Getting with default (existing key)...");
     let value = client
         .get_or_default("example/config", "default-value")
-        .await;
+        .await?;
     println!("   Got: {} chars\n", value.len());
 
     println!("7. Getting with default (non-existing key)...");
     let value = client
         .get_or_default("example/missing", "default-value")
-        .await;
+        .await?;
     println!("   Got default: {}\n", value);
 
     // list keys
@@ -78,7 +78,7 @@ logging:
     println!("   Keys deleted\n");
 
     // demonstrate authentication with options
-    println!("10. Creating client with options (token, timeout)...");
+    println!("10. Creating client with options (token, timeout, retries)...");
     let options = ClientOptions {
         token: Some("my-api-token".to_string()),
         timeout: Some(Duration::from_secs(10)),

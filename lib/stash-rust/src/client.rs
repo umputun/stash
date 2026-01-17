@@ -1,13 +1,33 @@
 use crate::error::Error;
-use crate::types::{Event, Format, KeyInfo};
+use crate::types::{Event, Format, HistoryEntry, KeyInfo};
 use futures::stream::{Stream, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest_eventsource::{Event as SseEvent, EventSource};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use std::pin::Pin;
 use std::time::Duration;
 
 #[cfg(feature = "zk")]
 use crate::zk::ZKCrypto;
+
+/// encodes key path segments while preserving slashes for hierarchical keys.
+/// handles special cases: dot segments (., ..) are encoded to prevent URL normalization.
+/// e.g., "app/config?special=true" -> "app/config%3Fspecial%3Dtrue"
+/// e.g., "app/../secret" -> "app/%2E%2E/secret"
+fn encode_key_path(key: &str) -> String {
+    key.split('/')
+        .map(|segment| {
+            // encode dot segments explicitly to prevent URL parser normalization
+            if segment == "." || segment == ".." {
+                segment.replace('.', "%2E")
+            } else {
+                urlencoding::encode(segment).into_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 /// configuration options for stash client
 #[derive(Default, Clone)]
@@ -18,7 +38,8 @@ pub struct ClientOptions {
     /// request timeout (default: 30s)
     pub timeout: Option<Duration>,
 
-    /// number of retry attempts on transient failures (default: 3)
+    /// number of retry attempts for transient failures (default: 3)
+    /// retries use exponential backoff starting at 1s
     pub retries: Option<u32>,
 
     /// passphrase for zero-knowledge encryption (min 16 chars)
@@ -28,10 +49,9 @@ pub struct ClientOptions {
 /// stash http client for key-value operations
 #[derive(Clone)]
 pub struct Client {
-    http_client: reqwest::Client,
+    http_client: ClientWithMiddleware,
+    sse_client: reqwest::Client, // for SSE subscriptions (no timeout)
     base_url: String,
-    #[allow(dead_code)]
-    options: ClientOptions,
     #[cfg(feature = "zk")]
     zk_crypto: Option<ZKCrypto>,
 }
@@ -54,6 +74,7 @@ impl Client {
         }
 
         let timeout = options.timeout.unwrap_or(Duration::from_secs(30));
+        let retries = options.retries.unwrap_or(3);
 
         let mut headers = HeaderMap::new();
         if let Some(ref token) = options.token {
@@ -63,8 +84,21 @@ impl Client {
             headers.insert(AUTHORIZATION, auth_value);
         }
 
-        let http_client = reqwest::Client::builder()
+        let raw_client = reqwest::Client::builder()
             .timeout(timeout)
+            .default_headers(headers.clone())
+            .build()
+            .map_err(|e| Error::Connection(e.to_string()))?;
+
+        // build middleware client with retry support
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(retries);
+        let http_client = ClientBuilder::new(raw_client)
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build();
+
+        // SSE client: connect timeout but no request timeout (streams are long-lived)
+        let sse_client = reqwest::Client::builder()
+            .connect_timeout(timeout)
             .default_headers(headers)
             .build()
             .map_err(|e| Error::Connection(e.to_string()))?;
@@ -78,8 +112,8 @@ impl Client {
 
         Ok(Client {
             http_client,
+            sse_client,
             base_url: base_url.trim_end_matches('/').to_string(),
-            options,
             #[cfg(feature = "zk")]
             zk_crypto,
         })
@@ -108,8 +142,7 @@ impl Client {
 
     /// retrieves a key's value as raw bytes
     pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>, Error> {
-        let key_encoded = urlencoding::encode(key);
-        let url = format!("{}/kv/{}", self.base_url, key_encoded);
+        let url = format!("{}/kv/{}", self.base_url, encode_key_path(key));
         let resp = self.http_client.get(&url).send().await?;
 
         if !resp.status().is_success() {
@@ -132,8 +165,14 @@ impl Client {
     }
 
     /// retrieves a key's value, returning default if key not found
-    pub async fn get_or_default(&self, key: &str, default: &str) -> String {
-        self.get(key).await.unwrap_or_else(|_| default.to_string())
+    ///
+    /// only returns default for NotFound errors; other errors are propagated
+    pub async fn get_or_default(&self, key: &str, default: &str) -> Result<String, Error> {
+        match self.get(key).await {
+            Ok(v) => Ok(v),
+            Err(Error::NotFound) => Ok(default.to_string()),
+            Err(e) => Err(e),
+        }
     }
 
     /// retrieves metadata for a key
@@ -143,6 +182,21 @@ impl Client {
         keys.into_iter()
             .find(|k| k.key == key)
             .ok_or(Error::NotFound)
+    }
+
+    /// retrieves the commit history for a key
+    ///
+    /// requires git versioning to be enabled on the server
+    pub async fn history(&self, key: &str) -> Result<Vec<HistoryEntry>, Error> {
+        let url = format!("{}/kv/history/{}", self.base_url, encode_key_path(key));
+        let resp = self.http_client.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            let entries: Vec<HistoryEntry> = resp.json().await?;
+            Ok(entries)
+        } else {
+            Err(resp.error_for_status().unwrap_err().into())
+        }
     }
 
     /// stores a key-value pair
@@ -157,12 +211,11 @@ impl Client {
         value: &[u8],
         format: Option<Format>,
     ) -> Result<(), Error> {
-        let key_encoded = urlencoding::encode(key);
-        let mut url = format!("{}/kv/{}", self.base_url, key_encoded);
+        let mut url = format!("{}/kv/{}", self.base_url, encode_key_path(key));
 
         if let Some(fmt) = format {
             let format_str = match fmt {
-                Format::Text => "text",
+                Format::Text | Format::Unknown => "text",
                 Format::Json => "json",
                 Format::Yaml => "yaml",
                 Format::Xml => "xml",
@@ -196,8 +249,7 @@ impl Client {
 
     /// deletes a key
     pub async fn delete(&self, key: &str) -> Result<(), Error> {
-        let key_encoded = urlencoding::encode(key);
-        let url = format!("{}/kv/{}", self.base_url, key_encoded);
+        let url = format!("{}/kv/{}", self.base_url, encode_key_path(key));
         let resp = self.http_client.delete(&url).send().await?;
 
         if resp.status().is_success() {
@@ -271,11 +323,10 @@ impl Client {
         &self,
         path: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
-        let key_encoded = urlencoding::encode(path);
-        let url = format!("{}/kv/subscribe/{}", self.base_url, key_encoded);
+        let url = format!("{}/kv/subscribe/{}", self.base_url, encode_key_path(path));
 
-        // create request builder with auth headers from http_client
-        let request_builder = self.http_client.get(&url);
+        // use SSE client without timeout (streams are long-lived)
+        let request_builder = self.sse_client.get(&url);
 
         let event_source =
             EventSource::new(request_builder).map_err(|e| Error::Connection(e.to_string()))?;

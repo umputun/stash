@@ -1,5 +1,5 @@
 use stash::{Client, ClientOptions, Error, Format};
-use wiremock::matchers::{header, method, path, query_param};
+use wiremock::matchers::{header, method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[cfg(feature = "zk")]
@@ -151,7 +151,23 @@ async fn test_get_or_default() {
 
     let client = Client::new(&mock_server.uri()).unwrap();
     let result = client.get_or_default("missing", "default-value").await;
-    assert_eq!(result, "default-value");
+    assert_eq!(result.unwrap(), "default-value");
+}
+
+#[tokio::test]
+async fn test_get_or_default_propagates_errors() {
+    let mock_server = MockServer::start().await;
+
+    // unauthorized should be propagated, not masked with default
+    Mock::given(method("GET"))
+        .and(path("/kv/secret"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.get_or_default("secret", "default-value").await;
+    assert!(matches!(result, Err(Error::Unauthorized)));
 }
 
 #[tokio::test]
@@ -306,6 +322,37 @@ async fn test_list_with_prefix() {
 }
 
 #[tokio::test]
+async fn test_list_unknown_format() {
+    // verifies forward compatibility: unknown format values deserialize to Format::Unknown
+    let mock_server = MockServer::start().await;
+
+    let response_json = r#"[
+        {
+            "key": "app/config",
+            "size": 123,
+            "format": "some_future_format",
+            "secret": false,
+            "zk_encrypted": false,
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z"
+        }
+    ]"#;
+
+    Mock::given(method("GET"))
+        .and(path("/kv/"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(response_json))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.list(None).await;
+    assert!(result.is_ok());
+    let keys = result.unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].format, Format::Unknown);
+}
+
+#[tokio::test]
 async fn test_client_with_token() {
     let mock_server = MockServer::start().await;
 
@@ -370,6 +417,167 @@ async fn test_info_not_found() {
 
     let client = Client::new(&mock_server.uri()).unwrap();
     let result = client.info("missing").await;
+    assert!(matches!(result, Err(Error::NotFound)));
+}
+
+// tests for keys with slashes (hierarchical keys)
+#[tokio::test]
+async fn test_get_with_slashes() {
+    let mock_server = MockServer::start().await;
+
+    // key with slashes should be passed as literal path segments, not URL-encoded
+    Mock::given(method("GET"))
+        .and(path("/kv/app/config/database"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("db-connection-string"))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.get("app/config/database").await;
+    assert_eq!(result.unwrap(), "db-connection-string");
+}
+
+#[tokio::test]
+async fn test_set_with_slashes() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/kv/app/config/database"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.set("app/config/database", "db-value", None).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_delete_with_slashes() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/kv/app/config/database"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.delete("app/config/database").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_get_with_reserved_chars() {
+    // keys with reserved characters (?, #, space) should be URL-encoded per segment
+    // use path_regex to match the encoded path since wiremock decodes for path()
+    let mock_server = MockServer::start().await;
+
+    // match path with encoded ? (%3F)
+    Mock::given(method("GET"))
+        .and(path_regex(r"/kv/app/config%3Fdebug%3Dtrue"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("debug-value"))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.get("app/config?debug=true").await;
+    assert_eq!(result.unwrap(), "debug-value");
+}
+
+#[tokio::test]
+async fn test_get_with_dot_segments() {
+    // dot segments (., ..) must be encoded to prevent URL normalization.
+    // wiremock + hyper may normalize paths, so use path_regex for flexible matching.
+    // the key point: client sends %2E%2E to preserve the literal ".." in the path.
+    let mock_server = MockServer::start().await;
+
+    // match either the encoded form or the decoded form (hyper may decode)
+    Mock::given(method("GET"))
+        .and(path_regex(r"/kv/(app/%2E%2E/secrets/key|secrets/key)"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("secret-value"))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.get("app/../secrets/key").await;
+    assert_eq!(result.unwrap(), "secret-value");
+}
+
+#[tokio::test]
+async fn test_set_with_space_in_key() {
+    let mock_server = MockServer::start().await;
+
+    // match path with encoded space (%20)
+    Mock::given(method("PUT"))
+        .and(path_regex(r"/kv/app/my%20key"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.set("app/my key", "value", None).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_history_success() {
+    let mock_server = MockServer::start().await;
+
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let value_b64 = STANDARD.encode("test-value");
+
+    let response_json = format!(
+        r#"[
+        {{
+            "hash": "abc123def456",
+            "timestamp": "2024-01-01T12:00:00Z",
+            "author": "admin",
+            "operation": "set",
+            "format": "text",
+            "value": "{}"
+        }},
+        {{
+            "hash": "def456abc123",
+            "timestamp": "2024-01-01T11:00:00Z",
+            "author": "user1",
+            "operation": "set",
+            "format": "text",
+            "value": "{}"
+        }}
+    ]"#,
+        value_b64, value_b64
+    );
+
+    Mock::given(method("GET"))
+        .and(path("/kv/history/app/config"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(&response_json))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.history("app/config").await;
+    assert!(result.is_ok());
+
+    let entries = result.unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].hash, "abc123def456");
+    assert_eq!(entries[0].operation, "set");
+    assert_eq!(entries[0].value, b"test-value");
+}
+
+#[tokio::test]
+async fn test_history_not_found() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/kv/history/missing"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    let client = Client::new(&mock_server.uri()).unwrap();
+    let result = client.history("missing").await;
     assert!(matches!(result, Err(Error::NotFound)));
 }
 

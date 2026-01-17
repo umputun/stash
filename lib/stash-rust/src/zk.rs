@@ -10,7 +10,8 @@ use aes_gcm::{
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::RngCore;
-use zeroize::Zeroize;
+use secrecy::{ExposeSecret, SecretString};
+use zeroize::Zeroizing;
 
 const ZK_PREFIX: &str = "$ZK$";
 const ZK_SALT_SIZE: usize = 16;
@@ -30,17 +31,16 @@ pub fn is_zk_encrypted(value: &str) -> bool {
 }
 
 /// zero-knowledge crypto handler for client-side encryption
-#[derive(Clone)]
+///
+/// passphrase is stored securely using SecretString which zeroizes on drop
 pub struct ZKCrypto {
-    passphrase: String,
+    passphrase: SecretString,
 }
 
-impl Drop for ZKCrypto {
-    fn drop(&mut self) {
-        // best-effort secure clearing of passphrase
-        unsafe {
-            let bytes = self.passphrase.as_bytes_mut();
-            bytes.zeroize();
+impl Clone for ZKCrypto {
+    fn clone(&self) -> Self {
+        ZKCrypto {
+            passphrase: SecretString::from(self.passphrase.expose_secret().to_owned()),
         }
     }
 }
@@ -56,7 +56,7 @@ impl ZKCrypto {
             ));
         }
         Ok(ZKCrypto {
-            passphrase: passphrase.to_string(),
+            passphrase: SecretString::from(passphrase.to_string()),
         })
     }
 
@@ -137,15 +137,17 @@ impl ZKCrypto {
     }
 
     /// derives a 32-byte AES key from passphrase and salt using Argon2id
-    fn derive_key(&self, salt: &[u8]) -> Result<Vec<u8>, Error> {
+    ///
+    /// returns the key wrapped in Zeroizing for automatic secure clearing
+    fn derive_key(&self, salt: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
         let params = Params::new(ARGON_MEMORY, ARGON_TIME, ARGON_THREADS, Some(ZK_KEY_SIZE))
             .map_err(|e| Error::Decryption(format!("argon2 params: {}", e)))?;
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
-        let mut key = vec![0u8; ZK_KEY_SIZE];
+        let mut key = Zeroizing::new(vec![0u8; ZK_KEY_SIZE]);
         argon2
-            .hash_password_into(self.passphrase.as_bytes(), salt, &mut key)
+            .hash_password_into(self.passphrase.expose_secret().as_bytes(), salt, &mut key)
             .map_err(|e| Error::Decryption(format!("key derivation: {}", e)))?;
 
         Ok(key)

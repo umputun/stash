@@ -51,3 +51,13 @@ impl From<reqwest::Error> for Error {
         }
     }
 }
+
+impl From<reqwest_middleware::Error> for Error {
+    fn from(err: reqwest_middleware::Error) -> Self {
+        // try to extract the underlying reqwest error for better error handling
+        match err {
+            reqwest_middleware::Error::Middleware(e) => Error::Connection(e.to_string()),
+            reqwest_middleware::Error::Reqwest(e) => Error::from(e),
+        }
+    }
+}

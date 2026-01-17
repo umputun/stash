@@ -883,7 +883,7 @@ zk_client = Client("http://localhost:8080", zk_key="your-secret-passphrase")
 zk_client.set("app/secrets/api-key", "secret-value")  # encrypted client-side
 ```
 
-Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go client). See [lib/stash-python/README.md](lib/stash-python/README.md) for full documentation.
+Features: automatic retries, configurable timeout, Bearer token auth, SSE subscriptions, zero-knowledge encryption (cross-compatible with Go client). See [lib/stash-python/README.md](lib/stash-python/README.md) for full documentation.
 
 ## TypeScript/JavaScript Client Library
 
@@ -909,7 +909,7 @@ const zkClient = new Client('http://localhost:8080', { zkKey: 'your-secret-passp
 await zkClient.set('app/secrets/api-key', 'secret-value');  // encrypted client-side
 ```
 
-Features: automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go and Python clients). See [lib/stash-js/README.md](lib/stash-js/README.md) for full documentation.
+Features: automatic retries, configurable timeout, Bearer token auth, SSE subscriptions, zero-knowledge encryption (cross-compatible with Go and Python clients). See [lib/stash-js/README.md](lib/stash-js/README.md) for full documentation.
 
 ## Java Client Library
 
@@ -982,7 +982,7 @@ let zk_client = Client::with_options("http://localhost:8080", options)?;
 zk_client.set("app/secrets/api-key", "secret-value", None).await?;
 ```
 
-Features: async/await, automatic retries, configurable timeout, Bearer token auth, SSE subscriptions, zero-knowledge encryption (cross-compatible with Go, Python, TypeScript, and Java clients). See [lib/stash-rust/README.md](lib/stash-rust/README.md) for full documentation.
+Features: async/await, automatic retries with exponential backoff, configurable timeout, Bearer token auth, SSE subscriptions, zero-knowledge encryption (cross-compatible with Go, Python, TypeScript, and Java clients). See [lib/stash-rust/README.md](lib/stash-rust/README.md) for full documentation.
 
 ## Docker
 

@@ -61,8 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `ping()` - health check
 - `get(key)` - get value as string
 - `get_bytes(key)` - get value as bytes
-- `get_or_default(key, default)` - get with fallback
+- `get_or_default(key, default)` - get with fallback (returns default only for NotFound, propagates other errors)
 - `info(key)` - get key metadata
+- `history(key)` - get commit history (requires git versioning on server)
 - `set(key, value, format)` - set value
 - `set_bytes(key, value, format)` - set bytes
 - `delete(key)` - delete key
@@ -81,11 +82,14 @@ use std::time::Duration;
 let options = ClientOptions {
     token: Some("my-token".to_string()),
     timeout: Some(Duration::from_secs(10)),
+    retries: Some(3), // retry transient errors with exponential backoff
     ..Default::default()
 };
 
 let client = Client::with_options("http://localhost:8080", options)?;
 ```
+
+Retries use exponential backoff (starting at 1s) for transient failures like 5xx errors, timeouts, and connection errors. Default is 3 retries.
 
 ## Zero-Knowledge Encryption
 
