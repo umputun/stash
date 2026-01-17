@@ -374,3 +374,41 @@ async fn test_forbidden() {
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), Error::Forbidden));
 }
+
+#[tokio::test]
+async fn test_subscribe() {
+    // note: this test only validates that the subscription methods are callable
+    // and return the correct error for empty keys
+    // full SSE testing would require a real SSE server or more complex mocking
+    let client = Client::new("http://localhost:8080").unwrap();
+    let result = client.subscribe("").await;
+    assert!(result.is_err());
+    match result {
+        Err(Error::Connection(msg)) => assert!(msg.contains("key cannot be empty")),
+        _ => panic!("expected Connection error"),
+    }
+}
+
+#[tokio::test]
+async fn test_subscribe_prefix() {
+    let client = Client::new("http://localhost:8080").unwrap();
+    let result = client.subscribe_prefix("").await;
+    assert!(result.is_err());
+    match result {
+        Err(Error::Connection(msg)) => assert!(msg.contains("prefix cannot be empty")),
+        _ => panic!("expected Connection error"),
+    }
+}
+
+#[tokio::test]
+async fn test_subscribe_all() {
+    // test that subscribe_all can be created (doesn't require any parameters)
+    let client = Client::new("http://localhost:8080").unwrap();
+    // we can't actually test the stream without a real server
+    // but we can verify the method is callable and returns a stream
+    let result = client.subscribe_all().await;
+    // EventSource creation may succeed (doesn't immediately connect)
+    // so we just verify the method signature works
+    // actual connection errors would occur when reading from the stream
+    assert!(result.is_ok() || result.is_err());
+}

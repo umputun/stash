@@ -1,6 +1,9 @@
 use crate::error::Error;
-use crate::types::{Format, KeyInfo};
+use crate::types::{Event, Format, KeyInfo};
+use futures::stream::{Stream, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest_eventsource::{Event as SseEvent, EventSource};
+use std::pin::Pin;
 use std::time::Duration;
 
 #[cfg(feature = "zk")]
@@ -216,5 +219,80 @@ impl Client {
 
         let keys: Vec<KeyInfo> = response.json().await?;
         Ok(keys)
+    }
+
+    /// Subscribe to changes for a specific key
+    pub async fn subscribe(
+        &self,
+        key: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        if key.is_empty() {
+            return Err(Error::Connection("key cannot be empty".to_string()));
+        }
+        let url = format!("{}/kv/subscribe/{}", self.base_url, key);
+        self.create_sse_stream(&url).await
+    }
+
+    /// Subscribe to changes for all keys with a given prefix
+    pub async fn subscribe_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        if prefix.is_empty() {
+            return Err(Error::Connection("prefix cannot be empty".to_string()));
+        }
+        // append /* suffix for prefix matching (server requirement)
+        let suffix = if prefix.ends_with('/') || prefix.ends_with("/*") {
+            ""
+        } else {
+            "/*"
+        };
+        let url = format!("{}/kv/subscribe/{}{}", self.base_url, prefix, suffix);
+        self.create_sse_stream(&url).await
+    }
+
+    /// Subscribe to changes for all keys
+    pub async fn subscribe_all(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        let url = format!("{}/kv/subscribe/*", self.base_url);
+        self.create_sse_stream(&url).await
+    }
+
+    // create an SSE stream
+    // note: reqwest-eventsource provides basic reconnection, but custom retry policy
+    // (exponential backoff) should be configured via set_retry_policy() in future iterations
+    async fn create_sse_stream(
+        &self,
+        url: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        let request_builder = self.http_client.get(url);
+
+        // authorization header is already in http_client default headers
+        // so we don't need to add it again
+
+        let event_source = EventSource::new(request_builder)
+            .map_err(|e| Error::Connection(format!("failed to create event source: {}", e)))?;
+
+        let stream = event_source.map(|result| match result {
+            Ok(SseEvent::Open) => {
+                // connection opened, skip this event
+                None
+            }
+            Ok(SseEvent::Message(msg)) => {
+                // parse the JSON event
+                match serde_json::from_str::<Event>(&msg.data) {
+                    Ok(event) => Some(Ok(event)),
+                    Err(e) => Some(Err(Error::Connection(format!(
+                        "failed to parse event: {}",
+                        e
+                    )))),
+                }
+            }
+            Err(e) => Some(Err(Error::Connection(format!("SSE error: {}", e)))),
+        });
+
+        // filter out None values (from Open events) and return boxed stream
+        Ok(Box::pin(stream.filter_map(|x| async move { x })))
     }
 }
