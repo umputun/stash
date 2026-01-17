@@ -6,7 +6,7 @@ Lightweight key-value configuration service for centralized config management. S
 
 - **Zero infrastructure** - Single binary, no cluster, no consensus protocols. Download and run.
 - **Simple by default, scalable when needed** - Start with SQLite, switch to PostgreSQL with caching for high-load scenarios.
-- **Works from anywhere** - Simple HTTP API (curl-friendly) plus client libraries for Go, Python, TypeScript, and Java.
+- **Works from anywhere** - Simple HTTP API (curl-friendly) plus client libraries for Go, Python, TypeScript, Java, and Rust.
 - **Built-in web UI** - No separate tool needed. View, edit, and manage configuration directly in the browser.
 - **True zero-knowledge option** - Client-side encryption where the server never sees plaintext.
 - **Git-powered history** - Full audit trail with point-in-time recovery built in.
@@ -48,7 +48,7 @@ Web UI available at http://localhost:8080
 - Optional in-memory cache for read operations
 - Optional audit logging with retention and admin-only web UI
 - Real-time key change notifications via Server-Sent Events (SSE)
-- Go, Python, TypeScript/JavaScript, and Java client libraries with full API support and client-side, zero-knowledge encryption
+- Go, Python, TypeScript/JavaScript, Java, and Rust client libraries with full API support and client-side, zero-knowledge encryption
 
 ## Security Note
 
@@ -944,6 +944,45 @@ try (Client zkClient = Client.builder("http://localhost:8080")
 ```
 
 Features: builder pattern, automatic retries, configurable timeout, Bearer token auth, zero-knowledge encryption (cross-compatible with Go, Python, and TypeScript clients). See [lib/stash-java/README.md](lib/stash-java/README.md) for full documentation.
+
+## Rust Client Library
+
+A Rust client library is available via crates.io:
+
+```toml
+[dependencies]
+stash = "0.1"
+
+# with zero-knowledge encryption
+stash = { version = "0.1", features = ["zk"] }
+```
+
+```rust
+use stash::{Client, ClientOptions, Format};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("http://localhost:8080")?;
+
+    // get/set/delete/list operations
+    let value = client.get("app/config").await?;
+    client.set("app/config", "new-value", Some(Format::Json)).await?;
+    client.delete("app/config").await?;
+    let keys = client.list(Some("app/")).await?;
+
+    Ok(())
+}
+
+// with zero-knowledge encryption (server never sees plaintext)
+let options = ClientOptions {
+    zk_key: Some("your-secret-passphrase".to_string()),
+    ..Default::default()
+};
+let zk_client = Client::with_options("http://localhost:8080", options)?;
+zk_client.set("app/secrets/api-key", "secret-value", None).await?;
+```
+
+Features: async/await, automatic retries, configurable timeout, Bearer token auth, SSE subscriptions, zero-knowledge encryption (cross-compatible with Go, Python, TypeScript, and Java clients). See [lib/stash-rust/README.md](lib/stash-rust/README.md) for full documentation.
 
 ## Docker
 

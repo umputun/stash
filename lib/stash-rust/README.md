@@ -50,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## API Methods
 
+### Key-Value Operations
 - `ping()` - health check
 - `get(key)` - get value as string
 - `get_bytes(key)` - get value as bytes
@@ -59,6 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `set_bytes(key, value, format)` - set bytes
 - `delete(key)` - delete key
 - `list(prefix)` - list keys
+
+### Subscriptions (SSE)
+- `subscribe(key)` - subscribe to exact key changes
+- `subscribe_prefix(prefix)` - subscribe to all keys with prefix
+- `subscribe_all()` - subscribe to all key changes
 
 ## Authentication
 
@@ -73,6 +79,63 @@ let options = ClientOptions {
 
 let client = Client::with_options("http://localhost:8080", options)?;
 ```
+
+## Zero-Knowledge Encryption
+
+Enable the `zk` feature and provide a passphrase to encrypt values client-side:
+
+```rust
+let options = ClientOptions {
+    zk_key: Some("my-secret-passphrase-min-16-chars".to_string()),
+    ..Default::default()
+};
+
+let client = Client::with_options("http://localhost:8080", options)?;
+
+// values are automatically encrypted before sending to server
+client.set("app/secret", "sensitive-data", None).await?;
+
+// and decrypted when retrieved
+let value = client.get("app/secret").await?;
+```
+
+The server stores opaque encrypted blobs (`$ZK$<base64>`). Only clients with the correct passphrase can decrypt values. ZK encryption is cross-compatible with Go, Python, TypeScript, and Java SDKs using the same passphrase.
+
+## Subscriptions
+
+Subscribe to real-time key change events using Server-Sent Events:
+
+```rust
+use futures::StreamExt;
+
+// subscribe to a specific key
+let mut stream = client.subscribe("app/config").await?;
+while let Some(event) = stream.next().await {
+    let event = event?;
+    println!("{}: {} at {}", event.action, event.key, event.timestamp);
+}
+
+// subscribe to all keys with prefix
+let mut stream = client.subscribe_prefix("app/").await?;
+while let Some(event) = stream.next().await {
+    let event = event?;
+    println!("Change detected: {}", event.key);
+}
+
+// subscribe to all keys
+let mut stream = client.subscribe_all().await?;
+while let Some(event) = stream.next().await {
+    let event = event?;
+    match event.action.as_str() {
+        "create" => println!("New key: {}", event.key),
+        "update" => println!("Updated: {}", event.key),
+        "delete" => println!("Deleted: {}", event.key),
+        _ => {}
+    }
+}
+```
+
+Auto-reconnection with exponential backoff is built-in (1s initial delay, 30s max).
 
 ## Error Handling
 
