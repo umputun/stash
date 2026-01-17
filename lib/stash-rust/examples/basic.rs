@@ -38,8 +38,8 @@ logging:
     println!("   Key: {}", info.key);
     println!("   Size: {} bytes", info.size);
     println!("   Format: {:?}", info.format);
-    println!("   Created: {}", info.created);
-    println!("   Updated: {}\n", info.updated);
+    println!("   Created: {}", info.created_at);
+    println!("   Updated: {}\n", info.updated_at);
 
     // set another key with bytes
     println!("5. Setting binary data...");

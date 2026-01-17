@@ -243,18 +243,18 @@ async fn test_list_all() {
             "size": 123,
             "format": "json",
             "secret": false,
-            "zkEncrypted": false,
-            "created": "2024-01-01T00:00:00Z",
-            "updated": "2024-01-02T00:00:00Z"
+            "zk_encrypted": false,
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z"
         },
         {
             "key": "db/connection",
             "size": 456,
             "format": "yaml",
             "secret": true,
-            "zkEncrypted": false,
-            "created": "2024-01-03T00:00:00Z",
-            "updated": "2024-01-04T00:00:00Z"
+            "zk_encrypted": false,
+            "created_at": "2024-01-03T00:00:00Z",
+            "updated_at": "2024-01-04T00:00:00Z"
         }
     ]"#;
 
@@ -284,9 +284,9 @@ async fn test_list_with_prefix() {
             "size": 123,
             "format": "json",
             "secret": false,
-            "zkEncrypted": false,
-            "created": "2024-01-01T00:00:00Z",
-            "updated": "2024-01-02T00:00:00Z"
+            "zk_encrypted": false,
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z"
         }
     ]"#;
 
@@ -335,9 +335,9 @@ async fn test_info_success() {
             "size": 123,
             "format": "json",
             "secret": false,
-            "zkEncrypted": false,
-            "created": "2024-01-01T00:00:00Z",
-            "updated": "2024-01-02T00:00:00Z"
+            "zk_encrypted": false,
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-02T00:00:00Z"
         }
     ]"#;
 

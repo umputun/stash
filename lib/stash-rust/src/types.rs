@@ -32,14 +32,13 @@ pub struct KeyInfo {
     pub secret: bool,
 
     /// whether this key is zero-knowledge encrypted
-    #[serde(rename = "zkEncrypted")]
     pub zk_encrypted: bool,
 
     /// creation timestamp
-    pub created: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 
     /// last update timestamp
-    pub updated: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// subscription event for key changes

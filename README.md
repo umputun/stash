@@ -947,14 +947,14 @@ Features: builder pattern, automatic retries, configurable timeout, Bearer token
 
 ## Rust Client Library
 
-A Rust client library is available via crates.io:
+A Rust client library is available via GitHub:
 
 ```toml
 [dependencies]
-stash = "0.1"
+stash = { git = "https://github.com/umputun/stash", path = "lib/stash-rust" }
 
 # with zero-knowledge encryption
-stash = { version = "0.1", features = ["zk"] }
+stash = { git = "https://github.com/umputun/stash", path = "lib/stash-rust", features = ["zk"] }
 ```
 
 ```rust
