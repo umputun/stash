@@ -1,7 +1,13 @@
 use crate::error::Error;
-use crate::types::{Format, KeyInfo};
+use crate::types::{Event, Format, KeyInfo};
+use futures::stream::{Stream, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest_eventsource::{Event as SseEvent, EventSource};
+use std::pin::Pin;
 use std::time::Duration;
+
+#[cfg(feature = "zk")]
+use crate::zk::ZKCrypto;
 
 /// configuration options for stash client
 #[derive(Default, Clone)]
@@ -24,8 +30,10 @@ pub struct ClientOptions {
 pub struct Client {
     http_client: reqwest::Client,
     base_url: String,
-    #[allow(dead_code)] // will be used in iteration 2 for zk encryption
+    #[allow(dead_code)]
     options: ClientOptions,
+    #[cfg(feature = "zk")]
+    zk_crypto: Option<ZKCrypto>,
 }
 
 impl Client {
@@ -61,10 +69,19 @@ impl Client {
             .build()
             .map_err(|e| Error::Connection(e.to_string()))?;
 
+        #[cfg(feature = "zk")]
+        let zk_crypto = if let Some(ref key) = options.zk_key {
+            Some(ZKCrypto::new(key)?)
+        } else {
+            None
+        };
+
         Ok(Client {
             http_client,
             base_url: base_url.trim_end_matches('/').to_string(),
             options,
+            #[cfg(feature = "zk")]
+            zk_crypto,
         })
     }
 
@@ -95,11 +112,23 @@ impl Client {
         let url = format!("{}/kv/{}", self.base_url, key_encoded);
         let resp = self.http_client.get(&url).send().await?;
 
-        if resp.status().is_success() {
-            Ok(resp.bytes().await?.to_vec())
-        } else {
-            Err(resp.error_for_status().unwrap_err().into())
+        if !resp.status().is_success() {
+            return Err(resp.error_for_status().unwrap_err().into());
         }
+
+        let data = resp.bytes().await?.to_vec();
+
+        // decrypt if zk is enabled and data is encrypted
+        #[cfg(feature = "zk")]
+        if let Some(ref zk) = self.zk_crypto {
+            if let Ok(value_str) = std::str::from_utf8(&data) {
+                if crate::zk::is_zk_encrypted(value_str) {
+                    return zk.decrypt(value_str);
+                }
+            }
+        }
+
+        Ok(data)
     }
 
     /// retrieves a key's value, returning default if key not found
@@ -145,12 +174,18 @@ impl Client {
             url = format!("{}?format={}", url, format_str);
         }
 
-        let resp = self
-            .http_client
-            .put(&url)
-            .body(value.to_vec())
-            .send()
-            .await?;
+        // encrypt if zk is enabled
+        #[cfg(feature = "zk")]
+        let body = if let Some(ref zk) = self.zk_crypto {
+            zk.encrypt(value)?.into_bytes()
+        } else {
+            value.to_vec()
+        };
+
+        #[cfg(not(feature = "zk"))]
+        let body = value.to_vec();
+
+        let resp = self.http_client.put(&url).body(body).send().await?;
 
         if resp.status().is_success() {
             Ok(())
@@ -189,5 +224,79 @@ impl Client {
         } else {
             Err(resp.error_for_status().unwrap_err().into())
         }
+    }
+
+    /// subscribes to changes for a specific key
+    ///
+    /// returns a stream of events for the key
+    pub async fn subscribe(
+        &self,
+        key: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        if key.is_empty() {
+            return Err(Error::InvalidParameter("key is required".to_string()));
+        }
+        self.create_subscription(key).await
+    }
+
+    /// subscribes to changes for all keys with a given prefix
+    ///
+    /// returns a stream of events for all keys matching the prefix
+    pub async fn subscribe_prefix(
+        &self,
+        prefix: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        if prefix.is_empty() {
+            return Err(Error::InvalidParameter("prefix is required".to_string()));
+        }
+        // append /* for wildcard subscription
+        let path = format!("{}/*", prefix);
+        self.create_subscription(&path).await
+    }
+
+    /// subscribes to changes for all keys
+    ///
+    /// returns a stream of events for all keys in the store
+    pub async fn subscribe_all(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        self.create_subscription("*").await
+    }
+
+    /// creates an SSE subscription stream for the given path
+    ///
+    /// note: auto-reconnection with exponential backoff is built into reqwest-eventsource
+    /// (1s initial delay, 2x backoff factor, 30s max delay)
+    async fn create_subscription(
+        &self,
+        path: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        let key_encoded = urlencoding::encode(path);
+        let url = format!("{}/kv/subscribe/{}", self.base_url, key_encoded);
+
+        // create request builder with auth headers from http_client
+        let request_builder = self.http_client.get(&url);
+
+        let event_source =
+            EventSource::new(request_builder).map_err(|e| Error::Connection(e.to_string()))?;
+
+        let stream = event_source.filter_map(|result| async move {
+            match result {
+                Ok(SseEvent::Open) => None, // filter out connection open events
+                Ok(SseEvent::Message(msg)) => {
+                    if msg.event == "change" {
+                        Some(
+                            serde_json::from_str::<Event>(&msg.data)
+                                .map_err(|e| Error::Connection(format!("parse event: {}", e))),
+                        )
+                    } else {
+                        None // filter out other event types
+                    }
+                }
+                Err(e) => Some(Err(Error::Connection(e.to_string()))),
+            }
+        });
+
+        Ok(Box::pin(stream))
     }
 }
