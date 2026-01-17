@@ -9,34 +9,119 @@ use tokio::time::sleep;
 #[cfg(feature = "zk")]
 use crate::zk::{is_zk_encrypted, ZKCrypto};
 
-/// Options for configuring the Stash client
+/// Configuration options for the Stash client.
+///
+/// # Examples
+///
+/// ```
+/// use stash::ClientOptions;
+/// use std::time::Duration;
+///
+/// let options = ClientOptions {
+///     token: Some("my-api-token".to_string()),
+///     timeout: Some(Duration::from_secs(10)),
+///     zk_key: Some("my-passphrase-min-16".to_string()),
+/// };
+/// ```
 #[derive(Default, Clone)]
 pub struct ClientOptions {
-    /// API token for authentication
+    /// API token for authentication.
+    ///
+    /// When set, the token is sent as a Bearer token in the Authorization header.
     pub token: Option<String>,
 
-    /// Request timeout (default: 30 seconds)
+    /// Request timeout duration.
+    ///
+    /// Default is 30 seconds if not specified.
     pub timeout: Option<Duration>,
 
-    /// Zero-knowledge encryption passphrase (min 16 characters)
+    /// Zero-knowledge encryption passphrase.
+    ///
+    /// When set, all values are automatically encrypted client-side before sending to the server
+    /// and decrypted when retrieved. The passphrase must be at least 16 characters.
+    ///
+    /// Requires the `zk` feature to be enabled.
     pub zk_key: Option<String>,
 }
 
-/// Stash client for key-value operations
+/// Client for interacting with the Stash key-value service.
+///
+/// The client is `Clone + Send + Sync` and can be safely shared across threads.
+/// All methods are async and return `Result<T, Error>`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use stash::Client;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), stash::Error> {
+///     let client = Client::new("http://localhost:8080")?;
+///
+///     client.set("app/config", "value", None).await?;
+///     let value = client.get("app/config").await?;
+///
+///     Ok(())
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Client {
     http_client: reqwest::Client,
     base_url: String,
+    #[allow(dead_code)] // used for zk_key access (feature-gated)
     options: ClientOptions,
 }
 
 impl Client {
-    /// Create a new client with default options
+    /// Creates a new client with default options.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_url` - The base URL of the Stash server (e.g., "http://localhost:8080")
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the base URL is empty or the HTTP client cannot be created.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use stash::Client;
+    ///
+    /// let client = Client::new("http://localhost:8080")?;
+    /// # Ok::<(), stash::Error>(())
+    /// ```
     pub fn new(base_url: &str) -> Result<Self, Error> {
         Self::with_options(base_url, ClientOptions::default())
     }
 
-    /// Create a new client with custom options
+    /// Creates a new client with custom options.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_url` - The base URL of the Stash server
+    /// * `options` - Configuration options for the client
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The base URL is empty
+    /// - The zk_key is provided but is less than 16 characters
+    /// - The HTTP client cannot be created
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use stash::{Client, ClientOptions};
+    /// use std::time::Duration;
+    ///
+    /// let client = Client::with_options("http://localhost:8080", ClientOptions {
+    ///     token: Some("my-token".to_string()),
+    ///     timeout: Some(Duration::from_secs(10)),
+    ///     ..Default::default()
+    /// })?;
+    /// # Ok::<(), stash::Error>(())
+    /// ```
     pub fn with_options(base_url: &str, options: ClientOptions) -> Result<Self, Error> {
         if base_url.is_empty() {
             return Err(Error::Connection("base URL is required".to_string()));
@@ -73,7 +158,23 @@ impl Client {
         })
     }
 
-    /// Ping the server to check connectivity
+    /// Checks server connectivity by sending a ping request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the server is unreachable or returns an error response.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// client.ping().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn ping(&self) -> Result<(), Error> {
         let url = format!("{}/ping", self.base_url);
         let response = self.http_client.get(&url).send().await?;
@@ -85,14 +186,68 @@ impl Client {
         }
     }
 
-    /// Get a value as a string
+    /// Gets a value as a UTF-8 string.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to retrieve
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key is empty
+    /// - The key is not found (404)
+    /// - The value is not valid UTF-8
+    /// - A network or server error occurs
+    /// - ZK decryption fails (if applicable)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let value = client.get("app/config").await?;
+    /// println!("Value: {}", value);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get(&self, key: &str) -> Result<String, Error> {
         let bytes = self.get_bytes(key).await?;
         String::from_utf8(bytes)
             .map_err(|e| Error::Connection(format!("invalid UTF-8 in response: {}", e)))
     }
 
-    /// Get a value as bytes
+    /// Gets a value as raw bytes.
+    ///
+    /// If the client has a ZK key configured and the value is ZK-encrypted,
+    /// it will be automatically decrypted.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to retrieve
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key is empty
+    /// - The key is not found (404)
+    /// - A network or server error occurs
+    /// - ZK decryption fails (if applicable)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let bytes = client.get_bytes("app/binary").await?;
+    /// println!("Size: {} bytes", bytes.len());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>, Error> {
         if key.is_empty() {
             return Err(Error::Connection("key cannot be empty".to_string()));
@@ -119,7 +274,28 @@ impl Client {
         Ok(bytes)
     }
 
-    /// Get a value or return a default if the key doesn't exist
+    /// Gets a value or returns a default if the key doesn't exist.
+    ///
+    /// This method never returns an error - it returns the default value
+    /// for any error (not found, network error, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to retrieve
+    /// * `default` - The default value to return if the key doesn't exist or an error occurs
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let value = client.get_or_default("app/config", "default-value").await;
+    /// println!("Value: {}", value);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_or_default(&self, key: &str, default: &str) -> String {
         match self.get(key).await {
             Ok(value) => value,
@@ -127,7 +303,31 @@ impl Client {
         }
     }
 
-    /// Get metadata about a key
+    /// Gets metadata about a key without retrieving its value.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to get info for
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key is empty
+    /// - The key is not found (404)
+    /// - A network or server error occurs
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let info = client.info("app/config").await?;
+    /// println!("Created: {}, Size: {} bytes", info.created, info.size);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn info(&self, key: &str) -> Result<KeyInfo, Error> {
         if key.is_empty() {
             return Err(Error::Connection("key cannot be empty".to_string()));
@@ -138,12 +338,68 @@ impl Client {
             .ok_or(Error::NotFound)
     }
 
-    /// Set a value
+    /// Sets a string value for a key.
+    ///
+    /// If the client has a ZK key configured, the value will be automatically
+    /// encrypted before sending to the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to set
+    /// * `value` - The string value to store
+    /// * `format` - Optional format hint for syntax highlighting
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key is empty
+    /// - A network or server error occurs
+    /// - ZK encryption fails (if applicable)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::{Client, Format};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// client.set("app/config", "value", Some(Format::Json)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set(&self, key: &str, value: &str, format: Option<Format>) -> Result<(), Error> {
         self.set_bytes(key, value.as_bytes(), format).await
     }
 
-    /// Set a value from bytes
+    /// Sets a binary value for a key.
+    ///
+    /// If the client has a ZK key configured, the value will be automatically
+    /// encrypted before sending to the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to set
+    /// * `value` - The binary value to store
+    /// * `format` - Optional format hint for syntax highlighting
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key is empty
+    /// - A network or server error occurs
+    /// - ZK encryption fails (if applicable)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// client.set_bytes("app/binary", &[1, 2, 3], None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_bytes(
         &self,
         key: &str,
@@ -187,7 +443,30 @@ impl Client {
         Ok(())
     }
 
-    /// Delete a key
+    /// Deletes a key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to delete
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The key is empty
+    /// - The key is not found (404)
+    /// - A network or server error occurs
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// client.delete("app/config").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn delete(&self, key: &str) -> Result<(), Error> {
         if key.is_empty() {
             return Err(Error::Connection("key cannot be empty".to_string()));
@@ -202,7 +481,36 @@ impl Client {
         Ok(())
     }
 
-    /// List all keys, optionally filtered by prefix
+    /// Lists all keys, optionally filtered by prefix.
+    ///
+    /// When auth is enabled, only keys the caller has read permission for are returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Optional prefix to filter keys (e.g., "app/" returns all keys starting with "app/")
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a network or server error occurs.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// // list all keys
+    /// let all_keys = client.list(None).await?;
+    ///
+    /// // list keys with prefix
+    /// let app_keys = client.list(Some("app/")).await?;
+    /// for key in app_keys {
+    ///     println!("{}: {} bytes", key.key, key.size);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn list(&self, prefix: Option<&str>) -> Result<Vec<KeyInfo>, Error> {
         let url = format!("{}/kv/", self.base_url);
 
@@ -221,7 +529,37 @@ impl Client {
         Ok(keys)
     }
 
-    /// Subscribe to changes for a specific key
+    /// Subscribes to real-time change events for a specific key.
+    ///
+    /// Returns a stream that yields events whenever the key is created, updated, or deleted.
+    /// The stream automatically reconnects with exponential backoff (1s initial, 30s max)
+    /// if the connection is lost.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The exact key to subscribe to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key is empty.
+    /// Connection errors are yielded as stream items, not as immediate errors.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # use futures::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let mut stream = client.subscribe("app/config").await?;
+    /// while let Some(event) = stream.next().await {
+    ///     let event = event?;
+    ///     println!("{}: {} at {}", event.action, event.key, event.timestamp);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe(
         &self,
         key: &str,
@@ -233,7 +571,37 @@ impl Client {
         self.create_sse_stream(&url).await
     }
 
-    /// Subscribe to changes for all keys with a given prefix
+    /// Subscribes to real-time change events for all keys with a given prefix.
+    ///
+    /// Returns a stream that yields events whenever any key with the specified prefix
+    /// is created, updated, or deleted. The stream automatically reconnects with
+    /// exponential backoff (1s initial, 30s max) if the connection is lost.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - The prefix to subscribe to (e.g., "app/" for all keys starting with "app/")
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the prefix is empty.
+    /// Connection errors are yielded as stream items, not as immediate errors.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # use futures::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let mut stream = client.subscribe_prefix("app/").await?;
+    /// while let Some(event) = stream.next().await {
+    ///     let event = event?;
+    ///     println!("{}: {}", event.action, event.key);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe_prefix(
         &self,
         prefix: &str,
@@ -251,7 +619,28 @@ impl Client {
         self.create_sse_stream(&url).await
     }
 
-    /// Subscribe to changes for all keys
+    /// Subscribes to real-time change events for all keys.
+    ///
+    /// Returns a stream that yields events whenever any key is created, updated,
+    /// or deleted. The stream automatically reconnects with exponential backoff
+    /// (1s initial, 30s max) if the connection is lost.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use stash::Client;
+    /// # use futures::StreamExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), stash::Error> {
+    /// # let client = Client::new("http://localhost:8080")?;
+    /// let mut stream = client.subscribe_all().await?;
+    /// while let Some(event) = stream.next().await {
+    ///     let event = event?;
+    ///     println!("{}: {}", event.action, event.key);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe_all(
         &self,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {

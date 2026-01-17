@@ -1,8 +1,9 @@
 use stash::{Client, ClientOptions, Error, Format};
-use std::fs;
-use std::path::Path;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[cfg(feature = "zk")]
+use std::{fs, path::Path};
 
 #[tokio::test]
 async fn test_ping() {

@@ -21,19 +21,82 @@ const ARGON_TIME: u32 = 1;
 const ARGON_MEMORY: u32 = 64 * 1024; // 64 MB
 const ARGON_THREADS: u32 = 4;
 
-/// Check if a value is ZK-encrypted
+/// Checks if a value is ZK-encrypted.
+///
+/// ZK-encrypted values start with the prefix `$ZK$`.
+///
+/// # Examples
+///
+/// ```
+/// use stash::zk::is_zk_encrypted;
+///
+/// assert!(is_zk_encrypted("$ZK$base64data..."));
+/// assert!(!is_zk_encrypted("regular-value"));
+/// ```
 pub fn is_zk_encrypted(value: &str) -> bool {
     value.starts_with(ZK_PREFIX)
 }
 
-/// Zero-knowledge encryption handler
+/// Zero-knowledge encryption handler using AES-256-GCM with Argon2id key derivation.
+///
+/// The `ZKCrypto` struct provides client-side encryption with secure memory handling.
+/// The passphrase is zeroized when dropped to prevent memory leaks.
+///
+/// Encrypted format: `$ZK$<base64(salt[16] || nonce[12] || ciphertext || tag[16])>`
+///
+/// Argon2id parameters (cross-SDK compatible):
+/// - Time cost: 1
+/// - Memory cost: 65536 (64 MB)
+/// - Parallelism: 4
+/// - Output length: 32 bytes
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "zk")]
+/// # {
+/// use stash::zk::ZKCrypto;
+///
+/// let zk = ZKCrypto::new("my-passphrase-min-16-chars").unwrap();
+///
+/// // encrypt data
+/// let encrypted = zk.encrypt(b"secret data").unwrap();
+/// println!("Encrypted: {}", encrypted);
+///
+/// // decrypt data
+/// let decrypted = zk.decrypt(&encrypted).unwrap();
+/// assert_eq!(decrypted, b"secret data");
+/// # }
+/// ```
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct ZKCrypto {
     passphrase: String,
 }
 
 impl ZKCrypto {
-    /// Create a new ZKCrypto instance
+    /// Creates a new `ZKCrypto` instance with the given passphrase.
+    ///
+    /// # Arguments
+    ///
+    /// * `passphrase` - The passphrase for encryption/decryption (minimum 16 characters)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the passphrase is less than 16 characters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "zk")]
+    /// # {
+    /// # fn example() -> Result<(), stash::Error> {
+    /// use stash::zk::ZKCrypto;
+    ///
+    /// let zk = ZKCrypto::new("my-passphrase-min-16-chars")?;
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
     pub fn new(passphrase: &str) -> Result<Self, Error> {
         if passphrase.len() < ZK_MIN_KEY_LEN {
             return Err(Error::Connection(
@@ -45,8 +108,36 @@ impl ZKCrypto {
         })
     }
 
-    /// Encrypt plaintext using AES-256-GCM with Argon2id key derivation
-    /// Format: $ZK$<base64(salt || nonce || ciphertext || tag)>
+    /// Encrypts plaintext using AES-256-GCM with Argon2id key derivation.
+    ///
+    /// Each encryption uses a fresh random salt and nonce, so encrypting the same
+    /// plaintext twice produces different ciphertexts.
+    ///
+    /// Format: `$ZK$<base64(salt[16] || nonce[12] || ciphertext || tag[16])>`
+    ///
+    /// # Arguments
+    ///
+    /// * `plaintext` - The data to encrypt
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if encryption fails (rare).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "zk")]
+    /// # {
+    /// # fn example() -> Result<(), stash::Error> {
+    /// use stash::zk::ZKCrypto;
+    ///
+    /// let zk = ZKCrypto::new("my-passphrase-min-16-chars")?;
+    /// let encrypted = zk.encrypt(b"secret data")?;
+    /// assert!(encrypted.starts_with("$ZK$"));
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<String, Error> {
         // generate random salt
         let mut salt = [0u8; ZK_SALT_SIZE];
@@ -80,7 +171,37 @@ impl ZKCrypto {
         Ok(format!("{}{}", ZK_PREFIX, encoded))
     }
 
-    /// Decrypt a ZK-encrypted value
+    /// Decrypts a ZK-encrypted value.
+    ///
+    /// # Arguments
+    ///
+    /// * `encrypted` - The encrypted value (must start with `$ZK$`)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The value doesn't start with `$ZK$`
+    /// - The base64 encoding is invalid
+    /// - The data is too short (corrupted)
+    /// - The passphrase is incorrect
+    /// - The authentication tag verification fails (data was tampered with)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "zk")]
+    /// # {
+    /// # fn example() -> Result<(), stash::Error> {
+    /// use stash::zk::ZKCrypto;
+    ///
+    /// let zk = ZKCrypto::new("my-passphrase-min-16-chars")?;
+    /// let encrypted = zk.encrypt(b"secret data")?;
+    /// let decrypted = zk.decrypt(&encrypted)?;
+    /// assert_eq!(decrypted, b"secret data");
+    /// # Ok(())
+    /// # }
+    /// # }
+    /// ```
     pub fn decrypt(&self, encrypted: &str) -> Result<Vec<u8>, Error> {
         // check and remove prefix
         if !is_zk_encrypted(encrypted) {
