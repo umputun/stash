@@ -2,9 +2,9 @@ use crate::error::Error;
 use crate::types::{Event, Format, KeyInfo};
 use futures::stream::{Stream, StreamExt};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use reqwest_eventsource::{Event as SseEvent, EventSource};
 use std::pin::Pin;
 use std::time::Duration;
+use tokio::time::sleep;
 
 #[cfg(feature = "zk")]
 use crate::zk::{is_zk_encrypted, ZKCrypto};
@@ -259,40 +259,118 @@ impl Client {
         self.create_sse_stream(&url).await
     }
 
-    // create an SSE stream
-    // note: reqwest-eventsource provides basic reconnection, but custom retry policy
-    // (exponential backoff) should be configured via set_retry_policy() in future iterations
+    // create an SSE stream with auto-reconnection and exponential backoff
     async fn create_sse_stream(
         &self,
         url: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
-        let request_builder = self.http_client.get(url);
+        let url = url.to_string();
+        let client = self.http_client.clone();
 
-        // authorization header is already in http_client default headers
-        // so we don't need to add it again
+        let stream = async_stream::stream! {
+            let mut delay = Duration::from_secs(1); // 1s initial
+            let max_delay = Duration::from_secs(30); // 30s max
 
-        let event_source = EventSource::new(request_builder)
-            .map_err(|e| Error::Connection(format!("failed to create event source: {}", e)))?;
+            loop {
+                match Self::connect_sse(&client, &url).await {
+                    Ok(mut event_stream) => {
+                        // reset delay on successful connection
+                        delay = Duration::from_secs(1);
 
-        let stream = event_source.map(|result| match result {
-            Ok(SseEvent::Open) => {
-                // connection opened, skip this event
-                None
-            }
-            Ok(SseEvent::Message(msg)) => {
-                // parse the JSON event
-                match serde_json::from_str::<Event>(&msg.data) {
-                    Ok(event) => Some(Ok(event)),
-                    Err(e) => Some(Err(Error::Connection(format!(
-                        "failed to parse event: {}",
-                        e
-                    )))),
+                        // yield events from the stream
+                        while let Some(result) = event_stream.next().await {
+                            match result {
+                                Ok(event) => yield Ok(event),
+                                Err(e) => {
+                                    // connection error, will reconnect
+                                    yield Err(e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // connection failed, yield error and retry after delay
+                        yield Err(e);
+                    }
                 }
+
+                // wait before reconnecting with exponential backoff
+                sleep(delay).await;
+                delay = std::cmp::min(delay * 2, max_delay);
             }
-            Err(e) => Some(Err(Error::Connection(format!("SSE error: {}", e)))),
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    // connect to SSE endpoint and return a stream of events
+    async fn connect_sse(
+        client: &reqwest::Client,
+        url: &str,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Event, Error>> + Send>>, Error> {
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| Error::Connection(format!("failed to connect: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(Error::from(response.error_for_status().unwrap_err()));
+        }
+
+        let stream = response.bytes_stream().map(|result| {
+            result.map_err(|e| Error::Connection(format!("stream read error: {}", e)))
         });
 
-        // filter out None values (from Open events) and return boxed stream
-        Ok(Box::pin(stream.filter_map(|x| async move { x })))
+        let event_stream = Self::parse_sse_stream(Box::pin(stream));
+        Ok(Box::pin(event_stream))
+    }
+
+    // parse SSE stream into Event objects
+    fn parse_sse_stream(
+        stream: Pin<Box<dyn Stream<Item = Result<bytes::Bytes, Error>> + Send>>,
+    ) -> impl Stream<Item = Result<Event, Error>> + Send {
+        async_stream::stream! {
+            let mut buffer = String::new();
+            let mut event_data = String::new();
+
+            futures::pin_mut!(stream);
+
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(chunk) => {
+                        let chunk_str = String::from_utf8_lossy(&chunk);
+                        buffer.push_str(&chunk_str);
+
+                        // process complete lines
+                        while let Some(pos) = buffer.find('\n') {
+                            let line = buffer[..pos].trim_end_matches('\r').to_string();
+                            buffer.drain(..=pos);
+
+                            if let Some(data) = line.strip_prefix("data:") {
+                                event_data.push_str(data.trim());
+                            } else if line.is_empty() && !event_data.is_empty() {
+                                // end of event, parse JSON
+                                match serde_json::from_str::<Event>(&event_data) {
+                                    Ok(event) => yield Ok(event),
+                                    Err(e) => {
+                                        yield Err(Error::Connection(format!(
+                                            "failed to parse event: {}",
+                                            e
+                                        )));
+                                    }
+                                }
+                                event_data.clear();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(e);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

@@ -25,7 +25,7 @@ mod error;
 mod types;
 
 #[cfg(feature = "zk")]
-mod zk;
+pub mod zk;
 
 pub use client::{Client, ClientOptions};
 pub use error::Error;
