@@ -1,35 +1,12 @@
-//! Rust client library for Stash key-value configuration service
+//! Rust client library for Stash key-value configuration service.
 //!
-//! # Example
-//!
-//! ```no_run
-//! use stash::{Client, Format};
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), stash::Error> {
-//!     let client = Client::new("http://localhost:8080")?;
-//!
-//!     // set a value
-//!     client.set("app/config", "value", Some(Format::Text)).await?;
-//!
-//!     // get a value
-//!     let value = client.get("app/config").await?;
-//!     println!("Value: {}", value);
-//!
-//!     Ok(())
-//! }
-//! ```
+//! This library provides a simple HTTP client for interacting with a Stash server,
+//! supporting all core KV operations, zero-knowledge encryption, and SSE subscriptions.
 
 mod client;
 mod error;
 mod types;
 
-#[cfg(feature = "zk")]
-pub mod zk;
-
 pub use client::{Client, ClientOptions};
 pub use error::Error;
 pub use types::{Event, Format, KeyInfo};
-
-#[cfg(feature = "zk")]
-pub use zk::{is_zk_encrypted, ZKCrypto};

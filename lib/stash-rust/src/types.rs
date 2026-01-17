@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Format for syntax highlighting and display
+/// format type for key values (used for syntax highlighting)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Format {
@@ -16,59 +16,41 @@ pub enum Format {
     Shell,
 }
 
-impl Format {
-    /// Convert format to string representation
-    pub fn as_str(&self) -> &str {
-        match self {
-            Format::Text => "text",
-            Format::Json => "json",
-            Format::Yaml => "yaml",
-            Format::Xml => "xml",
-            Format::Toml => "toml",
-            Format::Ini => "ini",
-            Format::Hcl => "hcl",
-            Format::Shell => "shell",
-        }
-    }
-}
-
-/// Metadata about a key in the store
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// metadata information for a key
+#[derive(Debug, Clone, Deserialize)]
 pub struct KeyInfo {
-    /// The key name
+    /// key name
     pub key: String,
 
-    /// Size in bytes
+    /// value size in bytes
     pub size: i64,
 
-    /// Format for syntax highlighting
-    #[serde(default)]
+    /// format type
     pub format: Format,
 
-    /// Creation timestamp
-    pub created: DateTime<Utc>,
-
-    /// Last update timestamp
-    pub updated: DateTime<Utc>,
-
-    /// Whether this key contains a secret
-    #[serde(default)]
+    /// whether this key contains a secret
     pub secret: bool,
 
-    /// Whether this key is zero-knowledge encrypted
-    #[serde(rename = "zkEncrypted", default)]
+    /// whether this key is zero-knowledge encrypted
+    #[serde(rename = "zkEncrypted")]
     pub zk_encrypted: bool,
+
+    /// creation timestamp
+    pub created: DateTime<Utc>,
+
+    /// last update timestamp
+    pub updated: DateTime<Utc>,
 }
 
-/// Event from SSE subscription
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// subscription event for key changes
+#[derive(Debug, Clone, Deserialize)]
 pub struct Event {
-    /// The key that changed
+    /// key that changed
     pub key: String,
 
-    /// Action performed (create, update, delete)
+    /// action performed: create, update, or delete
     pub action: String,
 
-    /// Timestamp of the event
+    /// timestamp of the event
     pub timestamp: DateTime<Utc>,
 }

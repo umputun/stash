@@ -2,11 +2,11 @@
 name = "stash"
 version = "0.1.0"
 edition = "2021"
-authors = ["Eugene Umputun <umputun@gmail.com>"]
+authors = ["Umputun"]
 description = "Rust client library for Stash key-value configuration service"
 license = "MIT"
 repository = "https://github.com/umputun/stash"
-keywords = ["stash", "kv", "config", "client"]
+keywords = ["kv", "config", "client"]
 categories = ["api-bindings", "config"]
 
 [features]
@@ -16,24 +16,21 @@ native-tls = ["reqwest/native-tls"]
 zk = ["dep:argon2", "dep:aes-gcm"]
 
 [dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+reqwest-eventsource = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-thiserror = "2"
-zeroize = { version = "1", features = ["derive"] }
+thiserror = "2.0"
+argon2 = { version = "0.5", optional = true }
+aes-gcm = { version = "0.10", optional = true }
+zeroize = "1.8"
 base64 = "0.22"
 rand = "0.8"
 futures = "0.3"
-async-stream = "0.3"
-bytes = "1"
-
-# optional dependencies for zk feature
-argon2 = { version = "0.5", optional = true }
-aes-gcm = { version = "0.10", optional = true }
+urlencoding = "2.1"
 
 [dev-dependencies]
 wiremock = "0.6"
 tokio-test = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
