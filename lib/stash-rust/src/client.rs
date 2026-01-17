@@ -3,6 +3,9 @@ use crate::types::{Format, KeyInfo};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use std::time::Duration;
 
+#[cfg(feature = "zk")]
+use crate::zk::{is_zk_encrypted, ZKCrypto};
+
 /// Options for configuring the Stash client
 #[derive(Default, Clone)]
 pub struct ClientOptions {
@@ -21,7 +24,6 @@ pub struct ClientOptions {
 pub struct Client {
     http_client: reqwest::Client,
     base_url: String,
-    #[allow(dead_code)]
     options: ClientOptions,
 }
 
@@ -100,6 +102,17 @@ impl Client {
         }
 
         let bytes = response.bytes().await?.to_vec();
+
+        // decrypt if ZK-encrypted and zk_key is set
+        #[cfg(feature = "zk")]
+        if let Some(ref zk_key) = self.options.zk_key {
+            let value_str = String::from_utf8_lossy(&bytes);
+            if is_zk_encrypted(&value_str) {
+                let zk = ZKCrypto::new(zk_key)?;
+                return zk.decrypt(&value_str);
+            }
+        }
+
         Ok(bytes)
     }
 
@@ -139,6 +152,20 @@ impl Client {
         }
         let url = format!("{}/kv/{}", self.base_url, key);
 
+        // encrypt if zk_key is set
+        let body = {
+            #[cfg(feature = "zk")]
+            if let Some(ref zk_key) = self.options.zk_key {
+                let zk = ZKCrypto::new(zk_key)?;
+                zk.encrypt(value)?.into_bytes()
+            } else {
+                value.to_vec()
+            }
+
+            #[cfg(not(feature = "zk"))]
+            value.to_vec()
+        };
+
         let mut request = self
             .http_client
             .put(&url)
@@ -148,7 +175,7 @@ impl Client {
             request = request.query(&[("format", fmt.as_str())]);
         }
 
-        let response = request.body(value.to_vec()).send().await?;
+        let response = request.body(body).send().await?;
 
         if !response.status().is_success() {
             return Err(Error::from(response.error_for_status().unwrap_err()));

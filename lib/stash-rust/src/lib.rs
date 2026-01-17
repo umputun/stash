@@ -24,6 +24,12 @@ mod client;
 mod error;
 mod types;
 
+#[cfg(feature = "zk")]
+mod zk;
+
 pub use client::{Client, ClientOptions};
 pub use error::Error;
 pub use types::{Event, Format, KeyInfo};
+
+#[cfg(feature = "zk")]
+pub use zk::{is_zk_encrypted, ZKCrypto};
