@@ -951,10 +951,10 @@ A Rust client library is available via GitHub:
 
 ```toml
 [dependencies]
-stash = { git = "https://github.com/umputun/stash", path = "lib/stash-rust" }
+stash = { git = "https://github.com/umputun/stash" }
 
 # with zero-knowledge encryption
-stash = { git = "https://github.com/umputun/stash", path = "lib/stash-rust", features = ["zk"] }
+stash = { git = "https://github.com/umputun/stash", features = ["zk"] }
 ```
 
 ```rust

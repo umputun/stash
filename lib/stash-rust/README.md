@@ -8,21 +8,21 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-stash = { git = "https://github.com/umputun/stash", path = "lib/stash-rust" }
+stash = { git = "https://github.com/umputun/stash" }
 ```
 
 For zero-knowledge encryption support:
 
 ```toml
 [dependencies]
-stash = { git = "https://github.com/umputun/stash", path = "lib/stash-rust", features = ["zk"] }
+stash = { git = "https://github.com/umputun/stash", features = ["zk"] }
 ```
 
 To pin to a specific version:
 
 ```toml
 [dependencies]
-stash = { git = "https://github.com/umputun/stash", tag = "v1.0.0", path = "lib/stash-rust" }
+stash = { git = "https://github.com/umputun/stash", tag = "v1.0.0" }
 ```
 
 ## Quick Start

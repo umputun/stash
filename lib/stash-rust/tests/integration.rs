@@ -687,15 +687,20 @@ mod zk_tests {
         let zk = ZKCrypto::new(PASSPHRASE).unwrap();
         let encrypted = zk.encrypt(PLAINTEXT.as_bytes()).unwrap();
 
-        // write encrypted data
-        fs::write(
-            format!("{}rust_encrypted.bin", FIXTURE_PATH),
-            encrypted.as_bytes(),
-        )
-        .ok();
+        // write encrypted data (skip if fixtures directory doesn't exist)
+        let encrypted_path = format!("{}rust_encrypted.bin", FIXTURE_PATH);
+        if let Err(e) = fs::write(&encrypted_path, encrypted.as_bytes()) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                panic!("failed to write encrypted fixture to {}: {}", encrypted_path, e);
+            }
+            return; // fixtures directory doesn't exist, skip
+        }
 
         // write plaintext for reference
-        fs::write(format!("{}rust_plaintext.txt", FIXTURE_PATH), PLAINTEXT).ok();
+        let plaintext_path = format!("{}rust_plaintext.txt", FIXTURE_PATH);
+        if let Err(e) = fs::write(&plaintext_path, PLAINTEXT) {
+            panic!("failed to write plaintext fixture to {}: {}", plaintext_path, e);
+        }
     }
 }
 
