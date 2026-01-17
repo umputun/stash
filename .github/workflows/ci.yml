@@ -139,3 +139,30 @@ jobs:
       - name: build
         working-directory: lib/stash-java
         run: ./gradlew build
+
+  rust-sdk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: setup rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: lib/stash-rust
+
+      - name: run tests
+        working-directory: lib/stash-rust
+        run: cargo test --features zk
+
+      - name: run clippy
+        working-directory: lib/stash-rust
+        run: cargo clippy --features zk -- -D warnings
