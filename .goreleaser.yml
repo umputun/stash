@@ -38,6 +38,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - completions/*
     rlcp: true
 
 brews:
@@ -54,6 +55,10 @@ brews:
     homepage: "https://github.com/umputun/stash"
     description: "Lightweight key-value configuration service for centralized config management"
     license: "MIT"
+    extra_install: |
+      bash_completion.install "completions/stash.bash" => "stash"
+      zsh_completion.install "completions/stash.zsh" => "_stash"
+      fish_completion.install "completions/stash.fish" => "stash.fish"
 
 nfpms:
   - id: stash
@@ -70,3 +75,10 @@ nfpms:
     bindir: /usr/bin
     epoch: 1
     release: 1
+    contents:
+      - src: completions/stash.bash
+        dst: /usr/share/bash-completion/completions/stash
+      - src: completions/stash.zsh
+        dst: /usr/share/zsh/vendor-completions/_stash
+      - src: completions/stash.fish
+        dst: /usr/share/fish/vendor_completions.d/stash.fish

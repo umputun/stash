@@ -87,7 +87,9 @@ var opts struct {
 var revision = "unknown"
 
 func main() {
-	fmt.Printf("stash %s\n", revision)
+	if os.Getenv("GO_FLAGS_COMPLETION") == "" {
+		fmt.Printf("stash %s\n", revision)
+	}
 
 	p := flags.NewParser(&opts, flags.Default)
 
