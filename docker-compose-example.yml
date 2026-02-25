@@ -39,7 +39,8 @@ services:
     container_name: stash
     hostname: stash
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
       - STASH_DB=postgres://stash:change-me-secret@postgres:5432/stash?sslmode=disable
       - STASH_AUTH_PASSWORD_HASH=${STASH_AUTH_PASSWORD_HASH}
@@ -59,6 +60,13 @@ services:
       - POSTGRES_DB=stash
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+      start_interval: 1s
 
 volumes:
   postgres_data:
