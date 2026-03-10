@@ -16,12 +16,16 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: setup node
         uses: actions/setup-node@v6
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+          cache-dependency-path: lib/stash-js/package-lock.json
 
       - name: get package version
         id: version
