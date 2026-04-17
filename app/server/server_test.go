@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -398,6 +399,62 @@ func TestServer_Handler_BaseURL(t *testing.T) {
 		require.Len(t, st.SetCalls(), 1)
 		assert.Equal(t, "newkey", st.SetCalls()[0].Key)
 	})
+}
+
+func TestServer_CrossOriginProtection(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		SetFunc:  func(_ context.Context, _ string, _ []byte, _ string) (bool, error) { return true, nil },
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+		GetWithFormatFunc: func(_ context.Context, _ string) ([]byte, string, error) {
+			return nil, "", store.ErrNotFound
+		},
+	}
+	srv := newTestServer(t, st)
+	router := srv.routes()
+
+	tests := []struct {
+		name          string
+		method        string
+		path          string
+		secFetchSite  string
+		origin        string
+		host          string
+		wantForbidden bool
+	}{
+		{name: "GET allowed without headers", method: "GET", path: "/kv/foo"},
+		{name: "PUT same-origin allowed", method: "PUT", path: "/kv/foo", secFetchSite: "same-origin"},
+		{name: "PUT none allowed (direct nav)", method: "PUT", path: "/kv/foo", secFetchSite: "none"},
+		{name: "PUT cross-site rejected", method: "PUT", path: "/kv/foo",
+			secFetchSite: "cross-site", wantForbidden: true},
+		{name: "PUT same-site rejected (subdomain)", method: "PUT", path: "/kv/foo",
+			secFetchSite: "same-site", wantForbidden: true},
+		{name: "PUT origin matches host allowed", method: "PUT", path: "/kv/foo",
+			origin: "http://example.com", host: "example.com"},
+		{name: "PUT origin mismatch rejected", method: "PUT", path: "/kv/foo",
+			origin: "http://evil.com", host: "example.com", wantForbidden: true},
+		{name: "PUT no headers (non-browser) allowed", method: "PUT", path: "/kv/foo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader("value"))
+			if tt.secFetchSite != "" {
+				req.Header.Set("Sec-Fetch-Site", tt.secFetchSite)
+			}
+			if tt.origin != "" {
+				req.Header.Set("Origin", tt.origin)
+			}
+			if tt.host != "" {
+				req.Host = tt.host
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if tt.wantForbidden {
+				assert.Equal(t, http.StatusForbidden, rec.Code, "should be rejected as cross-origin")
+				return
+			}
+			assert.NotEqual(t, http.StatusForbidden, rec.Code, "should not be rejected as cross-origin")
+		})
+	}
 }
 
 func newTestServer(t *testing.T, st KVStore) *Server {

@@ -213,6 +213,7 @@ func (s *Server) routes() http.Handler {
 		rest.SizeLimit(s.bodySizeLimit()),
 		rest.AppInfo("stash", "umputun", s.Version),
 		rest.Ping,
+		http.NewCrossOriginProtection().Handler,
 	)
 
 	// determine auth middleware for protected routes
