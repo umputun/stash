@@ -17,7 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/invopop/jsonschema v0.13.0
-	github.com/jackc/pgx/v5 v5.9.0
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/playwright-community/playwright-go v0.5700.1
