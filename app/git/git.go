@@ -23,6 +23,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 )
 
+const defaultBranch = "master"
+
 // Author represents the author of a git commit.
 type Author struct {
 	Name  string
@@ -80,7 +82,7 @@ func New(cfg Config) (*Store, error) {
 		return nil, errors.New("git path is required")
 	}
 	if cfg.Branch == "" {
-		cfg.Branch = "master"
+		cfg.Branch = defaultBranch
 	}
 
 	s := &Store{cfg: cfg}
@@ -168,7 +170,7 @@ func (s *Store) createNewRepo() error {
 	}
 
 	// checkout configured branch (create if not master)
-	if s.cfg.Branch != "master" {
+	if s.cfg.Branch != defaultBranch {
 		head, headErr := repo.Head()
 		if headErr != nil {
 			return fmt.Errorf("failed to get HEAD: %w", headErr)

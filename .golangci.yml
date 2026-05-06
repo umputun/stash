@@ -56,6 +56,7 @@ linters:
         - G117
         - G118
         - G120
+        - G124
         - G704
         - G705
     exhaustive:
@@ -136,6 +137,7 @@ linters:
       - linters:
           - dupl
           - goconst
+          - gosec
           - noctx
           - usestdlibvars
         path: _test\.go$

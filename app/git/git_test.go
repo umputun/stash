@@ -74,7 +74,7 @@ func TestStore_Commit(t *testing.T) {
 
 		// verify file exists
 		valFile := filepath.Join(store.cfg.Path, "app", "config", "db.val")
-		content, err := os.ReadFile(valFile) //nolint:gosec // test code
+		content, err := os.ReadFile(valFile)
 		require.NoError(t, err)
 		assert.Equal(t, "postgres://localhost/db", string(content))
 	})
@@ -91,7 +91,7 @@ func TestStore_Commit(t *testing.T) {
 		require.NoError(t, store.Commit(req))
 
 		valFile := filepath.Join(store.cfg.Path, "deep", "nested", "path", "key.val")
-		content, err := os.ReadFile(valFile) //nolint:gosec // test code
+		content, err := os.ReadFile(valFile)
 		require.NoError(t, err)
 		assert.Equal(t, "value", string(content))
 	})
@@ -109,7 +109,7 @@ func TestStore_Commit(t *testing.T) {
 		require.NoError(t, err)
 
 		valFile := filepath.Join(store.cfg.Path, "binary", "key.val")
-		content, err := os.ReadFile(valFile) //nolint:gosec // test code
+		content, err := os.ReadFile(valFile)
 		require.NoError(t, err)
 		assert.Equal(t, binary, content)
 	})

@@ -18,6 +18,8 @@ import (
 	"github.com/umputun/stash/lib/stash"
 )
 
+const formValueTrue = "true"
+
 // handleKeyList renders the keys table partial (for HTMX).
 func (h *Handler) handleKeyList(w http.ResponseWriter, r *http.Request) {
 	params := h.getListParams(w, r)
@@ -234,7 +236,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 
 	key := store.NormalizeKey(r.FormValue("key"))
 	valueStr := r.FormValue("value")
-	isBinary := r.FormValue("is_binary") == "true"
+	isBinary := r.FormValue("is_binary") == formValueTrue
 	format := r.FormValue("format")
 	if !h.Validator.IsValidFormat(format) {
 		format = stash.FormatText.String()
@@ -287,7 +289,7 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate value unless force flag is set or value is binary
-	force := r.FormValue("force") == "true"
+	force := r.FormValue("force") == formValueTrue
 	if !force && !isBinary {
 		if err := h.Validator.Validate(format, value); err != nil {
 			h.renderFormError(w, templateData{
@@ -331,7 +333,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	valueStr := r.FormValue("value")
-	isBinary := r.FormValue("is_binary") == "true"
+	isBinary := r.FormValue("is_binary") == formValueTrue
 	format := r.FormValue("format")
 	if !h.Validator.IsValidFormat(format) {
 		format = stash.FormatText.String()
@@ -357,7 +359,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate value unless force flag is set or value is binary
-	force := r.FormValue("force") == "true"
+	force := r.FormValue("force") == formValueTrue
 	formUpdatedAt, _ := strconv.ParseInt(r.FormValue("updated_at"), 10, 64)
 	if !force && !isBinary {
 		if validationErr := h.Validator.Validate(format, value); validationErr != nil {
@@ -370,7 +372,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// use atomic SetWithVersion for optimistic locking unless force_overwrite is set
-	forceOverwrite := r.FormValue("force_overwrite") == "true"
+	forceOverwrite := r.FormValue("force_overwrite") == formValueTrue
 	var expectedVersion time.Time
 	if !forceOverwrite && formUpdatedAt > 0 {
 		expectedVersion = time.Unix(0, formUpdatedAt).UTC()

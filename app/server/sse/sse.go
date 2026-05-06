@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -155,7 +156,7 @@ func keyToTopics(key string) []string {
 	}
 
 	parts := strings.Split(key, "/")
-	for i := len(parts) - 1; i >= 0; i-- {
+	for i := range slices.Backward(parts) {
 		prefix := strings.Join(parts[:i], "/")
 		if prefix != "" {
 			prefix += "/"
