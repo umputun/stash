@@ -679,7 +679,11 @@ mod zk_tests {
     #[test]
     fn test_generate_rust_fixture() {
         // generate encrypted fixture for other SDKs to verify cross-compatibility
-        // fixture files are committed to the repo for other SDKs to use
+        // fixtures are committed to the repo and rarely need refreshing
+        // run with: STASH_GEN_FIXTURES=1 cargo test --all-features
+        if std::env::var("STASH_GEN_FIXTURES").is_err() {
+            return;
+        }
         const PASSPHRASE: &str = "cross-compat-key-16";
         const PLAINTEXT: &str = "hello from Rust! 🦀";
         const FIXTURE_PATH: &str = "../../stash-python/tests/fixtures/";

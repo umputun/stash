@@ -68,7 +68,10 @@ describe('CrossCompatibility', () => {
   });
 
   describe('generate fixture for Go/Python', () => {
-    it('generates encrypted data for Go/Python to decrypt', async () => {
+    // fixtures are committed to the repo and rarely need refreshing
+    // run with: STASH_GEN_FIXTURES=1 npm test
+    const shouldGenerate = !!process.env['STASH_GEN_FIXTURES'];
+    it.skipIf(!shouldGenerate)('generates encrypted data for Go/Python to decrypt', async () => {
       const plaintext = 'hello from TypeScript! 🚀';
 
       const zk = new ZKCrypto(PASSPHRASE);

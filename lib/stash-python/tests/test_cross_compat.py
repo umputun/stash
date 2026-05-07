@@ -1,5 +1,6 @@
 """Cross-compatibility tests between Python and Go implementations."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,10 @@ class TestCrossCompatibility:
 
         assert decrypted.decode() == expected_plaintext
 
+    @pytest.mark.skipif(
+        not os.environ.get("STASH_GEN_FIXTURES"),
+        reason="fixture generation disabled, set STASH_GEN_FIXTURES=1 to refresh",
+    )
     def test_generate_fixture_for_go(self):
         """Generate encrypted data for Go to decrypt."""
         plaintext = "hello from Python! 🐍"

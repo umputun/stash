@@ -222,8 +222,11 @@ func TestNewZKCrypto_Validation(t *testing.T) {
 
 func TestZKCrypto_GeneratePythonFixture(t *testing.T) {
 	// generates encrypted fixture for Python cross-compatibility testing
-	// run with: go test -run TestZKCrypto_GeneratePythonFixture -v
-	// fixture files are committed to the repo for Python tests to use
+	// fixtures are committed to the repo and rarely need refreshing
+	// run with: STASH_GEN_FIXTURES=1 go test -run TestZKCrypto_GeneratePythonFixture -v
+	if os.Getenv("STASH_GEN_FIXTURES") == "" {
+		t.Skip("fixture generation disabled, set STASH_GEN_FIXTURES=1 to refresh")
+	}
 
 	const (
 		passphrase  = "cross-compat-key-16"
