@@ -90,7 +90,7 @@ func NewSSHTestContainerWithUserE(ctx context.Context, user string) (*SSHTestCon
 	return &SSHTestContainer{
 		Container: container,
 		Host:      host,
-		Port:      port,
+		Port:      nat.Port(port.String()),
 		User:      user,
 	}, nil
 }
@@ -165,7 +165,7 @@ func (sc *SSHTestContainer) GetFile(ctx context.Context, remotePath, localPath s
 	defer remoteFile.Close()
 
 	// create local file
-	localFile, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	localFile, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- localPath validated above
 	if err != nil {
 		return fmt.Errorf("failed to create local file %s: %w", localPath, err)
 	}
@@ -193,7 +193,7 @@ func (sc *SSHTestContainer) SaveFile(ctx context.Context, localPath, remotePath 
 	}
 
 	// open local file
-	localFile, err := os.Open(localPath)
+	localFile, err := os.Open(localPath) // #nosec G304 -- localPath validated above
 	if err != nil {
 		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
 	}

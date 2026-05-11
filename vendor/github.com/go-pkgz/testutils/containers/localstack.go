@@ -146,7 +146,7 @@ func (lc *LocalstackTestContainer) GetFile(ctx context.Context, bucketName, obje
 	defer output.Body.Close()
 
 	// create local file
-	file, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	file, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- localPath validated above
 	if err != nil {
 		return fmt.Errorf("failed to create local file %s: %w", localPath, err)
 	}
@@ -172,7 +172,7 @@ func (lc *LocalstackTestContainer) SaveFile(ctx context.Context, localPath, buck
 	}
 
 	// read local file
-	fileData, err := os.ReadFile(localPath)
+	fileData, err := os.ReadFile(localPath) // #nosec G304 -- localPath validated above
 	if err != nil {
 		return fmt.Errorf("failed to read local file %s: %w", localPath, err)
 	}

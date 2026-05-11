@@ -7,12 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/go-connections/nat"
 	"github.com/jlaffaye/ftp"
+	mobycontainer "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -23,34 +26,35 @@ import (
 type FTPTestContainer struct {
 	Container testcontainers.Container
 	Host      string
-	Port      nat.Port // represents the *host* port struct
+	Port      nat.Port
 	User      string
 	Password  string
 }
 
-// NewFTPTestContainer uses delfer/alpine-ftp-server, minimal env vars, fixed host port mapping syntax.
+// NewFTPTestContainer creates an FTP test container using delfer/alpine-ftp-server
+// with fixed host control port 2121 and passive ports 21000-21010.
 func NewFTPTestContainer(ctx context.Context, t *testing.T) *FTPTestContainer {
 	fc, err := NewFTPTestContainerE(ctx)
 	require.NoError(t, err)
 	return fc
 }
 
-// NewFTPTestContainerE uses delfer/alpine-ftp-server, minimal env vars, fixed host port mapping syntax.
+// NewFTPTestContainerE creates an FTP test container using delfer/alpine-ftp-server
+// with fixed host control port 2121 and passive ports 21000-21010.
 // Returns error instead of using require.NoError, suitable for TestMain usage.
 func NewFTPTestContainerE(ctx context.Context) (*FTPTestContainer, error) {
 	const (
 		defaultUser          = "ftpuser"
 		defaultPassword      = "ftppass"
-		pasvMinPort          = "21000" // default passive port range for the image
-		pasvMaxPort          = "21010"
+		pasvMinPort          = 21000 // default passive port range for the image
+		pasvMaxPort          = 21010
 		fixedHostControlPort = "2121"
 	)
 
-	pasvPortRangeContainer := fmt.Sprintf("%s-%s", pasvMinPort, pasvMaxPort)
-	pasvPortRangeHost := fmt.Sprintf("%s-%s", pasvMinPort, pasvMaxPort) // map 1:1
-	exposedPortsWithBinding := []string{
-		fmt.Sprintf("%s:21/tcp", fixedHostControlPort),                      // "2121:21/tcp"
-		fmt.Sprintf("%s:%s/tcp", pasvPortRangeHost, pasvPortRangeContainer), // "21000-21010:21000-21010/tcp"
+	// declare exposed container ports; host-side bindings are set via HostConfigModifier
+	exposedPorts := []string{"21/tcp"}
+	for p := pasvMinPort; p <= pasvMaxPort; p++ {
+		exposedPorts = append(exposedPorts, strconv.Itoa(p)+"/tcp")
 	}
 
 	imageName := "delfer/alpine-ftp-server:latest"
@@ -58,11 +62,23 @@ func NewFTPTestContainerE(ctx context.Context) (*FTPTestContainer, error) {
 
 	req := testcontainers.ContainerRequest{
 		Image:        imageName,
-		ExposedPorts: exposedPortsWithBinding,
+		ExposedPorts: exposedPorts,
 		Env: map[string]string{
 			"USERS": fmt.Sprintf("%s|%s", defaultUser, defaultPassword),
 		},
-		WaitingFor: wait.ForListeningPort(nat.Port("21/tcp")).WithStartupTimeout(2 * time.Minute),
+		HostConfigModifier: func(hc *mobycontainer.HostConfig) {
+			// supplying HostConfigModifier replaces the library default; no HostConfig
+			// fields below rely on defaults, so nothing is lost today.
+			bindings := network.PortMap{
+				network.MustParsePort("21/tcp"): []network.PortBinding{{HostPort: fixedHostControlPort}},
+			}
+			for p := pasvMinPort; p <= pasvMaxPort; p++ {
+				port := network.MustParsePort(strconv.Itoa(p) + "/tcp")
+				bindings[port] = []network.PortBinding{{HostPort: strconv.Itoa(p)}}
+			}
+			hc.PortBindings = bindings
+		},
+		WaitingFor: wait.ForListeningPort("21/tcp").WithStartupTimeout(2 * time.Minute),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -81,28 +97,14 @@ func NewFTPTestContainerE(ctx context.Context) (*FTPTestContainer, error) {
 		return nil, fmt.Errorf("failed to get container host: %w", err)
 	}
 
-	// since we requested a fixed port, construct the nat.Port struct directly
-	// we still call MappedPort just to ensure the container is properly exposing *something* for port 21
-	if _, err = container.MappedPort(ctx, "21"); err != nil {
-		_ = container.Terminate(ctx)
-		return nil, fmt.Errorf("failed to get mapped port: %w", err)
-	}
-
-	// construct the Port struct based on our fixed request
-	fixedHostNatPort, err := nat.NewPort("tcp", fixedHostControlPort)
-	if err != nil {
-		_ = container.Terminate(ctx)
-		return nil, fmt.Errorf("failed to create nat.Port for fixed host port: %w", err)
-	}
-
 	time.Sleep(1 * time.Second)
 
-	fmt.Printf("FTP container accessible at: %s:%s (passive ports %s)\n", host, fixedHostControlPort, pasvPortRangeHost)
+	fmt.Printf("FTP container accessible at: %s:%s (passive ports %d-%d)\n", host, fixedHostControlPort, pasvMinPort, pasvMaxPort)
 
 	return &FTPTestContainer{
 		Container: container,
 		Host:      host,
-		Port:      fixedHostNatPort, // use the manually constructed nat.Port for the fixed host port
+		Port:      nat.Port(fixedHostControlPort + "/tcp"),
 		User:      defaultUser,
 		Password:  defaultPassword,
 	}, nil
@@ -263,7 +265,7 @@ func (fc *FTPTestContainer) GetFile(ctx context.Context, remotePath, localPath s
 	if !strings.HasPrefix(filepath.Clean(localPath), filepath.Clean(localDir)) {
 		return fmt.Errorf("localPath %s attempts to escape from directory %s", localPath, localDir)
 	}
-	f, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- localPath validated above
 	if err != nil {
 		return fmt.Errorf("failed to create local file %s: %w", localPath, err)
 	}
@@ -294,7 +296,7 @@ func (fc *FTPTestContainer) SaveFile(ctx context.Context, localPath, remotePath 
 	if !strings.HasPrefix(filepath.Clean(localPath), filepath.Clean(filepath.Dir(localPath))) {
 		return fmt.Errorf("localPath %s attempts to escape from its directory", localPath)
 	}
-	f, err := os.Open(localPath)
+	f, err := os.Open(localPath) // #nosec G304 -- localPath validated above
 	if err != nil {
 		return fmt.Errorf("failed to open local file %s: %w", localPath, err)
 	}
@@ -373,6 +375,8 @@ func (fc *FTPTestContainer) Close(ctx context.Context) error {
 	}
 	return nil
 }
+
+// splitPath splits a slash-separated path into non-empty segments.
 func splitPath(path string) []string {
 	cleanPath := filepath.ToSlash(path)
 	cleanPath = strings.Trim(cleanPath, "/")
