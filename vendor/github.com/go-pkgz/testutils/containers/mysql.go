@@ -84,7 +84,7 @@ func NewMySQLTestContainerWithDBE(ctx context.Context, dbName string) (*MySQLTes
 	return &MySQLTestContainer{
 		Container: container,
 		Host:      host,
-		Port:      port,
+		Port:      nat.Port(port.String()),
 		User:      defaultUser,
 		Password:  defaultPassword,
 		Database:  dbName,

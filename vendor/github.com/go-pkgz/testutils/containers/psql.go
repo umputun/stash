@@ -84,7 +84,7 @@ func NewPostgresTestContainerWithDBE(ctx context.Context, dbName string) (*Postg
 	return &PostgresTestContainer{
 		Container: container,
 		Host:      host,
-		Port:      port,
+		Port:      nat.Port(port.String()),
 		User:      defaultUser,
 		Password:  defaultPassword,
 		Database:  dbName,
