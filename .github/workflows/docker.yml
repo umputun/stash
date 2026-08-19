@@ -6,6 +6,9 @@ on:
     types: [completed]
     # NOTE: Do NOT add `branches:` filter here - it breaks tag builds
 
+permissions:
+  contents: read
+
 env:
   REGISTRY_GHCR: ghcr.io
   REGISTRY_DOCKER: docker.io
