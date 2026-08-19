@@ -7,14 +7,26 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
 - **app/main.go** - Entry point with CLI subcommands (server, restore), logging, signal handling
 - **app/main_test.go** - Integration tests
 - **app/server/** - HTTP server with routegroup
-  - `server.go` - Server struct, config, routes, graceful shutdown, GitStore interface
-  - `handlers.go` - HTTP handlers for KV API operations (with git integration)
+  - `server.go` - Server struct, config, routes, graceful shutdown, KVStore/GitService/Validator interfaces
+  - `verify.go` - JSON schema validation for auth config, embeds `schema.json`
+  - `api/` - KV API package
+    - `handler.go` - HTTP handlers for KV API operations (with git integration)
+    - `mocks/` - Generated mocks
+  - `web/` - Web UI package
+    - `handler.go` - Handler struct, embedded templates and static assets, consumer interfaces
+    - `keys.go` - Key CRUD handlers and HTMX partials, per-user permission checks
+    - `pages.go` - Index page and UI preference handlers (theme, view mode, sort, secrets filter)
+    - `auth.go` - Login form, login and logout handlers
+    - `audit.go` - Audit web UI handler (full page and HTMX partials)
+    - `highlight.go` - Chroma syntax highlighting
+    - `static/` - Embedded CSS, JS, HTMX library
+    - `templates/` - Embedded HTML templates (base, index, login, audit, partials)
+    - `mocks/` - Generated mocks
   - `audit/` - Audit package
     - `audit.go` - Middleware for audit logging, Store and Auth interfaces
+    - `logger.go` - Audit entry building and logging
     - `handler.go` - Handler for POST /audit/query endpoint (admin only)
     - `mocks/` - Generated mocks
-  - `web.go` - Web UI handlers, templates, static file serving, per-user permission checks
-  - `web/audit.go` - Audit web UI handler (full page and HTMX partials)
   - `auth/` - Authentication package
     - `auth.go` - Service struct, session management, user/token validation, permission checks
     - `config.go` - Config types (User, TokenACL, PermissionConfig), YAML loading
@@ -22,20 +34,24 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
     - `mocks/` - Generated mocks
   - `sse/` - Server-Sent Events for real-time key subscriptions
     - `sse.go` - Service struct, OnSession callback, Publish method, ServeHTTP handler
-    - `sse_test.go` - Unit tests
     - `mocks/` - Generated mocks
-  - `verify.go` - JSON schema validation for auth config (embedded schema)
-  - `static/` - Embedded CSS, JS, HTMX library
-  - `templates/` - Embedded HTML templates (base, index, login, audit, partials)
+  - `internal/cookie/` - Session cookie names shared by `auth` and `web`
+  - `internal/schema/` - Standalone command regenerating `schema.json`
   - `mocks/` - Generated mocks (moq)
 - **app/store/** - Database storage layer (SQLite/PostgreSQL)
   - `store.go` - Interface, types (KeyInfo with Secret/ZKEncrypted fields), errors
   - `db.go` - Unified Store with SQLite and PostgreSQL support
   - `cached.go` - Loading cache wrapper using lcw
   - `crypto.go` - Secrets encryption (NaCl secretbox + Argon2id)
+  - `audit.go` - Audit entry storage and queries
 - **app/git/** - Git versioning for key-value storage
   - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
-  - `git_test.go` - Unit tests
+  - `service.go` - Service wrapper over the Storer interface, used by the server
+- **app/validator/** - Format validation, parses json, yaml, xml, toml, ini and hcl (text and shell pass through unchecked)
+- **app/enum/** - Generated enum types shared across packages (see Enum Types below)
+- **lib/** - Client SDKs: `stash` (Go), `stash-python`, `stash-js`, `stash-java`, `stash-rust`
+- **e2e/** - Playwright acceptance tests, build tag `e2e` (see E2E Testing below)
+- **site/** - mkdocs sources for the documentation site
 
 ## Enum Types
 
@@ -210,7 +226,7 @@ POST   /logout                   # clear session, redirect to login
 
 ## Development Notes
 
-- Consumer-side interfaces (KVStore, GitStore defined in server package)
+- Consumer-side interfaces declared in the package using them: `server` (KVStore, GitService, Validator), `api` (KVStore, GitService, AuthProvider, FormatValidator, EventPublisher), `web` (KVStore, GitService, AuthProvider, Validator, AuditLogger, EventPublisher, AuditStore)
 - Return concrete types, accept interfaces
 - Database type auto-detected from URL (postgres:// vs file path)
 - SQLite: WAL mode, SetMaxOpenConns(1), busy timeout, sync.RWMutex for locking
@@ -240,7 +256,7 @@ POST   /logout                   # clear session, redirect to login
 
 ## E2E Testing
 
-- **Location**: `e2e/e2e_test.go` with test data in `e2e/testdata/`
+- **Location**: `e2e/` with shared setup in `e2e_test.go`, per-area suites (`kv`, `auth`, `permissions`, `secrets`, `history`, `search`, `audit`, `ui`, `zk`) and test data in `e2e/testdata/`
 - **Technology**: playwright-go (Go bindings for Playwright, no npm/TypeScript)
 - **Build tag**: `//go:build e2e` - excluded from regular `go test ./...`
 - **Commands**:
