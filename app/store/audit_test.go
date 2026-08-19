@@ -23,7 +23,7 @@ func TestStore_AuditLog(t *testing.T) {
 		now := time.Now()
 		entries := []AuditEntry{
 			{Timestamp: now.Add(-2 * time.Hour), Action: enum.AuditActionRead, Key: "app/config", Actor: "admin", ActorType: enum.ActorTypeUser, Result: enum.AuditResultSuccess, IP: "192.168.1.1", UserAgent: "test/1.0"},
-			{Timestamp: now.Add(-1 * time.Hour), Action: enum.AuditActionUpdate, Key: "app/config", Actor: "admin", ActorType: enum.ActorTypeUser, Result: enum.AuditResultSuccess, ValueSize: intPtr(100)},
+			{Timestamp: now.Add(-1 * time.Hour), Action: enum.AuditActionUpdate, Key: "app/config", Actor: "admin", ActorType: enum.ActorTypeUser, Result: enum.AuditResultSuccess, ValueSize: new(100)},
 			{Timestamp: now, Action: enum.AuditActionRead, Key: "db/password", Actor: "token:abcd", ActorType: enum.ActorTypeToken, Result: enum.AuditResultDenied},
 		}
 
@@ -161,8 +161,4 @@ func TestStore_AuditLog(t *testing.T) {
 		assert.Len(t, results, 1)
 		assert.Equal(t, "b", results[0].Key)
 	})
-}
-
-func intPtr(i int) *int {
-	return &i
 }
