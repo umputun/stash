@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: setup python
         uses: actions/setup-python@v6
