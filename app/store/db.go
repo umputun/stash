@@ -473,14 +473,12 @@ func isUniqueViolation(err error) bool {
 	}
 
 	// postgresql: code 23505 = unique_violation
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return pgErr.Code == "23505"
 	}
 
 	// sqlite: SQLITE_CONSTRAINT_UNIQUE = 2067, SQLITE_CONSTRAINT_PRIMARYKEY = 1555
-	var sqliteErr *sqlite.Error
-	if errors.As(err, &sqliteErr) {
+	if sqliteErr, ok := errors.AsType[*sqlite.Error](err); ok {
 		code := sqliteErr.Code()
 		return code == 2067 || code == 1555
 	}

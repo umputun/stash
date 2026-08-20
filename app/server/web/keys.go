@@ -390,8 +390,7 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		var conflictErr *store.ConflictError
-		if errors.As(err, &conflictErr) {
+		if conflictErr, ok := errors.AsType[*store.ConflictError](err); ok {
 			h.renderConflictError(w, conflictErrorParams{
 				Key: key, Value: valueStr, Format: format, IsBinary: isBinary,
 				Username: username, FormUpdatedAt: formUpdatedAt, ConflictErr: conflictErr,
