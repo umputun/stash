@@ -308,7 +308,7 @@ When multiple prefixes match, the longest (most specific) wins.
 ### Permission Levels
 
 - `r` or `read` - read-only access
-- `w` or `write` - write-only access
+- `w` or `write` - write access (implies read, since editing needs the current value)
 - `rw` or `readwrite` - full read-write access
 
 ### Public Access

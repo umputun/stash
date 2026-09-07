@@ -122,6 +122,7 @@ func TestTokenACL_CheckKeyPermission(t *testing.T) {
 		Token: "test",
 		prefixes: []prefixPerm{
 			{prefix: "app/*", permission: enum.PermissionReadWrite},
+			{prefix: "logs/*", permission: enum.PermissionWrite},
 			{prefix: "*", permission: enum.PermissionRead},
 		},
 	}
@@ -133,6 +134,8 @@ func TestTokenACL_CheckKeyPermission(t *testing.T) {
 	}{
 		{"app/config", false, true},
 		{"app/config", true, true},
+		{"logs/app", false, true},
+		{"logs/app", true, true},
 		{"other/key", false, true},
 		{"other/key", true, false},
 	}
