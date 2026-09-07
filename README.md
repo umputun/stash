@@ -126,6 +126,7 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--server.shutdown-timeout` | `STASH_SERVER_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown timeout |
 | `--server.base-url` | `STASH_SERVER_BASE_URL` | - | Base URL path for reverse proxy (e.g., `/stash`) |
 | `--server.page-size` | `STASH_SERVER_PAGE_SIZE` | `50` | Keys per page in web UI (0 to disable pagination) |
+| `--server.trusted-proxies` | `STASH_SERVER_TRUSTED_PROXIES` | - | Proxy IPs or CIDRs whose `X-Forwarded-For`/`X-Real-IP` headers are trusted (comma-separated) |
 | `--limits.body-size` | `STASH_LIMITS_BODY_SIZE` | `1048576` | Max request body size in bytes (1MB) |
 | `--limits.requests-per-sec` | `STASH_LIMITS_REQUESTS_PER_SEC` | `100` | Max requests per second per client (rate limit) |
 | `--limits.max-concurrent` | `STASH_LIMITS_MAX_CONCURRENT` | `1000` | Max concurrent in-flight requests |
@@ -183,6 +184,12 @@ labels:
   - reproxy.server=example.com
   - reproxy.route=^/stash/
   - reproxy.port=8080
+```
+
+Behind a reverse proxy, list the proxy address with `--server.trusted-proxies` (IPs or CIDRs, comma-separated) so the rate limiter and audit log see the client IP from `X-Forwarded-For`/`X-Real-IP`. Headers from any other peer are ignored, so a client connecting directly cannot pick its own address. Only a public forwarded address is used; a client on a private network is still recorded under the proxy address:
+
+```bash
+stash server --server.trusted-proxies=127.0.0.1,::1,10.0.0.0/8
 ```
 
 ## Authentication
@@ -308,7 +315,7 @@ When multiple prefixes match, the longest (most specific) wins.
 ### Permission Levels
 
 - `r` or `read` - read-only access
-- `w` or `write` - write-only access
+- `w` or `write` - write access (implies read, since editing needs the current value)
 - `rw` or `readwrite` - full read-write access
 
 ### Public Access
@@ -386,6 +393,8 @@ Directory structure example:
 └── service/
     └── timeout.val      # key: service/timeout
 ```
+
+Values under [secrets paths](#secrets-vault) are written to the repository encrypted with the same master key as the database, marked with a `$ENC$` prefix. History views, revisions and `restore` decrypt them with `--secrets.key`; without the key, or with the wrong one, they fail rather than return ciphertext.
 
 ### Remote Sync
 
@@ -496,6 +505,7 @@ Secrets are displayed with a lock icon (🔒) in the key list. Use the filter to
 
 **Protected against:**
 - Database file theft (values encrypted at rest)
+- Git history or remote theft (secrets are committed encrypted)
 - Ciphertext analysis (unique salt/nonce means identical values encrypt differently)
 - Tampering (Poly1305 authentication tag)
 
@@ -752,6 +762,8 @@ curl -N http://localhost:8080/kv/subscribe/app/
 # subscribe to all keys
 curl -N http://localhost:8080/kv/subscribe/*
 ```
+
+With authentication enabled, a subscription to a key the caller cannot read is refused with 403. A prefix or wildcard subscription is accepted for any authenticated caller and delivers only the events for keys the caller may read; keys outside the caller's permissions, including secrets without an explicit grant, are never mentioned.
 
 Events are delivered as JSON in SSE format:
 

@@ -188,6 +188,10 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] get %s (%d bytes, format=%s)", key, len(value), format)
 
 	w.Header().Set("Content-Type", h.formatToContentType(format))
+	// values are caller-controlled documents; a browser opening this URL must not run scripts
+	// from them on the stash origin (an xhtml-namespaced xml value would otherwise execute)
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(value); err != nil {
 		log.Printf("[WARN] failed to write response: %v", err)

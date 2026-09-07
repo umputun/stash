@@ -188,6 +188,8 @@ func TestHandler_HandleGet(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 		assert.Equal(t, "testvalue", rec.Body.String())
 		assert.Equal(t, "text/plain", rec.Header().Get("Content-Type"))
+		assert.Equal(t, "sandbox", rec.Header().Get("Content-Security-Policy"))
+		assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	})
 
 	t.Run("json format returns application/json", func(t *testing.T) {

@@ -911,6 +911,100 @@ func TestRunRestore_InvalidRevision(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to checkout revision")
 }
 
+func TestRunRestore_EncryptedSecrets(t *testing.T) {
+	tmpDir := t.TempDir()
+	gitPath := filepath.Join(tmpDir, ".history")
+	dbPath := filepath.Join(tmpDir, "test.db")
+	const masterKey = "restore-master-key-0123"
+
+	encryptor, err := store.NewCrypto([]byte(masterKey))
+	require.NoError(t, err)
+	gitStore, err := git.New(git.Config{Path: gitPath, Branch: "master", Encryptor: encryptor})
+	require.NoError(t, err)
+	author := git.DefaultAuthor()
+	require.NoError(t, gitStore.Commit(git.CommitRequest{Key: "app/secrets/db", Value: []byte("hunter2"), Operation: "set", Author: author}))
+	require.NoError(t, gitStore.Commit(git.CommitRequest{Key: "app/config", Value: []byte("plain"), Operation: "set", Author: author}))
+	headRef, err := gitStore.Head()
+	require.NoError(t, err)
+
+	existing, err := store.New(dbPath)
+	require.NoError(t, err)
+	_, err = existing.Set(t.Context(), "keep/me", []byte("still-here"), "text")
+	require.NoError(t, err)
+	require.NoError(t, existing.Close())
+
+	opts.DB = dbPath
+	opts.Git.Path = gitPath
+	opts.Git.Branch = "master"
+	opts.RestoreCmd.Rev = headRef
+
+	t.Run("wrong key fails before clearing the database", func(t *testing.T) {
+		opts.Secrets.Key = "another-master-key-0123"
+		err := runRestore(t.Context())
+		require.ErrorContains(t, err, "failed to decrypt")
+
+		st, err := store.New(dbPath)
+		require.NoError(t, err)
+		defer st.Close()
+		val, err := st.Get(t.Context(), "keep/me")
+		require.NoError(t, err)
+		assert.Equal(t, "still-here", string(val))
+	})
+
+	t.Run("missing key fails before clearing the database", func(t *testing.T) {
+		opts.Secrets.Key = ""
+		err := runRestore(t.Context())
+		require.ErrorContains(t, err, "no secrets key is configured")
+
+		st, err := store.New(dbPath)
+		require.NoError(t, err)
+		defer st.Close()
+		val, err := st.Get(t.Context(), "keep/me")
+		require.NoError(t, err)
+		assert.Equal(t, "still-here", string(val))
+	})
+
+	t.Run("legacy plaintext secret without key fails before clearing the database", func(t *testing.T) {
+		legacyPath := filepath.Join(tmpDir, ".legacy-history")
+		plain, err := git.New(git.Config{Path: legacyPath, Branch: "master"})
+		require.NoError(t, err)
+		require.NoError(t, plain.Commit(git.CommitRequest{Key: "legacy/secrets/token", Value: []byte("plain-old"), Operation: "set", Author: author}))
+		legacyRef, err := plain.Head()
+		require.NoError(t, err)
+		opts.Git.Path, opts.RestoreCmd.Rev = legacyPath, legacyRef
+		defer func() { opts.Git.Path, opts.RestoreCmd.Rev = gitPath, headRef }()
+
+		opts.Secrets.Key = ""
+		err = runRestore(t.Context())
+		require.ErrorContains(t, err, "--secrets.key is required")
+
+		st, err := store.New(dbPath)
+		require.NoError(t, err)
+		defer st.Close()
+		val, err := st.Get(t.Context(), "keep/me")
+		require.NoError(t, err)
+		assert.Equal(t, "still-here", string(val))
+	})
+
+	t.Run("right key restores the secret", func(t *testing.T) {
+		opts.Secrets.Key = masterKey
+		require.NoError(t, runRestore(t.Context()))
+
+		st, err := store.New(dbPath, store.WithEncryptor(encryptor))
+		require.NoError(t, err)
+		defer st.Close()
+		val, err := st.Get(t.Context(), "app/secrets/db")
+		require.NoError(t, err)
+		assert.Equal(t, "hunter2", string(val))
+		val, err = st.Get(t.Context(), "app/config")
+		require.NoError(t, err)
+		assert.Equal(t, "plain", string(val))
+		_, err = st.Get(t.Context(), "keep/me")
+		require.ErrorIs(t, err, store.ErrNotFound)
+	})
+	opts.Secrets.Key = ""
+}
+
 func TestIntegration_WithCache(t *testing.T) {
 	tmpDir := t.TempDir()
 	opts.DB = filepath.Join(tmpDir, "test.db")
@@ -2261,6 +2355,7 @@ func TestIntegration_SSE(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18503"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2383,6 +2478,7 @@ func TestIntegration_SSE_MultipleEvents(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18504"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2476,6 +2572,7 @@ func TestIntegration_SSE_NoEventsForNonSubscribedKeys(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18505"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2539,6 +2636,7 @@ func TestIntegration_SSE_AuthDenied(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18506"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 
 	// create auth config with scoped token
 	authContent := `tokens:

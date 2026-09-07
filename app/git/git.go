@@ -4,6 +4,7 @@
 package git
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+
+	"github.com/umputun/stash/app/store"
+	"github.com/umputun/stash/lib/stash"
 )
 
 const defaultBranch = "master"
@@ -63,18 +67,38 @@ type CommitRequest struct {
 
 // Config holds git repository configuration
 type Config struct {
-	Path   string // local repository path
-	Branch string // branch name (default: master)
-	Remote string // remote name (optional, for push/pull)
-	SSHKey string // path to SSH private key (optional, for push)
+	Path      string    // local repository path
+	Branch    string    // branch name (default: master)
+	Remote    string    // remote name (optional, for push/pull)
+	SSHKey    string    // path to SSH private key (optional, for push)
+	Encryptor Encryptor // encrypts secret values in the repository (optional)
 }
+
+// the mock lives in this package because mocks/ imports git for the Storer mock and an internal
+// test cannot import it back
+//go:generate moq -out encryptor_mock_test.go -pkg git -skip-ensure -fmt goimports . Encryptor
+
+// Encryptor encrypts secret values before they are written to the repository and decrypts
+// them on the way back.
+type Encryptor interface {
+	Encrypt(value []byte) ([]byte, error)
+	Decrypt(encrypted []byte) ([]byte, error)
+}
+
+// encPrefix marks a repository value encrypted by the Encryptor. Values without it are
+// plaintext written before encryption was introduced.
+const encPrefix = "$ENC$"
 
 // Store provides git-backed versioning for key-value storage
 type Store struct {
-	cfg  Config
-	repo *git.Repository
-	mu   sync.Mutex
+	cfg     Config
+	repo    *git.Repository
+	mu      sync.Mutex
+	decrypt chan struct{} // bounds concurrent decryptions, each an argon2 derivation at 64 MiB
 }
+
+// maxConcurrentDecrypt caps argon2 derivations in flight across history and revision reads.
+const maxConcurrentDecrypt = 4
 
 // New creates a new git store, initializing or opening the repository
 func New(cfg Config) (*Store, error) {
@@ -85,7 +109,7 @@ func New(cfg Config) (*Store, error) {
 		cfg.Branch = defaultBranch
 	}
 
-	s := &Store{cfg: cfg}
+	s := &Store{cfg: cfg, decrypt: make(chan struct{}, maxConcurrentDecrypt)}
 	if err := s.initRepo(); err != nil {
 		return nil, fmt.Errorf("failed to init git repo: %w", err)
 	}
@@ -189,17 +213,56 @@ func (s *Store) createNewRepo() error {
 }
 
 // writeKeyFile writes key value to file and returns the relative path for staging.
+// The write is confined to the repository: a symlink in a checkout pointing outside it,
+// or an absolute link, is refused rather than followed.
 func (s *Store) writeKeyFile(key string, value []byte) (string, error) {
 	filePath := keyToPath(key)
-	fullPath := filepath.Join(s.cfg.Path, filePath)
 
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o750); err != nil {
+	root, err := os.OpenRoot(s.cfg.Path)
+	if err != nil {
+		return "", fmt.Errorf("failed to open repository: %w", err)
+	}
+	defer root.Close()
+
+	if err := root.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
-	if err := os.WriteFile(fullPath, value, 0o600); err != nil {
+	if err := root.WriteFile(filePath, value, 0o600); err != nil {
 		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 	return filePath, nil
+}
+
+// encodeValue prepares a value for the repository: secret values are encrypted and marked
+// with encPrefix. ZK blobs are already opaque and pass through unchanged.
+func (s *Store) encodeValue(key string, value []byte) ([]byte, error) {
+	if s.cfg.Encryptor == nil || !store.IsSecret(key) || stash.IsZKEncrypted(value) {
+		return value, nil
+	}
+	encrypted, err := s.cfg.Encryptor.Encrypt(value)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt %q: %w", key, err)
+	}
+	return append([]byte(encPrefix), encrypted...), nil
+}
+
+// decodeValue reverses encodeValue. Only secret keys are inspected, so an ordinary value that
+// happens to start with encPrefix is left alone. A marked value with no encryptor, the wrong
+// key or a damaged payload is an error, never returned as data.
+func (s *Store) decodeValue(key string, value []byte) ([]byte, error) {
+	if !store.IsSecret(key) || !bytes.HasPrefix(value, []byte(encPrefix)) {
+		return value, nil
+	}
+	if s.cfg.Encryptor == nil {
+		return nil, fmt.Errorf("%q is encrypted in the repository but no secrets key is configured", key)
+	}
+	s.decrypt <- struct{}{}
+	defer func() { <-s.decrypt }()
+	decrypted, err := s.cfg.Encryptor.Decrypt(value[len(encPrefix):])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt %q: %w", key, err)
+	}
+	return decrypted, nil
 }
 
 // Commit writes key-value to file and commits to git.
@@ -218,7 +281,11 @@ func (s *Store) Commit(req CommitRequest) error {
 		format = "text"
 	}
 
-	filePath, err := s.writeKeyFile(req.Key, req.Value)
+	value, err := s.encodeValue(req.Key, req.Value)
+	if err != nil {
+		return err
+	}
+	filePath, err := s.writeKeyFile(req.Key, value)
 	if err != nil {
 		return err
 	}
@@ -263,16 +330,21 @@ func (s *Store) Delete(key string, author Author) error {
 
 	now := time.Now()
 	filePath := keyToPath(key)
-	fullPath := filepath.Join(s.cfg.Path, filePath)
+
+	root, err := os.OpenRoot(s.cfg.Path)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+	defer root.Close()
 
 	// check if file exists
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+	if _, statErr := root.Lstat(filePath); os.IsNotExist(statErr) {
 		return nil // nothing to delete
 	}
 
 	// remove file
-	if err := os.Remove(fullPath); err != nil {
-		return fmt.Errorf("failed to remove file: %w", err)
+	if rmErr := root.Remove(filePath); rmErr != nil {
+		return fmt.Errorf("failed to remove file: %w", rmErr)
 	}
 
 	// stage deletion
@@ -444,13 +516,13 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 			return nil
 		}
 
-		// only process .val files
-		if !strings.HasSuffix(path, ".val") {
+		// only process .val files; a symlink named like one would make ReadFile follow
+		// it to whatever a checkout points at, so links are not values
+		if !strings.HasSuffix(path, ".val") || info.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
 
-		// read file content - path is validated by Walk to be within s.cfg.Path
-		content, readErr := os.ReadFile(path) //nolint:gosec // path is validated by filepath.Walk
+		content, readErr := os.ReadFile(path) //nolint:gosec // regular file under s.cfg.Path, links skipped above
 		if readErr != nil {
 			return fmt.Errorf("failed to read %s: %w", path, readErr)
 		}
@@ -462,10 +534,15 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 		}
 		key := pathToKey(relPath)
 
+		value, decErr := s.decodeValue(key, content)
+		if decErr != nil {
+			return decErr
+		}
+
 		// get format from the last commit that modified this file
 		format := s.getFileFormat(relPath)
 
-		result[key] = KeyValue{Value: content, Format: format}
+		result[key] = KeyValue{Value: value, Format: format}
 
 		return nil
 	})
@@ -484,6 +561,25 @@ func (s *Store) History(key string, limit int) ([]HistoryEntry, error) {
 		return nil, err
 	}
 
+	entries, err := s.rawHistory(key, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// decryption derives a key per revision (argon2, 64 MiB each), so it runs outside the lock
+	// that every commit, delete, push and pull takes
+	for i := range entries {
+		value, decErr := s.decodeValue(key, entries[i].Value)
+		if decErr != nil {
+			return nil, fmt.Errorf("revision %s: %w", entries[i].Hash, decErr)
+		}
+		entries[i].Value = value
+	}
+	return entries, nil
+}
+
+// rawHistory reads the commit log for a key under the store lock, values as stored.
+func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -559,6 +655,21 @@ func (s *Store) GetRevision(key, rev string) ([]byte, string, error) {
 		return nil, "", err
 	}
 
+	content, format, err := s.rawRevision(key, rev)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// decryption runs outside the store lock, as in History
+	value, err := s.decodeValue(key, content)
+	if err != nil {
+		return nil, "", err
+	}
+	return value, format, nil
+}
+
+// rawRevision reads the stored value and format at a revision under the store lock.
+func (s *Store) rawRevision(key, rev string) ([]byte, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -593,10 +704,7 @@ func (s *Store) GetRevision(key, rev string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// get format from commit message
-	format := parseFormatFromCommit(commit.Message)
-
-	return []byte(content), format, nil
+	return []byte(content), parseFormatFromCommit(commit.Message), nil
 }
 
 // getFileFormat finds the last commit that modified a file and extracts format from its message.

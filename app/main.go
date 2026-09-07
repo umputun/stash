@@ -43,6 +43,7 @@ var opts struct {
 		ShutdownTimeout time.Duration `long:"shutdown-timeout" env:"SHUTDOWN_TIMEOUT" default:"5s" description:"shutdown timeout"`
 		BaseURL         string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /stash)"`
 		PageSize        int           `long:"page-size" env:"PAGE_SIZE" default:"50" description:"keys per page, 0 to disable"`
+		TrustedProxies  []string      `long:"trusted-proxies" env:"TRUSTED_PROXIES" env-delim:"," description:"proxy IPs or CIDRs whose X-Forwarded-For/X-Real-IP headers are trusted"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
 	Limits struct {
@@ -169,7 +170,7 @@ func runServer(ctx context.Context) error {
 	defer kvStore.Close()
 
 	// initialize git service if enabled
-	gitService, err := initGitService()
+	gitService, err := initGitService(encryptor)
 	if err != nil {
 		return err
 	}
@@ -211,6 +212,7 @@ func runServer(ctx context.Context) error {
 			MaxConcurrent:    opts.Limits.MaxConcurrent,
 			LoginConcurrency: opts.Limits.LoginConcurrency,
 			PageSize:         opts.Server.PageSize,
+			TrustedProxies:   opts.Server.TrustedProxies,
 			AuditEnabled:     opts.Audit.Enabled,
 			AuditQueryLimit:  opts.Audit.QueryLimit,
 		})
@@ -238,12 +240,18 @@ func runRestore(ctx context.Context) error {
 	log.Printf("[INFO] restoring from revision %s", opts.RestoreCmd.Rev)
 	log.Printf("[INFO] git path: %s, db: %s", opts.Git.Path, opts.DB)
 
-	gitStore, err := git.New(git.Config{
-		Path:   opts.Git.Path,
-		Branch: opts.Git.Branch,
-		Remote: opts.Git.Remote,
-		SSHKey: opts.Git.SSHKey,
-	})
+	// configure secrets encryption if key is provided
+	var storeOpts []store.Option
+	encryptor, encErr := initSecretsEncryptor(opts.Secrets.Key)
+	if encErr != nil {
+		return encErr
+	}
+	if encryptor != nil {
+		storeOpts = append(storeOpts, store.WithEncryptor(encryptor))
+		log.Printf("[INFO] secrets encryption enabled")
+	}
+
+	gitStore, err := git.New(gitConfig(encryptor))
 	if err != nil {
 		return fmt.Errorf("failed to initialize git store: %w", err)
 	}
@@ -262,21 +270,20 @@ func runRestore(ctx context.Context) error {
 		return fmt.Errorf("failed to checkout revision %s: %w", opts.RestoreCmd.Rev, chkErr)
 	}
 
-	// read all key-value pairs from git
+	// read all key-value pairs from git; an undecryptable secret fails here, before the database is cleared
 	kvPairs, readErr := gitStore.ReadAll()
 	if readErr != nil {
 		return fmt.Errorf("failed to read keys from git: %w", readErr)
 	}
 
-	// configure secrets encryption if key is provided
-	var storeOpts []store.Option
-	encryptor, encErr := initSecretsEncryptor(opts.Secrets.Key)
-	if encErr != nil {
-		return encErr
-	}
-	if encryptor != nil {
-		storeOpts = append(storeOpts, store.WithEncryptor(encryptor))
-		log.Printf("[INFO] secrets encryption enabled")
+	// unmarked plaintext secrets read fine without a key but the store refuses to write them,
+	// which would clear the database and then drop every secret
+	if encryptor == nil {
+		for key := range kvPairs {
+			if store.IsSecret(key) {
+				return fmt.Errorf("repository holds secret key %q, --secrets.key is required to restore it", key)
+			}
+		}
 	}
 
 	// initialize database store
@@ -442,20 +449,30 @@ func logServerConfig(baseURL string) {
 }
 
 // initGitService creates git service if enabled.
-func initGitService() (server.GitService, error) {
+func initGitService(encryptor *store.Crypto) (server.GitService, error) {
 	if !opts.Git.Enabled {
 		return nil, nil //nolint:nilnil // nil git service is valid when disabled
 	}
-	gitStore, err := git.New(git.Config{
-		Path:   opts.Git.Path,
-		Branch: opts.Git.Branch,
-		Remote: opts.Git.Remote,
-		SSHKey: opts.Git.SSHKey,
-	})
+	gitStore, err := git.New(gitConfig(encryptor))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize git store: %w", err)
 	}
 	return git.NewService(gitStore, opts.Git.Push), nil
+}
+
+// gitConfig builds the git store config from options. The encryptor is set only when
+// non-nil, since a nil pointer inside the interface would still count as configured.
+func gitConfig(encryptor *store.Crypto) git.Config {
+	cfg := git.Config{
+		Path:   opts.Git.Path,
+		Branch: opts.Git.Branch,
+		Remote: opts.Git.Remote,
+		SSHKey: opts.Git.SSHKey,
+	}
+	if encryptor != nil {
+		cfg.Encryptor = encryptor
+	}
+	return cfg
 }
 
 // initAuthService creates auth service if enabled and activates it.

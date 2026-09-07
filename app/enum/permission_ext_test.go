@@ -13,7 +13,7 @@ func TestPermission_CanRead(t *testing.T) {
 	}{
 		{PermissionNone, false},
 		{PermissionRead, true},
-		{PermissionWrite, false},
+		{PermissionWrite, true},
 		{PermissionReadWrite, true},
 	}
 
