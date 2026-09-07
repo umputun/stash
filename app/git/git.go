@@ -74,6 +74,10 @@ type Config struct {
 	Encryptor Encryptor // encrypts secret values in the repository (optional)
 }
 
+// the mock lives in this package because mocks/ imports git for the Storer mock and an internal
+// test cannot import it back
+//go:generate moq -out encryptor_mock_test.go -pkg git -skip-ensure -fmt goimports . Encryptor
+
 // Encryptor encrypts secret values before they are written to the repository and decrypts
 // them on the way back.
 type Encryptor interface {
@@ -87,10 +91,14 @@ const encPrefix = "$ENC$"
 
 // Store provides git-backed versioning for key-value storage
 type Store struct {
-	cfg  Config
-	repo *git.Repository
-	mu   sync.Mutex
+	cfg     Config
+	repo    *git.Repository
+	mu      sync.Mutex
+	decrypt chan struct{} // bounds concurrent decryptions, each an argon2 derivation at 64 MiB
 }
+
+// maxConcurrentDecrypt caps argon2 derivations in flight across history and revision reads.
+const maxConcurrentDecrypt = 4
 
 // New creates a new git store, initializing or opening the repository
 func New(cfg Config) (*Store, error) {
@@ -101,7 +109,7 @@ func New(cfg Config) (*Store, error) {
 		cfg.Branch = defaultBranch
 	}
 
-	s := &Store{cfg: cfg}
+	s := &Store{cfg: cfg, decrypt: make(chan struct{}, maxConcurrentDecrypt)}
 	if err := s.initRepo(); err != nil {
 		return nil, fmt.Errorf("failed to init git repo: %w", err)
 	}
@@ -248,6 +256,8 @@ func (s *Store) decodeValue(key string, value []byte) ([]byte, error) {
 	if s.cfg.Encryptor == nil {
 		return nil, fmt.Errorf("%q is encrypted in the repository but no secrets key is configured", key)
 	}
+	s.decrypt <- struct{}{}
+	defer func() { <-s.decrypt }()
 	decrypted, err := s.cfg.Encryptor.Decrypt(value[len(encPrefix):])
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt %q: %w", key, err)

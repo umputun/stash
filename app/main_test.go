@@ -964,6 +964,28 @@ func TestRunRestore_EncryptedSecrets(t *testing.T) {
 		assert.Equal(t, "still-here", string(val))
 	})
 
+	t.Run("legacy plaintext secret without key fails before clearing the database", func(t *testing.T) {
+		legacyPath := filepath.Join(tmpDir, ".legacy-history")
+		plain, err := git.New(git.Config{Path: legacyPath, Branch: "master"})
+		require.NoError(t, err)
+		require.NoError(t, plain.Commit(git.CommitRequest{Key: "legacy/secrets/token", Value: []byte("plain-old"), Operation: "set", Author: author}))
+		legacyRef, err := plain.Head()
+		require.NoError(t, err)
+		opts.Git.Path, opts.RestoreCmd.Rev = legacyPath, legacyRef
+		defer func() { opts.Git.Path, opts.RestoreCmd.Rev = gitPath, headRef }()
+
+		opts.Secrets.Key = ""
+		err = runRestore(t.Context())
+		require.ErrorContains(t, err, "--secrets.key is required")
+
+		st, err := store.New(dbPath)
+		require.NoError(t, err)
+		defer st.Close()
+		val, err := st.Get(t.Context(), "keep/me")
+		require.NoError(t, err)
+		assert.Equal(t, "still-here", string(val))
+	})
+
 	t.Run("right key restores the secret", func(t *testing.T) {
 		opts.Secrets.Key = masterKey
 		require.NoError(t, runRestore(t.Context()))

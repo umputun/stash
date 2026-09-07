@@ -276,6 +276,16 @@ func runRestore(ctx context.Context) error {
 		return fmt.Errorf("failed to read keys from git: %w", readErr)
 	}
 
+	// unmarked plaintext secrets read fine without a key but the store refuses to write them,
+	// which would clear the database and then drop every secret
+	if encryptor == nil {
+		for key := range kvPairs {
+			if store.IsSecret(key) {
+				return fmt.Errorf("repository holds secret key %q, --secrets.key is required to restore it", key)
+			}
+		}
+	}
+
 	// initialize database store
 	kvStore, dbErr := store.New(opts.DB, storeOpts...)
 	if dbErr != nil {

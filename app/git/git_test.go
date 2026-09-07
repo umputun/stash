@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1069,6 +1071,47 @@ func TestStore_SecretsEncryption(t *testing.T) {
 		_, err = gs.ReadAll()
 		require.ErrorContains(t, err, "failed to decrypt")
 	})
+}
+
+func TestStore_History_BoundsConcurrentDecryption(t *testing.T) {
+	var inFlight, peak atomic.Int32
+	enc := &EncryptorMock{
+		EncryptFunc: func(value []byte) ([]byte, error) { return value, nil },
+		DecryptFunc: func(encrypted []byte) ([]byte, error) {
+			n := inFlight.Add(1)
+			for {
+				p := peak.Load()
+				if n <= p || peak.CompareAndSwap(p, n) {
+					break
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+			inFlight.Add(-1)
+			return encrypted, nil
+		},
+	}
+	gs, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), Encryptor: enc})
+	require.NoError(t, err)
+	author := DefaultAuthor()
+	for i := range 6 {
+		require.NoError(t, gs.Commit(CommitRequest{Key: "app/secrets/db", Value: fmt.Appendf(nil, "v%d", i), Operation: "set", Author: author}))
+	}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			history, histErr := gs.History("app/secrets/db", 0)
+			if histErr != nil {
+				t.Errorf("history: %v", histErr)
+				return
+			}
+			assert.Len(t, history, 6)
+		})
+	}
+	wg.Wait()
+
+	assert.LessOrEqual(t, peak.Load(), int32(maxConcurrentDecrypt))
+	assert.Greater(t, peak.Load(), int32(1))
 }
 
 // pins the finding that a poisoned checkout could point .val entries outside the repository
