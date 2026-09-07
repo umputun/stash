@@ -2,6 +2,49 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.21.0] - 2026-09-07
+
+Security fixes from a review of the server (#133). See Changed for the items affecting existing deployments.
+
+### Added
+- `--server.trusted-proxies` lists the peers whose X-Forwarded-For and X-Real-IP headers are honored; headers from any other peer are dropped before RealIP reads them
+
+### Fixed
+- SSE prefix subscribers received events naming keys their ACL could not read, secrets included, because the subscription check used a dummy key under the prefix. Every connection gets its own topic now, and each published key is checked against that subscriber's credentials
+- SSE shutdown returned a session while the dispatcher could still flush to it; handlers are parked until the dispatcher has stopped
+- The token middleware checked the raw request path, so an `app/*` token was denied on `/kv/history/app/config` and `/kv/subscribe/app/*`. The ACL key comes from the matched route now
+- `GET /kv/{key}` served caller-controlled values under a format content type with no restrictions, so an XML value with an XHTML namespace ran script on the stash origin. Value responses carry `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`
+- Secret values were committed to git history in plaintext while the database held ciphertext. The git store encrypts them with the master key under a `$ENC$` envelope and decrypts for history, revisions and restore; ZK blobs pass through unchanged
+- Git writes and deletes go through `os.Root`, so a symlink planted in a checkout cannot redirect them outside the repository; restore skips symlinked entries
+- `restore` accepted a repository holding secrets without `--secrets.key`, cleared the database, then skipped every secret it could not write. It refuses before clearing now
+- Three `errors.As` call sites use `errors.AsType`, and golangci-lint is pinned so a tag build cannot float onto a linter version the commit was never checked against (5884b90)
+
+### Changed
+- Behind a reverse proxy, `--server.trusted-proxies` must list the proxy IPs or CIDRs. Otherwise clients behind that proxy share one rate-limit bucket and audit entries record the proxy address. Forwarded private IPs are ignored; when the forwarded headers hold no accepted public address, stash uses the connecting peer's address
+- Restoring a revision that contains any secret-path key requires `--secrets.key`. History and revision reads of `$ENC$`-encrypted values need the same master key they were written with; ZK blobs pass through unchanged
+- A `w` grant implies read, through the API and the list as well as the UI. The edit form and the conflict view already returned the current value to anyone allowed to write it
+- Twelve dependency updates across the Go, JavaScript and Rust modules and the CI workflows
+
+## [0.20.0] - 2026-08-19
+
+Backfilled from the published release notes; this version shipped without a changelog entry.
+
+### Added
+- Rust SDK (#66)
+- Shell completions for bash, zsh and fish (#69)
+
+### Changed
+- Router wrapped with `http.CrossOriginProtection` for CSRF defence (#102)
+- Go raised to 1.26 from 1.25, missing workflow hardening added (#129)
+- Coverage reporting migrated from Coveralls to Codecov
+- CI workflows hardened, npm caching added (#79)
+- Stale file names and interfaces corrected in CLAUDE.md (#128)
+- Around ninety dependency updates across the Go, JavaScript and Rust modules
+
+### Fixed
+- Compose waits for the postgres healthcheck before starting stash
+- The brew formula publish step sets the directory field
+
 ## [0.19.0] - 2026-01-04
 
 ### Added
