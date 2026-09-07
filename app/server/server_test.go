@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -704,6 +705,77 @@ func TestServer_HandleList_WithAuth(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), `"key":"app/config"`)
 		assert.Contains(t, rec.Body.String(), `"key":"app/secret"`)
 		assert.Contains(t, rec.Body.String(), `"key":"db/host"`) // admin sees everything
+	})
+}
+
+func TestServer_ProxyHeaders(t *testing.T) {
+	st := &mocks.KVStoreMock{
+		ListFunc: func(_ context.Context, _ enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+	}
+	newServer := func(t *testing.T, proxies ...string) *Server {
+		t.Helper()
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", TrustedProxies: proxies,
+		})
+		require.NoError(t, err)
+		return srv
+	}
+	echo := func(srv *Server) http.Handler {
+		return srv.proxyHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(r.Header.Get("X-Forwarded-For") + "|" + r.Header.Get("X-Real-IP")))
+		}))
+	}
+
+	tests := []struct {
+		name    string
+		proxies []string
+		peer    string
+		want    string
+	}{
+		{"no trusted proxies strips headers", nil, "203.0.113.5:1234", "|"},
+		{"untrusted peer strips headers", []string{"10.0.0.0/8"}, "203.0.113.5:1234", "|"},
+		{"peer in trusted cidr keeps headers", []string{"10.0.0.0/8"}, "10.1.2.3:1234", "8.8.8.8|9.9.9.9"},
+		{"peer matching bare ip keeps headers", []string{"127.0.0.1"}, "127.0.0.1:1234", "8.8.8.8|9.9.9.9"},
+		{"ipv6 peer matching bare ip keeps headers", []string{"::1"}, "[::1]:1234", "8.8.8.8|9.9.9.9"},
+		{"comma-separated cli value is split", []string{"127.0.0.1,::1,10.0.0.0/8"}, "10.1.2.3:1234", "8.8.8.8|9.9.9.9"},
+		{"unparsable peer strips headers", []string{"10.0.0.0/8"}, "garbage", "|"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/ping", http.NoBody)
+			req.RemoteAddr = tc.peer
+			req.Header.Set("X-Forwarded-For", "8.8.8.8")
+			req.Header.Set("X-Real-IP", "9.9.9.9")
+			rec := httptest.NewRecorder()
+			echo(newServer(t, tc.proxies...)).ServeHTTP(rec, req)
+			assert.Equal(t, tc.want, rec.Body.String())
+		})
+	}
+
+	t.Run("invalid entry rejected", func(t *testing.T) {
+		_, err := New(Deps{Store: st, Validator: validator.NewService()}, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", TrustedProxies: []string{"not-an-ip"},
+		})
+		require.ErrorContains(t, err, "invalid trusted proxy")
+	})
+
+	t.Run("spoofed header does not reach the rate limiter", func(t *testing.T) {
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()}, Config{
+			Address: ":8080", ReadTimeout: 5 * time.Second, Version: "test", RequestsPerSec: 2,
+		})
+		require.NoError(t, err)
+		routes := srv.routes()
+		var last int
+		for i := range 5 {
+			req := httptest.NewRequest(http.MethodGet, "/ping", http.NoBody)
+			req.RemoteAddr = "203.0.113.5:1234"
+			req.Header.Set("X-Forwarded-For", fmt.Sprintf("8.8.8.%d", i))
+			rec := httptest.NewRecorder()
+			routes.ServeHTTP(rec, req)
+			last = rec.Code
+		}
+		assert.Equal(t, http.StatusTooManyRequests, last)
 	})
 }
 

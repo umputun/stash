@@ -43,6 +43,7 @@ var opts struct {
 		ShutdownTimeout time.Duration `long:"shutdown-timeout" env:"SHUTDOWN_TIMEOUT" default:"5s" description:"shutdown timeout"`
 		BaseURL         string        `long:"base-url" env:"BASE_URL" description:"base URL path for reverse proxy (e.g., /stash)"`
 		PageSize        int           `long:"page-size" env:"PAGE_SIZE" default:"50" description:"keys per page, 0 to disable"`
+		TrustedProxies  []string      `long:"trusted-proxies" env:"TRUSTED_PROXIES" env-delim:"," description:"proxy IPs or CIDRs whose X-Forwarded-For/X-Real-IP headers are trusted"`
 	} `group:"server" namespace:"server" env-namespace:"STASH_SERVER"`
 
 	Limits struct {
@@ -211,6 +212,7 @@ func runServer(ctx context.Context) error {
 			MaxConcurrent:    opts.Limits.MaxConcurrent,
 			LoginConcurrency: opts.Limits.LoginConcurrency,
 			PageSize:         opts.Server.PageSize,
+			TrustedProxies:   opts.Server.TrustedProxies,
 			AuditEnabled:     opts.Audit.Enabled,
 			AuditQueryLimit:  opts.Audit.QueryLimit,
 		})

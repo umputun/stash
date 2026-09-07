@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/didip/tollbooth/v8"
@@ -36,8 +38,12 @@ type Server struct {
 	webHandler      *web.Handler
 	auditHandler    *audit.Handler
 	webAuditHandler *web.AuditHandler
-	staticFS        fs.FS // embedded static files
+	staticFS        fs.FS        // embedded static files
+	trustedNets     []*net.IPNet // parsed TrustedProxies
 }
+
+// forwardedHeaders carry a client IP claimed by whoever sent the request; realip.Get reads them.
+var forwardedHeaders = []string{"X-Real-IP", "X-Forwarded-For", "CF-Connecting-IP"}
 
 // KVStore defines the interface for key-value storage operations.
 type KVStore interface {
@@ -77,6 +83,8 @@ type Config struct {
 	BaseURL         string // base URL path for reverse proxy (e.g., /stash)
 	PageSize        int    // keys per page in web UI (0 = unlimited)
 
+	TrustedProxies []string // peers (IPs or CIDRs) whose forwarded-IP headers are honored
+
 	BodySizeLimit    int64   // max request body size in bytes
 	RequestsPerSec   float64 // max requests per second (rate limit)
 	MaxConcurrent    int64   // max concurrent in-flight requests
@@ -103,10 +111,16 @@ func New(deps Deps, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("failed to load static files: %w", err)
 	}
 
+	trustedNets, err := parseTrustedProxies(cfg.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Server{
-		Deps:     deps,
-		Config:   cfg,
-		staticFS: staticContent,
+		Deps:        deps,
+		Config:      cfg,
+		staticFS:    staticContent,
+		trustedNets: trustedNets,
 	}
 
 	// create web handler with optional audit logger and events
@@ -206,7 +220,8 @@ func (s *Server) routes() http.Handler {
 	// global middleware (applies to all routes)
 	router.Use(
 		rest.Recoverer(log.Default()),
-		rest.RealIP, // must be before rate limiting to limit by real client IP
+		s.proxyHeaders, // strips forwarded-IP headers from untrusted peers before RealIP reads them
+		rest.RealIP,    // must be before rate limiting to limit by real client IP
 		s.rateLimiter(),
 		rest.Throttle(s.maxConcurrent()),
 		rest.Trace,
@@ -304,6 +319,63 @@ func (s *Server) rateLimiter() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return tollbooth.LimitHandler(lmt, next)
 	}
+}
+
+// proxyHeaders drops forwarded-IP headers unless the socket peer is a trusted proxy.
+// Downstream readers (RealIP, the audit log, the web handler) then fall back to the peer
+// address, so a direct client cannot pick its own identity for the rate limiter or audit.
+func (s *Server) proxyHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.trustedPeer(r.RemoteAddr) {
+			for _, h := range forwardedHeaders {
+				r.Header.Del(h)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// trustedPeer reports whether the socket address belongs to a configured trusted proxy.
+func (s *Server) trustedPeer(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, n := range s.trustedNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseTrustedProxies accepts CIDRs and bare IPs. Entries may themselves be comma-separated:
+// go-flags splits the environment value on commas but passes a CLI value through as one item.
+func parseTrustedProxies(entries []string) ([]*net.IPNet, error) {
+	var nets []*net.IPNet
+	for e := range strings.SplitSeq(strings.Join(entries, ","), ",") {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if !strings.Contains(e, "/") {
+			bits := 32
+			if strings.Contains(e, ":") {
+				bits = 128
+			}
+			e = fmt.Sprintf("%s/%d", e, bits)
+		}
+		_, n, err := net.ParseCIDR(e)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy %q: %w", e, err)
+		}
+		nets = append(nets, n)
+	}
+	return nets, nil
 }
 
 // url returns a URL path with the base URL prefix.
