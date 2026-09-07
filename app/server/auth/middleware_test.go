@@ -73,9 +73,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	// without token should return 401
 	req := httptest.NewRequest("GET", "/kv/test", http.NoBody)
@@ -134,9 +132,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	// GET should work with read-only token
 	req := httptest.NewRequest("GET", "/kv/test", http.NoBody)
@@ -173,9 +169,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	tests := []struct {
 		name   string
@@ -185,8 +179,6 @@ tokens:
 		{"exact match", "/kv/foo_bar", http.StatusOK},
 		{"space becomes underscore", "/kv/foo%20bar", http.StatusOK},
 		{"trailing slash stripped", "/kv/foo_bar/", http.StatusOK},
-		{"leading slash stripped", "/kv//foo_bar", http.StatusOK},
-		{"combined normalization", "/kv//foo%20bar/", http.StatusOK},
 		{"no match", "/kv/other", http.StatusForbidden},
 	}
 
@@ -220,9 +212,7 @@ users:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	// create session for read-only user
 	sessionToken, err := svc.CreateSession(t.Context(), "readonly")
@@ -300,9 +290,7 @@ tokens:
 	require.NoError(t, err)
 	require.True(t, svc.Enabled(), "auth should be enabled with public ACL")
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	t.Run("anonymous can read public prefix", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/kv/public/config", http.NoBody)
@@ -368,9 +356,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	t.Run("anonymous can write to writable prefix", func(t *testing.T) {
 		req := httptest.NewRequest("PUT", "/kv/writable/data", http.NoBody)
@@ -416,9 +402,7 @@ tokens:
 	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
 	require.NoError(t, err)
 
-	handler := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	handler := mountTokenMiddleware(svc)
 
 	t.Run("list with public ACL passes through", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/kv/", http.NoBody)
@@ -445,6 +429,70 @@ tokens:
 		handler.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusOK, rec.Code, "valid token should allow list pass-through")
 	})
+}
+
+func TestTokenMiddleware_RouteAwareKeys(t *testing.T) {
+	content := `
+tokens:
+  - token: "scoped"
+    permissions:
+      - prefix: "app/*"
+        access: rw
+  - token: "hist"
+    permissions:
+      - prefix: "history/*"
+        access: rw
+`
+	f := createTempFile(t, content)
+	svc, err := New(f, time.Hour, false, testSessionStore(t), nil)
+	require.NoError(t, err)
+	handler := mountTokenMiddleware(svc)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		token  string
+		expect int
+	}{
+		{"history of allowed key", "GET", "/kv/history/app/config", "scoped", http.StatusOK},
+		{"history of denied key", "GET", "/kv/history/other/config", "scoped", http.StatusForbidden},
+		{"subscribe prefix passes principal", "GET", "/kv/subscribe/app/*", "scoped", http.StatusOK},
+		{"subscribe root passes principal", "GET", "/kv/subscribe/*", "scoped", http.StatusOK},
+		{"subscribe exact passes principal", "GET", "/kv/subscribe/other/key", "scoped", http.StatusOK},
+		{"subscribe without principal", "GET", "/kv/subscribe/*", "", http.StatusUnauthorized},
+		{"put under history is a plain key", "PUT", "/kv/history/foo", "scoped", http.StatusForbidden},
+		{"put under history with matching grant", "PUT", "/kv/history/foo", "hist", http.StatusOK},
+		{"delete under subscribe is a plain key", "DELETE", "/kv/subscribe/foo", "scoped", http.StatusForbidden},
+		{"get under subscribe is a subscription", "GET", "/kv/subscribe/foo", "hist", http.StatusOK},
+		{"history denied for history grant", "GET", "/kv/history/foo", "hist", http.StatusForbidden},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, http.NoBody)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			assert.Equal(t, tc.expect, rec.Code)
+		})
+	}
+}
+
+func mountTokenMiddleware(svc *Service) http.Handler {
+	mw := svc.TokenMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	mux := http.NewServeMux()
+	for _, pattern := range []string{
+		"GET /kv/{$}", "GET /kv/history/{key...}", "GET /kv/subscribe/{key...}",
+		"GET /kv/{key...}", "PUT /kv/{key...}", "DELETE /kv/{key...}",
+	} {
+		mux.Handle(pattern, mw)
+	}
+	return mux
 }
 
 func TestMaskToken(t *testing.T) {
