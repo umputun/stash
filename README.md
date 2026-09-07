@@ -387,6 +387,8 @@ Directory structure example:
     └── timeout.val      # key: service/timeout
 ```
 
+Values under [secrets paths](#secrets-vault) are written to the repository encrypted with the same master key as the database, marked with a `$ENC$` prefix. History views, revisions and `restore` decrypt them with `--secrets.key`; without the key, or with the wrong one, they fail rather than return ciphertext.
+
 ### Remote Sync
 
 Enable auto-push to a remote repository for backup:
@@ -496,6 +498,7 @@ Secrets are displayed with a lock icon (🔒) in the key list. Use the filter to
 
 **Protected against:**
 - Database file theft (values encrypted at rest)
+- Git history or remote theft (secrets are committed encrypted)
 - Ciphertext analysis (unique salt/nonce means identical values encrypt differently)
 - Tampering (Poly1305 authentication tag)
 

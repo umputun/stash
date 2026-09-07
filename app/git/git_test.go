@@ -12,6 +12,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	kvstore "github.com/umputun/stash/app/store"
 )
 
 func TestNew(t *testing.T) {
@@ -932,5 +934,212 @@ func TestStore_GetRevision(t *testing.T) {
 		_, _, err = store.GetRevision("../etc/passwd", "abc123")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid key")
+	})
+}
+
+// pins the finding that secret values reached the repository in plaintext
+func TestStore_SecretsEncryption(t *testing.T) {
+	newCrypto := func(t *testing.T, key string) *kvstore.Crypto {
+		t.Helper()
+		c, err := kvstore.NewCrypto([]byte(key))
+		require.NoError(t, err)
+		return c
+	}
+	author := DefaultAuthor()
+	const secret = "app/secrets/db"
+
+	t.Run("secret is stored encrypted and read back decrypted", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+
+		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: []byte("hunter2"), Operation: "set", Format: "text", Author: author}))
+		require.NoError(t, gs.Commit(CommitRequest{Key: "app/config", Value: []byte("$ENC$looks-like-envelope"), Operation: "set", Author: author}))
+
+		raw, err := os.ReadFile(filepath.Join(path, "app", "secrets", "db.val"))
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(string(raw), encPrefix))
+		assert.NotContains(t, string(raw), "hunter2")
+
+		history, err := gs.History(secret, 0)
+		require.NoError(t, err)
+		require.Len(t, history, 1)
+		assert.Equal(t, []byte("hunter2"), history[0].Value)
+
+		value, _, err := gs.GetRevision(secret, history[0].Hash)
+		require.NoError(t, err)
+		assert.Equal(t, []byte("hunter2"), value)
+
+		all, err := gs.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("hunter2"), all[secret].Value)
+		assert.Equal(t, []byte("$ENC$looks-like-envelope"), all["app/config"].Value)
+	})
+
+	t.Run("secret plaintext resembling the envelope is still encrypted", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+
+		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: []byte("$ENC$not-really"), Operation: "set", Author: author}))
+		raw, err := os.ReadFile(filepath.Join(path, "app", "secrets", "db.val"))
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), "not-really")
+
+		all, err := gs.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("$ENC$not-really"), all[secret].Value)
+	})
+
+	t.Run("zk value passes through unchanged", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+
+		zk := []byte("$ZK$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==")
+		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: zk, Operation: "set", Author: author}))
+		raw, err := os.ReadFile(filepath.Join(path, "app", "secrets", "db.val"))
+		require.NoError(t, err)
+		assert.Equal(t, zk, raw)
+	})
+
+	t.Run("legacy plaintext is returned as is", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		plain, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, plain.Commit(CommitRequest{Key: secret, Value: []byte("old-plain"), Operation: "set", Author: author}))
+
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+		history, err := gs.History(secret, 0)
+		require.NoError(t, err)
+		require.Len(t, history, 1)
+		assert.Equal(t, []byte("old-plain"), history[0].Value)
+
+		all, err := gs.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("old-plain"), all[secret].Value)
+	})
+
+	t.Run("encrypted value without encryptor is an error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: []byte("hunter2"), Operation: "set", Author: author}))
+		head, err := gs.Head()
+		require.NoError(t, err)
+
+		plain, err := New(Config{Path: path})
+		require.NoError(t, err)
+
+		_, err = plain.ReadAll()
+		require.ErrorContains(t, err, "no secrets key is configured")
+		_, err = plain.History(secret, 0)
+		require.ErrorContains(t, err, "no secrets key is configured")
+		_, _, err = plain.GetRevision(secret, head)
+		require.ErrorContains(t, err, "no secrets key is configured")
+	})
+
+	t.Run("wrong key is an error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: []byte("hunter2"), Operation: "set", Author: author}))
+		head, err := gs.Head()
+		require.NoError(t, err)
+
+		wrong, err := New(Config{Path: path, Encryptor: newCrypto(t, "another-key-0123456789")})
+		require.NoError(t, err)
+
+		_, err = wrong.ReadAll()
+		require.ErrorContains(t, err, "failed to decrypt")
+		_, err = wrong.History(secret, 0)
+		require.ErrorContains(t, err, "failed to decrypt")
+		_, _, err = wrong.GetRevision(secret, head)
+		require.ErrorContains(t, err, "failed to decrypt")
+	})
+
+	t.Run("damaged payload is an error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		gs, err := New(Config{Path: path, Encryptor: newCrypto(t, "master-key-0123456789")})
+		require.NoError(t, err)
+		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: []byte("hunter2"), Operation: "set", Author: author}))
+
+		require.NoError(t, os.WriteFile(filepath.Join(path, "app", "secrets", "db.val"), []byte(encPrefix+"not base64!"), 0o600))
+		_, err = gs.ReadAll()
+		require.ErrorContains(t, err, "failed to decrypt")
+	})
+}
+
+// pins the finding that a poisoned checkout could point .val entries outside the repository
+func TestStore_Symlinks(t *testing.T) {
+	author := DefaultAuthor()
+
+	t.Run("readall skips symlinked values", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, ".history")
+		gs, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, gs.Commit(CommitRequest{Key: "real", Value: []byte("ok"), Operation: "set", Author: author}))
+
+		outside := filepath.Join(tmpDir, "outside.txt")
+		require.NoError(t, os.WriteFile(outside, []byte("host-credential"), 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(path, "exfil.val")))
+
+		all, err := gs.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("ok"), all["real"].Value)
+		assert.NotContains(t, all, "exfil")
+	})
+
+	t.Run("commit refuses a value symlinked outside the repository", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, ".history")
+		gs, err := New(Config{Path: path})
+		require.NoError(t, err)
+
+		outside := filepath.Join(tmpDir, "outside.txt")
+		require.NoError(t, os.WriteFile(outside, []byte("untouched"), 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(path, "link.val")))
+
+		err = gs.Commit(CommitRequest{Key: "link", Value: []byte("overwrite"), Operation: "set", Author: author})
+		require.Error(t, err)
+		content, err := os.ReadFile(outside)
+		require.NoError(t, err)
+		assert.Equal(t, "untouched", string(content))
+	})
+
+	t.Run("commit refuses a parent directory symlinked outside the repository", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, ".history")
+		gs, err := New(Config{Path: path})
+		require.NoError(t, err)
+
+		outsideDir := filepath.Join(tmpDir, "outside")
+		require.NoError(t, os.Mkdir(outsideDir, 0o750))
+		require.NoError(t, os.Symlink(outsideDir, filepath.Join(path, "app")))
+
+		err = gs.Commit(CommitRequest{Key: "app/config", Value: []byte("escaped"), Operation: "set", Author: author})
+		require.Error(t, err)
+		_, statErr := os.Stat(filepath.Join(outsideDir, "config.val"))
+		assert.True(t, os.IsNotExist(statErr))
+	})
+
+	t.Run("delete unlinks a symlinked value without touching its target", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, ".history")
+		gs, err := New(Config{Path: path})
+		require.NoError(t, err)
+
+		outside := filepath.Join(tmpDir, "outside.txt")
+		require.NoError(t, os.WriteFile(outside, []byte("untouched"), 0o600))
+		require.NoError(t, os.Symlink(outside, filepath.Join(path, "link.val")))
+
+		require.ErrorContains(t, gs.Delete("link", author), "failed to stage deletion")
+		content, err := os.ReadFile(outside)
+		require.NoError(t, err)
+		assert.Equal(t, "untouched", string(content))
+		_, statErr := os.Lstat(filepath.Join(path, "link.val"))
+		assert.True(t, os.IsNotExist(statErr))
 	})
 }
