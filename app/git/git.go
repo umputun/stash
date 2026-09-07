@@ -551,6 +551,25 @@ func (s *Store) History(key string, limit int) ([]HistoryEntry, error) {
 		return nil, err
 	}
 
+	entries, err := s.rawHistory(key, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// decryption derives a key per revision (argon2, 64 MiB each), so it runs outside the lock
+	// that every commit, delete, push and pull takes
+	for i := range entries {
+		value, decErr := s.decodeValue(key, entries[i].Value)
+		if decErr != nil {
+			return nil, fmt.Errorf("revision %s: %w", entries[i].Hash, decErr)
+		}
+		entries[i].Value = value
+	}
+	return entries, nil
+}
+
+// rawHistory reads the commit log for a key under the store lock, values as stored.
+func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -588,12 +607,7 @@ func (s *Store) History(key string, limit int) ([]HistoryEntry, error) {
 		}
 
 		// get file content at this commit (may be missing for delete commits)
-		content := s.getFileContentAtCommit(commit, filePath, key, entry.Hash)
-		value, decErr := s.decodeValue(key, content)
-		if decErr != nil {
-			return nil, fmt.Errorf("revision %s: %w", entry.Hash, decErr)
-		}
-		entry.Value = value
+		entry.Value = s.getFileContentAtCommit(commit, filePath, key, entry.Hash)
 
 		entries = append(entries, entry)
 		count++
@@ -631,6 +645,21 @@ func (s *Store) GetRevision(key, rev string) ([]byte, string, error) {
 		return nil, "", err
 	}
 
+	content, format, err := s.rawRevision(key, rev)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// decryption runs outside the store lock, as in History
+	value, err := s.decodeValue(key, content)
+	if err != nil {
+		return nil, "", err
+	}
+	return value, format, nil
+}
+
+// rawRevision reads the stored value and format at a revision under the store lock.
+func (s *Store) rawRevision(key, rev string) ([]byte, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -665,15 +694,7 @@ func (s *Store) GetRevision(key, rev string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("failed to read file: %w", err)
 	}
 
-	value, err := s.decodeValue(key, []byte(content))
-	if err != nil {
-		return nil, "", err
-	}
-
-	// get format from commit message
-	format := parseFormatFromCommit(commit.Message)
-
-	return value, format, nil
+	return []byte(content), parseFormatFromCommit(commit.Message), nil
 }
 
 // getFileFormat finds the last commit that modified a file and extracts format from its message.

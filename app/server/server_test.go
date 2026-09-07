@@ -722,7 +722,7 @@ func TestServer_ProxyHeaders(t *testing.T) {
 	}
 	echo := func(srv *Server) http.Handler {
 		return srv.proxyHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = w.Write([]byte(r.Header.Get("X-Forwarded-For") + "|" + r.Header.Get("X-Real-IP")))
+			_, _ = w.Write([]byte(r.Header.Get("X-Forwarded-For") + "|" + r.Header.Get("X-Real-IP") + "|" + r.Header.Get("CF-Connecting-IP")))
 		}))
 	}
 
@@ -732,13 +732,13 @@ func TestServer_ProxyHeaders(t *testing.T) {
 		peer    string
 		want    string
 	}{
-		{"no trusted proxies strips headers", nil, "203.0.113.5:1234", "|"},
-		{"untrusted peer strips headers", []string{"10.0.0.0/8"}, "203.0.113.5:1234", "|"},
-		{"peer in trusted cidr keeps headers", []string{"10.0.0.0/8"}, "10.1.2.3:1234", "8.8.8.8|9.9.9.9"},
-		{"peer matching bare ip keeps headers", []string{"127.0.0.1"}, "127.0.0.1:1234", "8.8.8.8|9.9.9.9"},
-		{"ipv6 peer matching bare ip keeps headers", []string{"::1"}, "[::1]:1234", "8.8.8.8|9.9.9.9"},
-		{"comma-separated cli value is split", []string{"127.0.0.1,::1,10.0.0.0/8"}, "10.1.2.3:1234", "8.8.8.8|9.9.9.9"},
-		{"unparsable peer strips headers", []string{"10.0.0.0/8"}, "garbage", "|"},
+		{"no trusted proxies strips headers", nil, "203.0.113.5:1234", "||"},
+		{"untrusted peer strips headers", []string{"10.0.0.0/8"}, "203.0.113.5:1234", "||"},
+		{"peer in trusted cidr keeps headers", []string{"10.0.0.0/8"}, "10.1.2.3:1234", "8.8.8.8|9.9.9.9|7.7.7.7"},
+		{"peer matching bare ip keeps headers", []string{"127.0.0.1"}, "127.0.0.1:1234", "8.8.8.8|9.9.9.9|7.7.7.7"},
+		{"ipv6 peer matching bare ip keeps headers", []string{"::1"}, "[::1]:1234", "8.8.8.8|9.9.9.9|7.7.7.7"},
+		{"comma-separated cli value is split", []string{"127.0.0.1,::1,10.0.0.0/8"}, "10.1.2.3:1234", "8.8.8.8|9.9.9.9|7.7.7.7"},
+		{"unparsable peer strips headers", []string{"10.0.0.0/8"}, "garbage", "||"},
 	}
 
 	for _, tc := range tests {
@@ -747,6 +747,7 @@ func TestServer_ProxyHeaders(t *testing.T) {
 			req.RemoteAddr = tc.peer
 			req.Header.Set("X-Forwarded-For", "8.8.8.8")
 			req.Header.Set("X-Real-IP", "9.9.9.9")
+			req.Header.Set("CF-Connecting-IP", "7.7.7.7")
 			rec := httptest.NewRecorder()
 			echo(newServer(t, tc.proxies...)).ServeHTTP(rec, req)
 			assert.Equal(t, tc.want, rec.Body.String())

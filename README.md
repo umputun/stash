@@ -763,6 +763,8 @@ curl -N http://localhost:8080/kv/subscribe/app/
 curl -N http://localhost:8080/kv/subscribe/*
 ```
 
+With authentication enabled, a subscription to a key the caller cannot read is refused with 403. A prefix or wildcard subscription is accepted for any authenticated caller and delivers only the events for keys the caller may read; keys outside the caller's permissions, including secrets without an explicit grant, are never mentioned.
+
 Events are delivered as JSON in SSE format:
 
 ```

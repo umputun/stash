@@ -955,6 +955,13 @@ func TestRunRestore_EncryptedSecrets(t *testing.T) {
 		opts.Secrets.Key = ""
 		err := runRestore(t.Context())
 		require.ErrorContains(t, err, "no secrets key is configured")
+
+		st, err := store.New(dbPath)
+		require.NoError(t, err)
+		defer st.Close()
+		val, err := st.Get(t.Context(), "keep/me")
+		require.NoError(t, err)
+		assert.Equal(t, "still-here", string(val))
 	})
 
 	t.Run("right key restores the secret", func(t *testing.T) {
