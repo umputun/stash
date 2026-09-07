@@ -186,7 +186,7 @@ labels:
   - reproxy.port=8080
 ```
 
-Behind a reverse proxy, list the proxy address with `--server.trusted-proxies` (IPs or CIDRs, comma-separated) so the rate limiter and audit log see the real client IP from `X-Forwarded-For`/`X-Real-IP`. Headers from any other peer are ignored, so a client connecting directly cannot pick its own address:
+Behind a reverse proxy, list the proxy address with `--server.trusted-proxies` (IPs or CIDRs, comma-separated) so the rate limiter and audit log see the client IP from `X-Forwarded-For`/`X-Real-IP`. Headers from any other peer are ignored, so a client connecting directly cannot pick its own address. Only a public forwarded address is used; a client on a private network is still recorded under the proxy address:
 
 ```bash
 stash server --server.trusted-proxies=127.0.0.1,::1,10.0.0.0/8
