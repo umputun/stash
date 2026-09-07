@@ -2261,6 +2261,7 @@ func TestIntegration_SSE(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18503"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2383,6 +2384,7 @@ func TestIntegration_SSE_MultipleEvents(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18504"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2476,6 +2478,7 @@ func TestIntegration_SSE_NoEventsForNonSubscribedKeys(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18505"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 	opts.Auth.File = ""
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2539,6 +2542,7 @@ func TestIntegration_SSE_AuthDenied(t *testing.T) {
 	opts.DB = filepath.Join(tmpDir, "test.db")
 	opts.Server.Address = "127.0.0.1:18506"
 	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Server.ShutdownTimeout = 5 * time.Second
 
 	// create auth config with scoped token
 	authContent := `tokens:
