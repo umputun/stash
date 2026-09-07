@@ -22,7 +22,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/playwright-community/playwright-go v0.5700.1
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
-	github.com/stretchr/testify v1.12.0
+	github.com/stretchr/testify v1.12.1
 	github.com/tmaxmax/go-sse v0.11.0
 	golang.org/x/crypto v0.56.0
 	gopkg.in/ini.v1 v1.67.3
@@ -142,6 +142,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
