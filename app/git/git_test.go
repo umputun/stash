@@ -1605,3 +1605,120 @@ func TestStore_ReadAllFromHead(t *testing.T) {
 		assert.Equal(t, map[string]KeyValue{"real": {Value: []byte("ok"), Format: "text"}}, all)
 	})
 }
+
+func TestStore_Sync(t *testing.T) {
+	author := DefaultAuthor()
+	newCrypto := func(t *testing.T) *kvstore.Crypto {
+		t.Helper()
+		c, err := kvstore.NewCrypto([]byte("master-key-0123456789"))
+		require.NoError(t, err)
+		return c
+	}
+
+	t.Run("commits changes, new keys, deletes and format changes", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("1"), Operation: "set", Format: "text", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "b", Value: []byte("2"), Operation: "set", Format: "json", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "c", Value: []byte("3"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "same", Value: []byte("s"), Operation: "set", Format: "yaml", Author: author}))
+
+		want := map[string]KeyValue{
+			"a":    {Value: []byte("1"), Format: "yaml"},
+			"b":    {Value: []byte("22"), Format: "json"},
+			"d":    {Value: []byte("4"), Format: "text"},
+			"same": {Value: []byte("s"), Format: "yaml"},
+		}
+		res, err := st.Sync(want)
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 3, Deleted: 1}, res)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, want, all)
+
+		history, err := st.History("c", 0)
+		require.NoError(t, err)
+		require.NotEmpty(t, history)
+		assert.Equal(t, "delete", history[0].Operation)
+		history, err = st.History("b", 0)
+		require.NoError(t, err)
+		assert.Equal(t, "stash", history[0].Author)
+
+		head, err := st.Head()
+		require.NoError(t, err)
+		res, err = st.Sync(want)
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{}, res)
+		head2, err := st.Head()
+		require.NoError(t, err)
+		assert.Equal(t, head, head2)
+	})
+
+	t.Run("secrets and zk values compare by content", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), Encryptor: newCrypto(t)})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/zk", Value: []byte("$ZK$c2VjcmV0"), Operation: "set", Author: author}))
+
+		res, err := st.Sync(map[string]KeyValue{
+			"app/secrets/db": {Value: []byte("pw"), Format: "text"},
+			"app/zk":         {Value: []byte("$ZK$c2VjcmV0"), Format: "text"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{}, res)
+	})
+
+	t.Run("deleted secret is removed without decoding", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		withKey, err := New(Config{Path: path, Encryptor: newCrypto(t)})
+		require.NoError(t, err)
+		require.NoError(t, withKey.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+
+		noKey, err := New(Config{Path: path})
+		require.NoError(t, err)
+		res, err := noKey.Sync(map[string]KeyValue{})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Deleted: 1}, res)
+	})
+
+	t.Run("undecodable stored value of a present key is an error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		withKey, err := New(Config{Path: path, Encryptor: newCrypto(t)})
+		require.NoError(t, err)
+		require.NoError(t, withKey.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+
+		noKey, err := New(Config{Path: path})
+		require.NoError(t, err)
+		_, err = noKey.Sync(map[string]KeyValue{"app/secrets/db": {Value: []byte("pw"), Format: "text"}})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "app/secrets/db")
+	})
+
+	t.Run("keys git cannot store are skipped and their files kept", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(filepath.Join(path, "a"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "a", "b.val"), []byte("old"), 0o600))
+		wt, err := st.repo.Worktree()
+		require.NoError(t, err)
+		_, err = wt.Add("a/b.val")
+		require.NoError(t, err)
+		_, err = wt.Commit("set a//b\n\noperation: set\nkey: a//b", &git.CommitOptions{Author: &object.Signature{Name: "stash",
+			Email: "stash@localhost", When: time.Now()}})
+		require.NoError(t, err)
+
+		res, err := st.Sync(map[string]KeyValue{
+			"a//b":      {Value: []byte("new"), Format: "text"},
+			"x\nkey: y": {Value: []byte("v"), Format: "text"},
+			".git/x":    {Value: []byte("v"), Format: "text"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{}, res)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("old"), all["a/b"].Value)
+	})
+}

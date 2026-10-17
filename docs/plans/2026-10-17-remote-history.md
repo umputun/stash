@@ -271,12 +271,13 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - Modify: `app/git/git.go`, `app/git/git_test.go`
 - Modify: `app/main.go`, `app/main_test.go`
 
-- [ ] write failing tests for `Store.Sync`: changed value, new key, deleted key, deleted secret without decoding, format-only change, secret and ZK compared by plaintext/opaque bytes, undecodable present key returns an error, keys rejected by `validateKey` are skipped with a warning and not deleted from git, no-op when equal
-- [ ] implement `Store.Sync` and `SyncResult` on top of `headTree` and the key-to-format map
-- [ ] `initGitService` becomes `initGitStore` returning `*git.Store`; `runServer` builds the Service and assigns `Deps.Git` only when non-nil
-- [ ] in `runServer` url mode: build `want` from `rawStore`, run Sync, then start serving; log the result
-- [ ] integration tests in `main_test.go`: populated DB and stale local repo, local HEAD matches DB after startup; DB secret without `--secrets.key`, url-mode startup fails with a clear error while non-url startup is unaffected
-- [ ] run tests - must pass before next task
+- [x] write failing tests for `Store.Sync`: changed value, new key, deleted key, deleted secret without decoding, format-only change, secret and ZK compared by plaintext/opaque bytes, undecodable present key returns an error, keys rejected by `validateKey` are skipped with a warning and not deleted from git, no-op when equal
+- [x] implement `Store.Sync` and `SyncResult` on top of `headTree` and the key-to-format map
+- [x] `initGitService` becomes `initGitStore` returning `*git.Store`; `runServer` builds the Service and assigns `Deps.Git` only when non-nil
+- [x] in `runServer` url mode: build `want` from `rawStore`, run Sync, then start serving; log the result
+- [x] integration tests in `main_test.go`: populated DB and stale local repo, local HEAD matches DB after startup; DB secret without `--secrets.key`, url-mode startup fails with a clear error while non-url startup is unaffected
+- [x] run tests - must pass before next task
+- ➕ `Commit`/`Delete` split into lock-taking wrappers and `commitLocked`/`deleteLocked`, so Sync commits under the one `Store.mu` it holds for the whole pass; sync commits use operation `sync`; the `--git.url` without `--git.enabled` check moved into `initGitStore` (gocyclo on `runServer`), still server-only
 
 ### Task 7: Background push in url mode
 

@@ -2759,3 +2759,97 @@ func TestRunRestore_FromGitURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "value2", string(val))
 }
+
+func runServerBriefly(t *testing.T, addr string) error {
+	t.Helper()
+	opts.Server.Address = addr
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServer(ctx) }()
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	for range 40 {
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(50 * time.Millisecond):
+		}
+		if resp, err := client.Get("http://" + addr + "/ping"); err == nil {
+			_ = resp.Body.Close()
+			break
+		}
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+		return nil
+	}
+}
+
+func TestRunServer_GitURLSyncsFromDatabase(t *testing.T) {
+	bare := newBareRemote(t, map[string]string{"app/a": "old", "app/gone": "x"})
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := store.New(dbPath)
+	require.NoError(t, err)
+	_, err = db.Set(t.Context(), "app/a", []byte("new"), "json")
+	require.NoError(t, err)
+	_, err = db.Set(t.Context(), "app/b", []byte("b"), "text")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	opts.DB = dbPath
+	opts.Secrets.Key = ""
+	opts.Git.Enabled = true
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+	opts.Git.Remote = ""
+	opts.Git.URL = bare
+	defer func() { opts.Git.Enabled, opts.Git.URL = false, "" }()
+
+	require.NoError(t, runServerBriefly(t, "127.0.0.1:18492"))
+
+	gs, err := git.New(git.Config{Path: opts.Git.Path, URL: bare})
+	require.NoError(t, err)
+	all, err := gs.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]git.KeyValue{"app/a": {Value: []byte("new"), Format: "json"},
+		"app/b": {Value: []byte("b"), Format: "text"}}, all)
+}
+
+func TestRunServer_GitURLRefusesUnreadableSecret(t *testing.T) {
+	bare := newBareRemote(t, nil)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	crypto, err := store.NewCrypto([]byte("master-key-0123456789"))
+	require.NoError(t, err)
+	db, err := store.New(dbPath, store.WithEncryptor(crypto))
+	require.NoError(t, err)
+	_, err = db.Set(t.Context(), "app/secrets/db", []byte("pw"), "text")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	opts.DB = dbPath
+	opts.Secrets.Key = ""
+	opts.Git.Enabled = true
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+	opts.Git.Remote = ""
+	opts.Git.URL = bare
+	defer func() { opts.Git.Enabled, opts.Git.URL = false, "" }()
+
+	err = runServerBriefly(t, "127.0.0.1:18493")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "app/secrets/db")
+	assert.Contains(t, err.Error(), "--secrets.key")
+
+	opts.Git.URL = ""
+	opts.Git.Path = filepath.Join(tmpDir, ".history-local")
+	require.NoError(t, runServerBriefly(t, "127.0.0.1:18494"))
+}

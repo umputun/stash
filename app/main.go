@@ -137,9 +137,6 @@ func main() {
 }
 
 func runServer(ctx context.Context) error {
-	if opts.Git.URL != "" && !opts.Git.Enabled {
-		return errors.New("--git.url requires --git.enabled")
-	}
 	baseURL, err := validateBaseURL(opts.Server.BaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid base URL: %w", err)
@@ -173,10 +170,14 @@ func runServer(ctx context.Context) error {
 	}
 	defer kvStore.Close()
 
-	// initialize git service if enabled
-	gitService, err := initGitService(encryptor)
+	gitStore, err := initGitStore(encryptor)
 	if err != nil {
 		return err
+	}
+	if gitStore != nil && opts.Git.URL != "" {
+		if syncErr := syncGit(ctx, rawStore, gitStore); syncErr != nil {
+			return syncErr
+		}
 	}
 
 	// determine audit store (nil if disabled)
@@ -194,15 +195,20 @@ func runServer(ctx context.Context) error {
 	// create SSE service for key change subscriptions
 	sseService := sse.New(authSvc)
 
+	deps := server.Deps{
+		Store:      kvStore,
+		Validator:  validator.NewService(),
+		Auth:       authSvc,
+		AuditStore: auditStore,
+		SSE:        sseService,
+	}
+	// assigned only when enabled: a nil *git.Service in the interface field is not nil
+	if gitStore != nil {
+		deps.Git = git.NewService(gitStore, opts.Git.Push)
+	}
+
 	srv, err := server.New(
-		server.Deps{
-			Store:      kvStore,
-			Validator:  validator.NewService(),
-			Git:        gitService,
-			Auth:       authSvc,
-			AuditStore: auditStore,
-			SSE:        sseService,
-		},
+		deps,
 		server.Config{
 			Address:          opts.Server.Address,
 			ReadTimeout:      opts.Server.ReadTimeout,
@@ -452,16 +458,47 @@ func logServerConfig(baseURL string) {
 	}
 }
 
-// initGitService creates git service if enabled.
-func initGitService(encryptor *store.Crypto) (server.GitService, error) {
+// initGitStore opens the git store when git is enabled, nil otherwise.
+func initGitStore(encryptor *store.Crypto) (*git.Store, error) {
 	if !opts.Git.Enabled {
-		return nil, nil //nolint:nilnil // nil git service is valid when disabled
+		if opts.Git.URL != "" {
+			return nil, errors.New("--git.url requires --git.enabled")
+		}
+		return nil, nil //nolint:nilnil // nil git store is valid when disabled
 	}
 	gitStore, err := git.New(gitConfig(encryptor))
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize git store: %w", err)
 	}
-	return git.NewService(gitStore, opts.Git.Push), nil
+	return gitStore, nil
+}
+
+// syncGit commits the database state to git before serving, so history matches the database
+// after the local repository was lost or missed writes. A value it cannot read stops startup,
+// since leaving it out would make the sync delete it from git.
+func syncGit(ctx context.Context, kv *store.Store, gs *git.Store) error {
+	keys, err := kv.List(ctx, enum.SecretsFilterAll)
+	if err != nil {
+		return fmt.Errorf("failed to list keys for git sync: %w", err)
+	}
+	want := make(map[string]git.KeyValue, len(keys))
+	for _, k := range keys {
+		value, format, getErr := kv.GetWithFormat(ctx, k.Key)
+		if errors.Is(getErr, store.ErrSecretsNotConfigured) {
+			return fmt.Errorf("git sync cannot read secret %q: --secrets.key is required", k.Key)
+		}
+		if getErr != nil {
+			return fmt.Errorf("git sync cannot read %q: %w", k.Key, getErr)
+		}
+		want[k.Key] = git.KeyValue{Value: value, Format: format}
+	}
+
+	res, err := gs.Sync(want)
+	if err != nil {
+		return fmt.Errorf("git sync failed: %w", err)
+	}
+	log.Printf("[INFO] git sync: %d keys committed, %d deleted", res.Updated, res.Deleted)
+	return nil
 }
 
 // gitConfig builds the git store config from options. The encryptor is set only when

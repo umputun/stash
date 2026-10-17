@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -387,7 +389,11 @@ func (s *Store) Commit(req CommitRequest) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.commitLocked(req)
+}
 
+// commitLocked is Commit for a caller that holds s.mu and has validated the key.
+func (s *Store) commitLocked(req CommitRequest) error {
 	now := time.Now()
 
 	format := req.Format
@@ -445,7 +451,11 @@ func (s *Store) Delete(key string, author Author) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.deleteLocked(key, author)
+}
 
+// deleteLocked is Delete for a caller that holds s.mu and has validated the key.
+func (s *Store) deleteLocked(key string, author Author) error {
 	now := time.Now()
 	filePath := s.keyToPath(key)
 
@@ -626,6 +636,80 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 		result[key] = KeyValue{Value: value, Format: format}
 	}
 	return result, nil
+}
+
+// SyncResult describes what Sync changed.
+type SyncResult struct {
+	Updated int // keys committed with a new value or format
+	Deleted int // keys removed because the database no longer has them
+}
+
+// Sync commits the differences between want, the full set of database values, and the HEAD tree,
+// one commit per key authored by DefaultAuthor. Keys the repository cannot hold (see validateKey)
+// are left alone on both sides. A key present on both sides whose stored value cannot be decoded
+// is an error; a stored key absent from want is deleted without decoding it.
+func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, err := s.headTree()
+	if err != nil {
+		return SyncResult{}, err
+	}
+	formats := s.keyFormats()
+
+	var skipped []string
+	keep := map[string]bool{} // stored files a skipped key may own
+	for key := range want {
+		if s.validateKey(key) != nil {
+			skipped = append(skipped, fmt.Sprintf("%q", key))
+			keep[s.storedKey(key)] = true
+		}
+	}
+	if len(skipped) > 0 {
+		slices.Sort(skipped)
+		log.Printf("[WARN] git sync skipped keys the repository cannot hold: %s", strings.Join(skipped, ", "))
+	}
+
+	var res SyncResult
+	for _, key := range slices.Sorted(maps.Keys(stored)) {
+		if _, ok := want[key]; ok || keep[key] || s.validateKey(key) != nil {
+			continue
+		}
+		if err := s.deleteLocked(key, DefaultAuthor()); err != nil {
+			return res, fmt.Errorf("sync delete %q: %w", key, err)
+		}
+		res.Deleted++
+	}
+
+	for _, key := range slices.Sorted(maps.Keys(want)) {
+		if s.validateKey(key) != nil {
+			continue
+		}
+		kv := want[key]
+		if kv.Format == "" {
+			kv.Format = "text"
+		}
+		if content, ok := stored[key]; ok {
+			current, decErr := s.decodeValue(key, content)
+			if decErr != nil {
+				return res, fmt.Errorf("sync %q: %w", key, decErr)
+			}
+			format, found := formats[key]
+			if !found {
+				format = "text"
+			}
+			if bytes.Equal(current, kv.Value) && format == kv.Format {
+				continue
+			}
+		}
+		req := CommitRequest{Key: key, Value: kv.Value, Operation: "sync", Format: kv.Format, Author: DefaultAuthor()}
+		if err := s.commitLocked(req); err != nil {
+			return res, fmt.Errorf("sync %q: %w", key, err)
+		}
+		res.Updated++
+	}
+	return res, nil
 }
 
 // headTree returns the stored value of every key in the HEAD commit, as written to the
