@@ -453,7 +453,7 @@ func TestKeyToPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			assert.Equal(t, tt.path, keyToPath(tt.key))
+			assert.Equal(t, tt.path, (&Store{}).keyToPath(tt.key))
 		})
 	}
 }
@@ -469,7 +469,7 @@ func TestPathToKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			assert.Equal(t, tt.key, pathToKey(tt.path))
+			assert.Equal(t, tt.key, (&Store{}).pathToKey(tt.path))
 		})
 	}
 }
@@ -673,7 +673,7 @@ func TestParseFormatFromCommit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, parseFormatFromCommit(tc.message))
+			assert.Equal(t, tc.expected, (&Store{}).parseFormatFromCommit(tc.message))
 		})
 	}
 }
@@ -690,7 +690,7 @@ func TestParseOperationFromCommit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, parseOperationFromCommit(tc.message))
+			assert.Equal(t, tc.expected, (&Store{}).parseOperationFromCommit(tc.message))
 		})
 	}
 }

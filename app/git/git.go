@@ -216,7 +216,7 @@ func (s *Store) createNewRepo() error {
 // The write is confined to the repository: a symlink in a checkout pointing outside it,
 // or an absolute link, is refused rather than followed.
 func (s *Store) writeKeyFile(key string, value []byte) (string, error) {
-	filePath := keyToPath(key)
+	filePath := s.keyToPath(key)
 
 	root, err := os.OpenRoot(s.cfg.Path)
 	if err != nil {
@@ -329,7 +329,7 @@ func (s *Store) Delete(key string, author Author) error {
 	defer s.mu.Unlock()
 
 	now := time.Now()
-	filePath := keyToPath(key)
+	filePath := s.keyToPath(key)
 
 	root, err := os.OpenRoot(s.cfg.Path)
 	if err != nil {
@@ -532,7 +532,7 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 		if relErr != nil {
 			return fmt.Errorf("failed to get relative path: %w", relErr)
 		}
-		key := pathToKey(relPath)
+		key := s.pathToKey(relPath)
 
 		value, decErr := s.decodeValue(key, content)
 		if decErr != nil {
@@ -583,7 +583,7 @@ func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filePath := keyToPath(key)
+	filePath := s.keyToPath(key)
 
 	logIter, err := s.repo.Log(&git.LogOptions{
 		FileName: &filePath,
@@ -612,8 +612,8 @@ func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 			Hash:      commit.Hash.String()[:7],
 			Timestamp: commit.Author.When,
 			Author:    commit.Author.Name,
-			Operation: parseOperationFromCommit(commit.Message),
-			Format:    parseFormatFromCommit(commit.Message),
+			Operation: s.parseOperationFromCommit(commit.Message),
+			Format:    s.parseFormatFromCommit(commit.Message),
 		}
 
 		// get file content at this commit (may be missing for delete commits)
@@ -673,7 +673,7 @@ func (s *Store) rawRevision(key, rev string) ([]byte, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filePath := keyToPath(key)
+	filePath := s.keyToPath(key)
 
 	// resolve revision to commit hash
 	hash, err := s.repo.ResolveRevision(plumbing.Revision(rev))
@@ -704,7 +704,7 @@ func (s *Store) rawRevision(key, rev string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("failed to read file: %w", err)
 	}
 
-	return []byte(content), parseFormatFromCommit(commit.Message), nil
+	return []byte(content), s.parseFormatFromCommit(commit.Message), nil
 }
 
 // getFileFormat finds the last commit that modified a file and extracts format from its message.
@@ -725,12 +725,12 @@ func (s *Store) getFileFormat(filePath string) string {
 		return "text"
 	}
 
-	return parseFormatFromCommit(commit.Message)
+	return s.parseFormatFromCommit(commit.Message)
 }
 
 // parseFormatFromCommit extracts format value from commit message metadata.
 // looks for "format: <value>" line in commit message, returns "text" if not found.
-func parseFormatFromCommit(message string) string {
+func (s *Store) parseFormatFromCommit(message string) string {
 	for line := range strings.SplitSeq(message, "\n") {
 		if format, found := strings.CutPrefix(line, "format: "); found {
 			return format
@@ -741,7 +741,7 @@ func parseFormatFromCommit(message string) string {
 
 // parseOperationFromCommit extracts operation from commit message metadata.
 // looks for "operation: <value>" line, or parses first word of commit message.
-func parseOperationFromCommit(message string) string {
+func (s *Store) parseOperationFromCommit(message string) string {
 	for line := range strings.SplitSeq(message, "\n") {
 		if op, found := strings.CutPrefix(line, "operation: "); found {
 			return op
@@ -756,7 +756,7 @@ func parseOperationFromCommit(message string) string {
 
 // keyToPath converts a key to a file path with .val suffix
 // e.g., "app/config/db" -> "app/config/db.val"
-func keyToPath(key string) string {
+func (s *Store) keyToPath(key string) string {
 	return key + ".val"
 }
 
@@ -779,7 +779,7 @@ func (s *Store) validateKey(key string) error {
 	}
 
 	// double-check: resolved path must be within repo
-	filePath := filepath.Join(s.cfg.Path, keyToPath(key))
+	filePath := filepath.Join(s.cfg.Path, s.keyToPath(key))
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return errors.New("invalid key: failed to resolve path")
@@ -798,6 +798,6 @@ func (s *Store) validateKey(key string) error {
 
 // pathToKey converts a file path back to a key
 // e.g., "app/config/db.val" -> "app/config/db"
-func pathToKey(path string) string {
+func (s *Store) pathToKey(path string) string {
 	return strings.TrimSuffix(path, ".val")
 }

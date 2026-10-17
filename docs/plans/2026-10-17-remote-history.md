@@ -204,9 +204,9 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 **Files:**
 - Modify: `app/git/git.go`, `app/git/git_test.go`
 
-- [ ] confirm by grep that `keyToPath`, `pathToKey`, `parseFormatFromCommit` and `parseOperationFromCommit` have only `Store` methods as production callers; a helper with any other production caller stays standalone
-- [ ] convert the confirmed ones to `Store` methods; their tests call them through a `Store` value
-- [ ] run tests - must pass before next task
+- [x] confirm by grep that `keyToPath`, `pathToKey`, `parseFormatFromCommit` and `parseOperationFromCommit` have only `Store` methods as production callers; a helper with any other production caller stays standalone
+- [x] convert the confirmed ones to `Store` methods; their tests call them through a `Store` value
+- [x] run tests - must pass before next task
 
 ### Task 2: Reject keys git cannot store safely (both modes)
 
