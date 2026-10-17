@@ -1,6 +1,10 @@
 package git
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+	"sync"
+)
 
 //go:generate moq -out mocks/storer.go -pkg mocks -skip-ensure -fmt goimports . Storer
 
@@ -19,6 +23,7 @@ type Storer interface {
 type Service struct {
 	store    Storer
 	pushSync bool
+	mu       sync.Mutex // orders database writes and their local commits
 }
 
 // NewService creates a new git service.
@@ -27,26 +32,45 @@ func NewService(st Storer, pushSync bool) *Service {
 	return &Service{store: st, pushSync: pushSync}
 }
 
-// Commit commits a key-value change to git and optionally syncs with remote.
-func (s *Service) Commit(req CommitRequest) error {
-	if err := s.store.Commit(req); err != nil {
-		return fmt.Errorf("commit: %w", err)
+// Record runs write, which applies a change to the database and returns the matching commit
+// request, then commits it to git, both under one lock so git records writes in database order.
+// Returns write's error unchanged; git failures are logged, since the database is the source of truth.
+// A request with Operation "delete" removes the key from git.
+func (s *Service) Record(write func() (CommitRequest, error)) error {
+	committed, err := s.recordLocked(write)
+	if err != nil {
+		return err
 	}
-	if s.pushSync {
-		return s.pullAndPush()
+	if committed && s.pushSync {
+		if syncErr := s.pullAndPush(); syncErr != nil {
+			log.Printf("[WARN] git sync failed: %v", syncErr)
+		}
 	}
 	return nil
 }
 
-// Delete removes a key from git and optionally syncs with remote.
-func (s *Service) Delete(key string, author Author) error {
-	if err := s.store.Delete(key, author); err != nil {
-		return fmt.Errorf("delete: %w", err)
+// recordLocked runs write and the local commit under the lock and reports whether the commit succeeded.
+func (s *Service) recordLocked(write func() (CommitRequest, error)) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	req, err := write()
+	if err != nil {
+		return false, err
 	}
-	if s.pushSync {
-		return s.pullAndPush()
+
+	var gitErr error
+	switch req.Operation {
+	case "delete":
+		gitErr = s.store.Delete(req.Key, req.Author)
+	default:
+		gitErr = s.store.Commit(req)
 	}
-	return nil
+	if gitErr != nil {
+		log.Printf("[WARN] git %s failed for %s: %v", req.Operation, req.Key, gitErr)
+		return false, nil
+	}
+	return true, nil
 }
 
 // pullAndPush pulls from remote, then pushes local commits.

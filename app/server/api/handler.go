@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -33,8 +34,7 @@ type Handler struct {
 
 // GitService defines the interface for git operations.
 type GitService interface {
-	Commit(req git.CommitRequest) error
-	Delete(key string, author git.Author) error
+	Record(write func() (git.CommitRequest, error)) error
 	History(key string, limit int) ([]git.HistoryEntry, error)
 	GetRevision(key string, rev string) ([]byte, string, error)
 }
@@ -231,7 +231,19 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 		format = "text"
 	}
 
-	created, err := h.Store.Set(r.Context(), key, value, format)
+	author := h.getAuthorFromRequest(r)
+	var created bool
+	err = h.write(func() (git.CommitRequest, error) {
+		var setErr error
+		if created, setErr = h.Store.Set(r.Context(), key, value, format); setErr != nil {
+			return git.CommitRequest{}, fmt.Errorf("set %q: %w", key, setErr)
+		}
+		operation := "update"
+		if created {
+			operation = "create"
+		}
+		return git.CommitRequest{Key: key, Value: value, Operation: operation, Format: format, Author: author}, nil
+	})
 	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			rest.SendErrorJSON(w, r, log.Default(), http.StatusBadRequest, err, "secrets not configured")
@@ -250,14 +262,6 @@ func (h *Handler) handleSet(w http.ResponseWriter, r *http.Request) {
 		operation = "create"
 	}
 	log.Printf("[INFO] %s %q (%d bytes, format=%s) by %s", operation, key, len(value), format, h.getIdentityForLog(r))
-
-	// commit to git if enabled
-	if h.Git != nil {
-		req := git.CommitRequest{Key: key, Value: value, Operation: operation, Format: format, Author: h.getAuthorFromRequest(r)}
-		if err := h.Git.Commit(req); err != nil {
-			log.Printf("[WARN] git commit failed for %s: %v", key, err)
-		}
-	}
 
 	// publish event for SSE subscribers
 	if h.Events != nil {
@@ -284,7 +288,13 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.Store.Delete(r.Context(), key)
+	author := h.getAuthorFromRequest(r)
+	err := h.write(func() (git.CommitRequest, error) {
+		if delErr := h.Store.Delete(r.Context(), key); delErr != nil {
+			return git.CommitRequest{}, fmt.Errorf("delete %q: %w", key, delErr)
+		}
+		return git.CommitRequest{Key: key, Operation: "delete", Author: author}, nil
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		rest.SendErrorJSON(w, r, log.Default(), http.StatusNotFound, err, "key not found")
 		return
@@ -295,13 +305,6 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[INFO] delete %q by %s", key, h.getIdentityForLog(r))
-
-	// delete from git if enabled
-	if h.Git != nil {
-		if err := h.Git.Delete(key, h.getAuthorFromRequest(r)); err != nil {
-			log.Printf("[WARN] git delete failed for %s: %v", key, err)
-		}
-	}
 
 	// publish event for SSE subscribers
 	if h.Events != nil {
@@ -395,6 +398,19 @@ func (h *Handler) getIdentity(r *http.Request) identity {
 	default:
 		return identity{typ: identityAnonymous}
 	}
+}
+
+// write applies a database change through fn and, with git enabled, records it in git
+// in the same order as the database. Returns fn's error.
+func (h *Handler) write(fn func() (git.CommitRequest, error)) error {
+	if h.Git == nil {
+		_, err := fn()
+		return err
+	}
+	if err := h.Git.Record(fn); err != nil {
+		return fmt.Errorf("record: %w", err)
+	}
+	return nil
 }
 
 // getAuthorFromRequest extracts the git author from request context.

@@ -240,11 +240,12 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - Modify: `app/server/server.go`, `app/server/api/handler.go`, `app/server/web/handler.go`, `app/server/web/keys.go`
 - Modify: their `_test.go` files; regenerate the GitService mocks in `app/server/api/mocks` and `app/server/web/mocks`
 
-- [ ] write failing deterministic regression test: with a moq `Storer` whose `Commit` blocks writer A on a channel, writer B's `Record` callback does not run until A's commit returns (fails today because nothing orders them)
-- [ ] add `Service.Record`; delete routes to `Storer.Delete`; git failures logged inside Record
-- [ ] replace `Commit`/`Delete` with `Record` in the three GitService interfaces; add `write(fn)` to api and web handlers; convert api set/delete and web create/update/delete/revision restore; remove web `commitToGit`
-- [ ] update handler tests for the new interface (success, DB error returns error and no commit, git error still returns success, web update conflict still renders the conflict form)
-- [ ] run tests - must pass before next task
+- [x] write failing deterministic regression test: with a moq `Storer` whose `Commit` blocks writer A on a channel, writer B's `Record` callback does not run until A's commit returns (fails today because nothing orders them)
+- [x] add `Service.Record`; delete routes to `Storer.Delete`; git failures logged inside Record
+- [x] replace `Commit`/`Delete` with `Record` in the three GitService interfaces; add `write(fn)` to api and web handlers; convert api set/delete and web create/update/delete/revision restore; remove web `commitToGit`
+- [x] update handler tests for the new interface (success, DB error returns error and no commit, git error still returns success, web update conflict still renders the conflict form)
+- [x] run tests - must pass before next task
+- ➕ legacy `--git.push` pull+push runs after the Record lock is released; a slow push still holds `Store.mu`, so the next write's commit waits for it while holding the Record lock and later database writes queue behind it; `Service.Commit`/`Delete` removed (no callers left); callback errors wrapped with `%w` for wrapcheck, `errors.Is`/`AsType` still match
 
 ### Task 5: Clone from `--git.url`, tree-based ReadAll, reset to local head
 

@@ -291,17 +291,23 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	// validate value unless force flag is set or value is binary
 	force := r.FormValue("force") == formValueTrue
 	if !force && !isBinary {
-		if err := h.Validator.Validate(format, value); err != nil {
+		if valErr := h.Validator.Validate(format, value); valErr != nil {
 			h.renderFormError(w, templateData{
 				Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
-				IsNew: true, Error: err.Error(), CanForce: true,
+				IsNew: true, Error: valErr.Error(), CanForce: true,
 				BaseURL: h.BaseURL, CanWrite: true, Username: username,
 			})
 			return
 		}
 	}
 
-	if _, err := h.Store.Set(r.Context(), key, value, format); err != nil {
+	err = h.write(func() (git.CommitRequest, error) {
+		if _, setErr := h.Store.Set(r.Context(), key, value, format); setErr != nil {
+			return git.CommitRequest{}, fmt.Errorf("set %q: %w", key, setErr)
+		}
+		return git.CommitRequest{Key: key, Value: value, Operation: "set", Format: format, Author: h.getAuthor(username)}, nil
+	})
+	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderFormError(w, templateData{
 				Key: key, Value: valueStr, Format: format, Formats: h.Validator.SupportedFormats(),
@@ -318,7 +324,6 @@ func (h *Handler) handleKeyCreate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] create %q (%d bytes, format=%s) by %s", key, len(value), format, h.getIdentityForLog(r))
 	valueSize := len(value)
 	h.logAudit(r, key, enum.AuditActionCreate, enum.AuditResultSuccess, &valueSize)
-	h.commitToGit(key, value, "set", format, username)
 	h.publishEvent(key, enum.AuditActionCreate)
 	h.handleKeyList(w, r) // return updated keys table
 }
@@ -378,7 +383,13 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 		expectedVersion = time.Unix(0, formUpdatedAt).UTC()
 	}
 
-	if err := h.Store.SetWithVersion(r.Context(), key, value, format, expectedVersion); err != nil {
+	err = h.write(func() (git.CommitRequest, error) {
+		if setErr := h.Store.SetWithVersion(r.Context(), key, value, format, expectedVersion); setErr != nil {
+			return git.CommitRequest{}, fmt.Errorf("set %q: %w", key, setErr)
+		}
+		return git.CommitRequest{Key: key, Value: value, Operation: "set", Format: format, Author: h.getAuthor(username)}, nil
+	})
+	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			modalWidth, textareaHeight := h.calculateModalDimensions(valueStr)
 			h.renderFormError(w, templateData{
@@ -405,7 +416,6 @@ func (h *Handler) handleKeyUpdate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] update %q (%d bytes, format=%s) by %s", key, len(value), format, h.getIdentityForLog(r))
 	valueSize := len(value)
 	h.logAudit(r, key, enum.AuditActionUpdate, enum.AuditResultSuccess, &valueSize)
-	h.commitToGit(key, value, "set", format, username)
 	h.publishEvent(key, enum.AuditActionUpdate)
 	h.handleKeyList(w, r) // return updated keys table
 }
@@ -421,7 +431,13 @@ func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Store.Delete(r.Context(), key); err != nil {
+	err := h.write(func() (git.CommitRequest, error) {
+		if delErr := h.Store.Delete(r.Context(), key); delErr != nil {
+			return git.CommitRequest{}, fmt.Errorf("delete %q: %w", key, delErr)
+		}
+		return git.CommitRequest{Key: key, Operation: "delete", Author: h.getAuthor(username)}, nil
+	})
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "key not found", http.StatusNotFound)
 			return
@@ -433,13 +449,6 @@ func (h *Handler) handleKeyDelete(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[INFO] delete %q by %s", key, h.getIdentityForLog(r))
 	h.logAudit(r, key, enum.AuditActionDelete, enum.AuditResultSuccess, nil)
-
-	// delete from git if enabled
-	if h.Git != nil {
-		if err := h.Git.Delete(key, h.getAuthor(username)); err != nil {
-			log.Printf("[WARN] git delete failed for %s: %v", key, err)
-		}
-	}
 
 	h.publishEvent(key, enum.AuditActionDelete)
 	h.handleKeyList(w, r) // return updated keys table
@@ -572,8 +581,13 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// save to store
-	if _, err := h.Store.Set(r.Context(), key, value, format); err != nil {
+	err = h.write(func() (git.CommitRequest, error) {
+		if _, setErr := h.Store.Set(r.Context(), key, value, format); setErr != nil {
+			return git.CommitRequest{}, fmt.Errorf("set %q: %w", key, setErr)
+		}
+		return git.CommitRequest{Key: key, Value: value, Operation: "restore", Format: format, Author: h.getAuthor(username)}, nil
+	})
+	if err != nil {
 		if errors.Is(err, store.ErrSecretsNotConfigured) {
 			h.renderError(w, "Secrets not configured: keys with 'secrets' in path require --secrets.key")
 			return
@@ -586,7 +600,6 @@ func (h *Handler) handleKeyRestore(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[INFO] restore %q to revision %s by %s", key, rev, h.getIdentityForLog(r))
 	valueSize := len(value)
 	h.logAudit(r, key, enum.AuditActionUpdate, enum.AuditResultSuccess, &valueSize)
-	h.commitToGit(key, value, "restore", format, username)
 	h.publishEvent(key, enum.AuditActionUpdate)
 	h.handleKeyList(w, r) // return updated keys table
 }
@@ -729,15 +742,17 @@ func (h *Handler) renderConflictError(w http.ResponseWriter, p conflictErrorPara
 		p.Key, p.FormUpdatedAt, p.ConflictErr.Info.CurrentVersion.UnixNano())
 }
 
-// commitToGit commits a key change to git if git is enabled.
-func (h *Handler) commitToGit(key string, value []byte, op, format, username string) {
+// write applies a database change through fn and, with git enabled, records it in git
+// in the same order as the database. Returns fn's error.
+func (h *Handler) write(fn func() (git.CommitRequest, error)) error {
 	if h.Git == nil {
-		return
+		_, err := fn()
+		return err
 	}
-	req := git.CommitRequest{Key: key, Value: value, Operation: op, Format: format, Author: h.getAuthor(username)}
-	if err := h.Git.Commit(req); err != nil {
-		log.Printf("[WARN] git commit failed for %s: %v", key, err)
+	if err := h.Git.Record(fn); err != nil {
+		return fmt.Errorf("record: %w", err)
 	}
+	return nil
 }
 
 // publishEvent publishes a key change event to SSE subscribers if events are enabled.

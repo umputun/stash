@@ -59,8 +59,7 @@ type KVStore interface {
 
 // GitService defines the interface for git operations.
 type GitService interface {
-	Commit(req git.CommitRequest) error
-	Delete(key string, author git.Author) error
+	Record(write func() (git.CommitRequest, error)) error
 	History(key string, limit int) ([]git.HistoryEntry, error)
 	GetRevision(key string, rev string) ([]byte, string, error)
 }
