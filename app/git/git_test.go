@@ -1,19 +1,27 @@
 package git
 
 import (
+	"context"
+	"crypto/ed25519"
+	"encoding/pem"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gossh "golang.org/x/crypto/ssh"
 
 	kvstore "github.com/umputun/stash/app/store"
 )
@@ -120,6 +128,31 @@ func TestStore_Commit(t *testing.T) {
 }
 
 func TestStore_Delete(t *testing.T) {
+	t.Run("removes directories the delete leaves empty", func(t *testing.T) {
+		// an empty a.val/ left behind by deleting a.val/b kept key a from ever being written
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		author := DefaultAuthor()
+		require.NoError(t, st.Commit(CommitRequest{Key: "a.val/b", Value: []byte("1"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "x/y/z", Value: []byte("2"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "x/keep", Value: []byte("3"), Operation: "set", Author: author}))
+
+		require.NoError(t, st.Delete("a.val/b", author))
+		require.NoError(t, st.Delete("x/y/z", author))
+		_, statErr := os.Stat(filepath.Join(path, "a.val"))
+		assert.True(t, os.IsNotExist(statErr))
+		_, statErr = os.Stat(filepath.Join(path, "x", "y"))
+		assert.True(t, os.IsNotExist(statErr))
+		_, statErr = os.Stat(filepath.Join(path, "x", "keep.val"))
+		require.NoError(t, statErr)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("4"), Operation: "set", Author: author}))
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"a": {Value: []byte("4"), Format: "text"}, "x/keep": {Value: []byte("3"), Format: "text"}}, all)
+	})
+
 	t.Run("deletes existing key", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
@@ -337,6 +370,88 @@ func TestStore_Push(t *testing.T) {
 		err = store.Push()
 		require.NoError(t, err)
 	})
+
+	t.Run("push context sends the branch to the remote", func(t *testing.T) {
+		bare := seedRemote(t, nil)
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, st.PushContext(t.Context()))
+
+		remoteRepo, err := git.PlainOpen(bare)
+		require.NoError(t, err)
+		ref, err := remoteRepo.Reference(plumbing.NewBranchReferenceName("master"), true)
+		require.NoError(t, err)
+		head, err := st.repo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, head.Hash(), ref.Hash())
+	})
+
+	t.Run("push context gives up on an ssh remote that accepts and never answers", func(t *testing.T) {
+		// the dial deadline did not reach the ssh handshake, so a stalled remote held the store lock indefinitely
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		accepted := make(chan net.Conn, 4)
+		go func() {
+			for {
+				c, accErr := l.Accept()
+				if accErr != nil {
+					return
+				}
+				accepted <- c
+			}
+		}()
+		t.Cleanup(func() {
+			_ = l.Close()
+			for len(accepted) > 0 {
+				_ = (<-accepted).Close()
+			}
+		})
+
+		dir := t.TempDir()
+		knownHosts := filepath.Join(dir, "known_hosts")
+		require.NoError(t, os.WriteFile(knownHosts, nil, 0o600))
+		t.Setenv("SSH_KNOWN_HOSTS", knownHosts)
+		_, priv, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+		block, err := gossh.MarshalPrivateKey(priv, "")
+		require.NoError(t, err)
+		keyPath := filepath.Join(dir, "id_ed25519")
+		require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600))
+
+		st, err := New(Config{Path: filepath.Join(dir, ".history"), Remote: "origin", SSHKey: keyPath})
+		require.NoError(t, err)
+		_, err = st.repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"ssh://stash@" + l.Addr().String() + "/repo.git"}})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- st.PushContext(ctx) }()
+		select {
+		case pushErr := <-done:
+			require.Error(t, pushErr)
+		case <-time.After(3 * time.Second):
+			t.Fatal("push did not return after its deadline")
+		}
+		select {
+		case c := <-accepted:
+			accepted <- c
+		default:
+			t.Fatal("the remote never accepted a connection, so the push failed before reaching it")
+		}
+	})
+
+	t.Run("push context respects a canceled context", func(t *testing.T) {
+		bare := seedRemote(t, nil)
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		require.Error(t, st.PushContext(ctx))
+	})
 }
 
 func TestStore_Pull(t *testing.T) {
@@ -423,6 +538,28 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects keys inside the metadata directory or with control characters", func(t *testing.T) {
+		// keys under .git wrote into repository metadata, and a newline in a key could forge commit message lines
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		invalidKeys := []string{".git/x", ".git/hooks/x", "./.git/x", ".GIT/x", ".Git/config", "a/.git/x", "a/./b", "./x", "a//b",
+			"x\nkey: y", "x\rformat: json", "a\x00b", "tab\there", "del\x7f"}
+		for _, key := range invalidKeys {
+			err = store.Commit(CommitRequest{Key: key, Value: []byte("v"), Operation: "set", Author: DefaultAuthor()})
+			require.Error(t, err, "should reject key: %q", key)
+			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
+
+			err = store.Delete(key, DefaultAuthor())
+			require.Error(t, err, "delete should reject key: %q", key)
+			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
+		}
+
+		_, statErr := os.Stat(filepath.Join(tmpDir, ".history", ".git", "x.val"))
+		assert.True(t, os.IsNotExist(statErr))
+	})
+
 	t.Run("allows valid nested keys", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
@@ -433,6 +570,11 @@ func TestStore_PathTraversal(t *testing.T) {
 			"app/config/db",
 			"deeply/nested/path/to/key",
 			"single",
+			".git",
+			"a/.git",
+			".github/workflow",
+			".gitignore",
+			"a/b.git/c",
 		}
 
 		for _, key := range validKeys {
@@ -453,7 +595,7 @@ func TestKeyToPath(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			assert.Equal(t, tt.path, keyToPath(tt.key))
+			assert.Equal(t, tt.path, (&Store{}).keyToPath(tt.key))
 		})
 	}
 }
@@ -469,7 +611,7 @@ func TestPathToKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			assert.Equal(t, tt.key, pathToKey(tt.path))
+			assert.Equal(t, tt.key, (&Store{}).pathToKey(tt.path))
 		})
 	}
 }
@@ -673,7 +815,7 @@ func TestParseFormatFromCommit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, parseFormatFromCommit(tc.message))
+			assert.Equal(t, tc.expected, (&Store{}).parseFormatFromCommit(tc.message))
 		})
 	}
 }
@@ -690,7 +832,7 @@ func TestParseOperationFromCommit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, parseOperationFromCommit(tc.message))
+			assert.Equal(t, tc.expected, (&Store{}).parseOperationFromCommit(tc.message))
 		})
 	}
 }
@@ -1068,6 +1210,13 @@ func TestStore_SecretsEncryption(t *testing.T) {
 		require.NoError(t, gs.Commit(CommitRequest{Key: secret, Value: []byte("hunter2"), Operation: "set", Author: author}))
 
 		require.NoError(t, os.WriteFile(filepath.Join(path, "app", "secrets", "db.val"), []byte(encPrefix+"not base64!"), 0o600))
+		wt, err := gs.repo.Worktree()
+		require.NoError(t, err)
+		_, err = wt.Add("app/secrets/db.val")
+		require.NoError(t, err)
+		_, err = wt.Commit("damage", &git.CommitOptions{Author: &object.Signature{Name: "x", Email: "x@x", When: time.Now()}})
+		require.NoError(t, err)
+
 		_, err = gs.ReadAll()
 		require.ErrorContains(t, err, "failed to decrypt")
 	})
@@ -1184,5 +1333,560 @@ func TestStore_Symlinks(t *testing.T) {
 		assert.Equal(t, "untouched", string(content))
 		_, statErr := os.Lstat(filepath.Join(path, "link.val"))
 		assert.True(t, os.IsNotExist(statErr))
+	})
+}
+
+func TestStore_FormatOnlyChange(t *testing.T) {
+	t.Run("format-only change is recorded", func(t *testing.T) {
+		// a same-value format change failed as an empty commit, so history kept the old format
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/cfg", Value: []byte("a: 1"), Operation: "create", Format: "text",
+			Author: DefaultAuthor()}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/cfg", Value: []byte("a: 1"), Operation: "update", Format: "yaml",
+			Author: DefaultAuthor()}))
+
+		history, err := st.History("app/cfg", 0)
+		require.NoError(t, err)
+		require.Len(t, history, 2)
+		assert.Equal(t, "yaml", history[0].Format)
+		assert.Equal(t, "a: 1", string(history[0].Value))
+		assert.Equal(t, "text", history[1].Format)
+
+		value, format, err := st.GetRevision("app/cfg", history[0].Hash)
+		require.NoError(t, err)
+		assert.Equal(t, "a: 1", string(value))
+		assert.Equal(t, "yaml", format)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, KeyValue{Value: []byte("a: 1"), Format: "yaml"}, all["app/cfg"])
+	})
+
+	t.Run("unchanged value and format is a no-op", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+
+		req := CommitRequest{Key: "k", Value: []byte("v"), Operation: "update", Format: "json", Author: DefaultAuthor()}
+		require.NoError(t, st.Commit(req))
+		head, err := st.Head()
+		require.NoError(t, err)
+
+		require.NoError(t, st.Commit(req))
+		head2, err := st.Head()
+		require.NoError(t, err)
+		assert.Equal(t, head, head2)
+
+		history, err := st.History("k", 0)
+		require.NoError(t, err)
+		assert.Len(t, history, 1)
+	})
+
+	t.Run("history of one key ignores commits of another key", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("1"), Operation: "create", Author: DefaultAuthor()}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "a/b", Value: []byte("2"), Operation: "create", Author: DefaultAuthor()}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("3"), Operation: "update", Author: DefaultAuthor()}))
+
+		history, err := st.History("a", 0)
+		require.NoError(t, err)
+		require.Len(t, history, 2)
+		assert.Equal(t, "3", string(history[0].Value))
+		assert.Equal(t, "1", string(history[1].Value))
+
+		limited, err := st.History("a", 1)
+		require.NoError(t, err)
+		require.Len(t, limited, 1)
+		assert.Equal(t, "3", string(limited[0].Value))
+	})
+}
+
+func TestStore_OldMessageShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".history")
+	st, err := New(Config{Path: path})
+	require.NoError(t, err)
+
+	wt, err := st.repo.Worktree()
+	require.NoError(t, err)
+	commitOld := func(msg string) {
+		_, cErr := wt.Commit(msg, &git.CommitOptions{Author: &object.Signature{Name: "stash", Email: "stash@localhost", When: time.Now()}})
+		require.NoError(t, cErr)
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(path, "old.val"), []byte("v1"), 0o600))
+	_, err = wt.Add("old.val")
+	require.NoError(t, err)
+	commitOld("set old\n\ntimestamp: 2025-11-24T10:00:00Z\noperation: set\nkey: old")
+
+	require.NoError(t, os.WriteFile(filepath.Join(path, "gone.val"), []byte("x"), 0o600))
+	_, err = wt.Add("gone.val")
+	require.NoError(t, err)
+	commitOld("set gone\n\ntimestamp: 2025-11-24T10:01:00Z\noperation: set\nkey: gone")
+	_, err = wt.Remove("gone.val")
+	require.NoError(t, err)
+	commitOld("delete gone\n\ntimestamp: 2025-11-24T10:02:00Z\noperation: delete\nkey: gone")
+
+	history, err := st.History("old", 0)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "text", history[0].Format)
+	assert.Equal(t, "v1", string(history[0].Value))
+	assert.Equal(t, "set", history[0].Operation)
+
+	gone, err := st.History("gone", 0)
+	require.NoError(t, err)
+	require.Len(t, gone, 2)
+	assert.Equal(t, "delete", gone[0].Operation)
+	assert.Nil(t, gone[0].Value)
+
+	all, err := st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]KeyValue{"old": {Value: []byte("v1"), Format: "text"}}, all)
+}
+
+func TestStore_ReadAllFormatForUncleanKey(t *testing.T) {
+	// a key with a double slash was stored under the cleaned path, so a format lookup by raw key missed it
+	path := filepath.Join(t.TempDir(), ".history")
+	st, err := New(Config{Path: path})
+	require.NoError(t, err)
+
+	wt, err := st.repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(path, "a"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(path, "a", "b.val"), []byte("{}"), 0o600))
+	_, err = wt.Add("a/b.val")
+	require.NoError(t, err)
+	_, err = wt.Commit("set a//b\n\ntimestamp: 2025-12-01T10:00:00Z\noperation: set\nkey: a//b\nformat: json",
+		&git.CommitOptions{Author: &object.Signature{Name: "stash", Email: "stash@localhost", When: time.Now()}})
+	require.NoError(t, err)
+
+	all, err := st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]KeyValue{"a/b": {Value: []byte("{}"), Format: "json"}}, all)
+
+	require.NoError(t, st.Commit(CommitRequest{Key: "a/b", Value: []byte("{}"), Operation: "update", Format: "text",
+		Author: DefaultAuthor()}))
+	all, err = st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, "text", all["a/b"].Format)
+
+	history, err := st.History("a/b", 0)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	assert.Equal(t, "text", history[0].Format)
+	assert.Equal(t, "json", history[1].Format)
+}
+
+func TestStore_ReadAllFormatForDotFileKey(t *testing.T) {
+	st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+	require.NoError(t, err)
+
+	require.NoError(t, st.Commit(CommitRequest{Key: "a/.", Value: []byte("{}"), Operation: "create", Format: "json",
+		Author: DefaultAuthor()}))
+	require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("x: 1"), Operation: "create", Format: "yaml",
+		Author: DefaultAuthor()}))
+
+	all, err := st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]KeyValue{"a/.": {Value: []byte("{}"), Format: "json"}, "a": {Value: []byte("x: 1"), Format: "yaml"}}, all)
+}
+
+func seedRemote(t *testing.T, kv map[string]string) string {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	_, err := git.PlainInit(bare, true)
+	require.NoError(t, err)
+	if len(kv) == 0 {
+		return bare
+	}
+
+	seed, err := New(Config{Path: filepath.Join(t.TempDir(), "seed"), Remote: "origin"})
+	require.NoError(t, err)
+	_, err = seed.repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{bare}})
+	require.NoError(t, err)
+	for k, v := range kv {
+		require.NoError(t, seed.Commit(CommitRequest{Key: k, Value: []byte(v), Operation: "set", Format: "json", Author: DefaultAuthor()}))
+	}
+	require.NoError(t, seed.Push())
+	return bare
+}
+
+func TestStore_RemoteURL(t *testing.T) {
+	t.Run("missing path clones the remote", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"app/a": "1", "app/b": "2"})
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare})
+		require.NoError(t, err)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"app/a": {Value: []byte("1"), Format: "json"}, "app/b": {Value: []byte("2"), Format: "json"}}, all)
+
+		history, err := st.History("app/a", 0)
+		require.NoError(t, err)
+		assert.Len(t, history, 1)
+	})
+
+	t.Run("empty remote initializes and adds the remote", func(t *testing.T) {
+		bare := seedRemote(t, nil)
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare})
+		require.NoError(t, err)
+
+		rem, err := st.repo.Remote("origin")
+		require.NoError(t, err)
+		assert.Equal(t, []string{bare}, rem.Config().URLs)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, st.Push())
+		remoteRepo, err := git.PlainOpen(bare)
+		require.NoError(t, err)
+		_, err = remoteRepo.Reference(plumbing.NewBranchReferenceName("master"), true)
+		require.NoError(t, err)
+	})
+
+	t.Run("remote without the branch fails naming it", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		_, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare, Branch: "main"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"main"`)
+		assert.Contains(t, err.Error(), bare)
+	})
+
+	t.Run("existing repo with matching remote opens", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		path := filepath.Join(t.TempDir(), ".history")
+		_, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+
+		st, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Contains(t, all, "k")
+	})
+
+	t.Run("existing repo without the remote gets it", func(t *testing.T) {
+		bare := seedRemote(t, nil)
+		path := filepath.Join(t.TempDir(), ".history")
+		_, err := New(Config{Path: path})
+		require.NoError(t, err)
+
+		st, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		rem, err := st.repo.Remote("origin")
+		require.NoError(t, err)
+		assert.Equal(t, []string{bare}, rem.Config().URLs)
+	})
+
+	t.Run("existing repo with a different remote url fails", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		other := seedRemote(t, nil)
+		path := filepath.Join(t.TempDir(), ".history")
+		_, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+
+		_, err = New(Config{Path: path, URL: other})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), other)
+	})
+
+	t.Run("remote with an extra push url fails", func(t *testing.T) {
+		// go-git pushes to the last url of a remote, so a remote whose first url matched could send history elsewhere
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		other := seedRemote(t, nil)
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		require.NoError(t, st.repo.DeleteRemote("origin"))
+		_, err = st.repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{bare, other}})
+		require.NoError(t, err)
+
+		_, err = New(Config{Path: path, URL: bare})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), other)
+	})
+
+	t.Run("existing repo without the local branch fails", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		path := filepath.Join(t.TempDir(), ".history")
+		_, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+
+		_, err = New(Config{Path: path, URL: bare, Branch: "prod"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `"prod"`)
+		assert.Contains(t, err.Error(), path)
+	})
+
+	t.Run("interrupted commit is reset, unpushed commits stay", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "local", Value: []byte("unpushed"), Operation: "set", Author: DefaultAuthor()}))
+
+		require.NoError(t, os.WriteFile(filepath.Join(path, "k.val"), []byte("half-written"), 0o600))
+		wt, err := st.repo.Worktree()
+		require.NoError(t, err)
+		_, err = wt.Add("k.val")
+		require.NoError(t, err)
+
+		st, err = New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		content, err := os.ReadFile(filepath.Join(path, "k.val"))
+		require.NoError(t, err)
+		assert.Equal(t, "v", string(content))
+		history, err := st.History("local", 0)
+		require.NoError(t, err)
+		require.Len(t, history, 1)
+		assert.Equal(t, "unpushed", string(history[0].Value))
+	})
+
+	t.Run("detached head after restore is back on the branch", func(t *testing.T) {
+		bare := seedRemote(t, map[string]string{"k": "v"})
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		first, err := st.Head()
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k2", Value: []byte("v2"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, st.Checkout(first))
+
+		st, err = New(Config{Path: path, URL: bare})
+		require.NoError(t, err)
+		head, err := st.repo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, plumbing.NewBranchReferenceName("master"), head.Name())
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Contains(t, all, "k2")
+	})
+}
+
+func TestStore_SSHUser(t *testing.T) {
+	tests := []struct{ url, user string }{
+		{"git@github.com:user/repo.git", "git"},
+		{"deploy@host:repo.git", "deploy"},
+		{"ssh://ops@host/repo.git", "ops"},
+		{"ssh://host/repo.git", "git"},
+		{"https://github.com/user/repo.git", "git"},
+		{"", "git"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.url, func(t *testing.T) {
+			assert.Equal(t, tc.user, (&Store{}).sshUser(tc.url))
+		})
+	}
+}
+
+func TestStore_ReadAllFromHead(t *testing.T) {
+	t.Run("uncommitted worktree changes are ignored", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("committed"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "k.val"), []byte("uncommitted"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "stray.val"), []byte("stray"), 0o600))
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"k": {Value: []byte("committed"), Format: "text"}}, all)
+	})
+
+	t.Run("committed symlinks and non-value files are skipped", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		path := filepath.Join(tmpDir, ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "real", Value: []byte("ok"), Operation: "set", Author: DefaultAuthor()}))
+
+		require.NoError(t, os.Symlink(filepath.Join(tmpDir, "outside.txt"), filepath.Join(path, "link.val")))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "notes.txt"), []byte("n"), 0o600))
+		wt, err := st.repo.Worktree()
+		require.NoError(t, err)
+		_, err = wt.Add("link.val")
+		require.NoError(t, err)
+		_, err = wt.Add("notes.txt")
+		require.NoError(t, err)
+		_, err = wt.Commit("manual", &git.CommitOptions{Author: &object.Signature{Name: "x", Email: "x@x", When: time.Now()}})
+		require.NoError(t, err)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"real": {Value: []byte("ok"), Format: "text"}}, all)
+	})
+}
+
+func TestStore_Sync(t *testing.T) {
+	author := DefaultAuthor()
+	newCrypto := func(t *testing.T) *kvstore.Crypto {
+		t.Helper()
+		c, err := kvstore.NewCrypto([]byte("master-key-0123456789"))
+		require.NoError(t, err)
+		return c
+	}
+
+	t.Run("commits changes, new keys, deletes and format changes", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("1"), Operation: "set", Format: "text", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "b", Value: []byte("2"), Operation: "set", Format: "json", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "c", Value: []byte("3"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "same", Value: []byte("s"), Operation: "set", Format: "yaml", Author: author}))
+
+		want := map[string]KeyValue{
+			"a":    {Value: []byte("1"), Format: "yaml"},
+			"b":    {Value: []byte("22"), Format: "json"},
+			"d":    {Value: []byte("4"), Format: "text"},
+			"same": {Value: []byte("s"), Format: "yaml"},
+		}
+		res, err := st.Sync(want)
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 3, Deleted: 1}, res)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, want, all)
+
+		history, err := st.History("c", 0)
+		require.NoError(t, err)
+		require.NotEmpty(t, history)
+		assert.Equal(t, "delete", history[0].Operation)
+		history, err = st.History("b", 0)
+		require.NoError(t, err)
+		assert.Equal(t, "stash", history[0].Author)
+
+		head, err := st.Head()
+		require.NoError(t, err)
+		res, err = st.Sync(want)
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{}, res)
+		head2, err := st.Head()
+		require.NoError(t, err)
+		assert.Equal(t, head, head2)
+	})
+
+	t.Run("secrets and zk values compare by content", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), Encryptor: newCrypto(t)})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/zk", Value: []byte("$ZK$c2VjcmV0"), Operation: "set", Author: author}))
+
+		res, err := st.Sync(map[string]KeyValue{
+			"app/secrets/db": {Value: []byte("pw"), Format: "text"},
+			"app/zk":         {Value: []byte("$ZK$c2VjcmV0"), Format: "text"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{}, res)
+	})
+
+	t.Run("deleted secret is removed without decoding", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		withKey, err := New(Config{Path: path, Encryptor: newCrypto(t)})
+		require.NoError(t, err)
+		require.NoError(t, withKey.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+
+		noKey, err := New(Config{Path: path})
+		require.NoError(t, err)
+		res, err := noKey.Sync(map[string]KeyValue{})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Deleted: 1}, res)
+	})
+
+	t.Run("secret encrypted with a rotated-out key is replaced by the database value", func(t *testing.T) {
+		// the old ciphertext could not be decoded, and the sync stopped startup on every restart
+		path := filepath.Join(t.TempDir(), ".history")
+		oldKey, err := New(Config{Path: path, Encryptor: newCrypto(t)})
+		require.NoError(t, err)
+		require.NoError(t, oldKey.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+
+		newCrypt, err := kvstore.NewCrypto([]byte("another-master-key-0123"))
+		require.NoError(t, err)
+		rotated, err := New(Config{Path: path, Encryptor: newCrypt})
+		require.NoError(t, err)
+		res, err := rotated.Sync(map[string]KeyValue{"app/secrets/db": {Value: []byte("pw"), Format: "json"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 1}, res)
+
+		all, err := rotated.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, KeyValue{Value: []byte("pw"), Format: "json"}, all["app/secrets/db"])
+	})
+
+	t.Run("keys whose files collide are skipped", func(t *testing.T) {
+		// a and a.val/b need a.val as both a file and a directory, and the failed commit stopped startup
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		res, err := st.Sync(map[string]KeyValue{"a": {Value: []byte("1"), Format: "text"}, "a.val/b": {Value: []byte("2"), Format: "text"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 1, Skipped: 1}, res)
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"a": {Value: []byte("1"), Format: "text"}}, all)
+
+		other, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		require.NoError(t, other.Commit(CommitRequest{Key: "a.val/b", Value: []byte("2"), Operation: "set", Author: author}))
+		res, err = other.Sync(map[string]KeyValue{"a": {Value: []byte("1"), Format: "text"}, "a.val/b": {Value: []byte("2"), Format: "text"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Skipped: 1}, res)
+		all, err = other.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"a.val/b": {Value: []byte("2"), Format: "text"}}, all)
+	})
+
+	t.Run("staging failure with a skippable errno still stops the sync", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, os.Remove(filepath.Join(path, ".git", "index")))
+		require.NoError(t, os.Mkdir(filepath.Join(path, ".git", "index"), 0o750))
+
+		_, err = st.Sync(map[string]KeyValue{"k": {Value: []byte("v"), Format: "text"}})
+		require.Error(t, err)
+		require.ErrorIs(t, err, syscall.EISDIR)
+	})
+
+	t.Run("key whose file name is too long is skipped", func(t *testing.T) {
+		// such a key reached the database, and its failed commit stopped startup
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		long := "app/" + strings.Repeat("k", 300)
+		res, err := st.Sync(map[string]KeyValue{long: {Value: []byte("v"), Format: "text"}, "ok": {Value: []byte("1"), Format: "text"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 1, Skipped: 1}, res)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"ok": {Value: []byte("1"), Format: "text"}}, all)
+	})
+
+	t.Run("keys git cannot store are skipped and their files kept", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(filepath.Join(path, "a"), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(path, "a", "b.val"), []byte("old"), 0o600))
+		wt, err := st.repo.Worktree()
+		require.NoError(t, err)
+		_, err = wt.Add("a/b.val")
+		require.NoError(t, err)
+		_, err = wt.Commit("set a//b\n\noperation: set\nkey: a//b", &git.CommitOptions{Author: &object.Signature{Name: "stash",
+			Email: "stash@localhost", When: time.Now()}})
+		require.NoError(t, err)
+
+		res, err := st.Sync(map[string]KeyValue{
+			"a//b":      {Value: []byte("new"), Format: "text"},
+			"x\nkey: y": {Value: []byte("v"), Format: "text"},
+			".git/x":    {Value: []byte("v"), Format: "text"},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{}, res)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("old"), all["a/b"].Value)
 	})
 }

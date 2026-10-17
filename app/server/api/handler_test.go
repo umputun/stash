@@ -632,50 +632,86 @@ func TestHandler_GetIdentityForLog(t *testing.T) {
 	})
 }
 
+func recordingGit() (*mocks.GitServiceMock, *[]git.CommitRequest) {
+	var reqs []git.CommitRequest
+	return &mocks.GitServiceMock{RecordFunc: func(write func() (git.CommitRequest, error)) error {
+		req, err := write()
+		if err == nil {
+			reqs = append(reqs, req)
+		}
+		return err
+	}}, &reqs
+}
+
 func TestHandler_HandleSet_WithGit(t *testing.T) {
-	st := &mocks.KVStoreMock{
-		SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
-	}
-	auth := noopAuthMock()
-	gitMock := &mocks.GitServiceMock{
-		CommitFunc: func(req git.CommitRequest) error {
-			assert.Equal(t, "testkey", req.Key)
-			assert.Equal(t, "testvalue", string(req.Value))
-			assert.Equal(t, "create", req.Operation)
-			return nil
-		},
-	}
-	h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator(), Git: gitMock})
+	t.Run("records the write", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return true, nil },
+		}
+		gitMock, reqs := recordingGit()
+		h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Git: gitMock})
 
-	req := httptest.NewRequest(http.MethodPut, "/kv/testkey", strings.NewReader("testvalue"))
-	req.SetPathValue("key", "testkey")
-	rec := httptest.NewRecorder()
-	h.handleSet(rec, req)
+		req := httptest.NewRequest(http.MethodPut, "/kv/testkey", strings.NewReader("testvalue"))
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleSet(rec, req)
 
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.Len(t, gitMock.CommitCalls(), 1, "git commit should be called")
+		assert.Equal(t, http.StatusCreated, rec.Code)
+		require.Len(t, *reqs, 1)
+		assert.Equal(t, git.CommitRequest{Key: "testkey", Value: []byte("testvalue"), Operation: "create", Format: "text",
+			Author: git.DefaultAuthor()}, (*reqs)[0])
+	})
+
+	t.Run("db error records nothing", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) { return false, errors.New("db error") },
+		}
+		gitMock, reqs := recordingGit()
+		h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Git: gitMock})
+
+		req := httptest.NewRequest(http.MethodPut, "/kv/testkey", strings.NewReader("testvalue"))
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleSet(rec, req)
+
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Empty(t, *reqs)
+	})
 }
 
 func TestHandler_HandleDelete_WithGit(t *testing.T) {
-	st := &mocks.KVStoreMock{
-		DeleteFunc: func(context.Context, string) error { return nil },
-	}
-	auth := noopAuthMock()
-	gitMock := &mocks.GitServiceMock{
-		DeleteFunc: func(key string, author git.Author) error {
-			assert.Equal(t, "testkey", key)
-			return nil
-		},
-	}
-	h := New(Deps{Store: st, Auth: auth, Validator: defaultFormatValidator(), Git: gitMock})
+	t.Run("records the delete", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(context.Context, string) error { return nil },
+		}
+		gitMock, reqs := recordingGit()
+		h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Git: gitMock})
 
-	req := httptest.NewRequest(http.MethodDelete, "/kv/testkey", http.NoBody)
-	req.SetPathValue("key", "testkey")
-	rec := httptest.NewRecorder()
-	h.handleDelete(rec, req)
+		req := httptest.NewRequest(http.MethodDelete, "/kv/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleDelete(rec, req)
 
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-	require.Len(t, gitMock.DeleteCalls(), 1, "git delete should be called")
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+		require.Len(t, *reqs, 1)
+		assert.Equal(t, git.CommitRequest{Key: "testkey", Operation: "delete", Author: git.DefaultAuthor()}, (*reqs)[0])
+	})
+
+	t.Run("missing key records nothing", func(t *testing.T) {
+		st := &mocks.KVStoreMock{
+			DeleteFunc: func(context.Context, string) error { return store.ErrNotFound },
+		}
+		gitMock, reqs := recordingGit()
+		h := New(Deps{Store: st, Auth: noopAuthMock(), Validator: defaultFormatValidator(), Git: gitMock})
+
+		req := httptest.NewRequest(http.MethodDelete, "/kv/testkey", http.NoBody)
+		req.SetPathValue("key", "testkey")
+		rec := httptest.NewRecorder()
+		h.handleDelete(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Empty(t, *reqs)
+	})
 }
 
 func TestHandler_HandleSet_PublishesEvent(t *testing.T) {

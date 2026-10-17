@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -2695,4 +2698,235 @@ func TestIntegration_SSE_AuthDenied(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not shut down in time")
 	}
+}
+
+func newBareRemote(t *testing.T, kv map[string]string) string {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	_, err := gogit.PlainInit(bare, true)
+	require.NoError(t, err)
+
+	seedPath := filepath.Join(t.TempDir(), "seed")
+	seed, err := git.New(git.Config{Path: seedPath, Remote: "origin"})
+	require.NoError(t, err)
+	seedRepo, err := gogit.PlainOpen(seedPath)
+	require.NoError(t, err)
+	_, err = seedRepo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{bare}})
+	require.NoError(t, err)
+	for k, v := range kv {
+		require.NoError(t, seed.Commit(git.CommitRequest{Key: k, Value: []byte(v), Operation: "set", Author: git.DefaultAuthor()}))
+	}
+	require.NoError(t, seed.Push())
+	return bare
+}
+
+func TestRun_GitURLRequiresGitEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18491"
+	opts.Auth.File = ""
+	opts.Git.Enabled = false
+	opts.Git.URL = "/some/remote.git"
+	defer func() { opts.Git.URL = "" }()
+
+	err := runServer(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--git.url requires --git.enabled")
+}
+
+func TestRunRestore_FromGitURL(t *testing.T) {
+	bare := newBareRemote(t, map[string]string{"app/key1": "value1", "app/key2": "value2"})
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	opts.DB = dbPath
+	opts.Git.Enabled = false
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+	opts.Git.Remote = ""
+	opts.Git.URL = bare
+	opts.RestoreCmd.Rev = "master"
+	defer func() { opts.Git.URL = "" }()
+
+	require.NoError(t, runRestore(t.Context()))
+
+	kvStore, err := store.New(dbPath)
+	require.NoError(t, err)
+	defer kvStore.Close()
+	val, err := kvStore.Get(t.Context(), "app/key1")
+	require.NoError(t, err)
+	assert.Equal(t, "value1", string(val))
+	val, err = kvStore.Get(t.Context(), "app/key2")
+	require.NoError(t, err)
+	assert.Equal(t, "value2", string(val))
+}
+
+func runServerBriefly(t *testing.T, addr string, whileUp func()) error {
+	t.Helper()
+	opts.Server.Address = addr
+	opts.Server.ReadTimeout = 5 * time.Second
+	opts.Auth.File = ""
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServer(ctx) }()
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	for range 40 {
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(50 * time.Millisecond):
+		}
+		if resp, err := client.Get("http://" + addr + "/ping"); err == nil {
+			_ = resp.Body.Close()
+			break
+		}
+	}
+	if whileUp != nil {
+		whileUp()
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not shut down in time")
+		return nil
+	}
+}
+
+func TestRunServer_GitURLSyncsFromDatabase(t *testing.T) {
+	bare := newBareRemote(t, map[string]string{"app/a": "old", "app/gone": "x"})
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	db, err := store.New(dbPath)
+	require.NoError(t, err)
+	_, err = db.Set(t.Context(), "app/a", []byte("new"), "json")
+	require.NoError(t, err)
+	_, err = db.Set(t.Context(), "app/b", []byte("b"), "text")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	opts.DB = dbPath
+	opts.Secrets.Key = ""
+	opts.Git.Enabled = true
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+	opts.Git.Remote = ""
+	opts.Git.URL = bare
+	defer func() { opts.Git.Enabled, opts.Git.URL = false, "" }()
+
+	require.NoError(t, runServerBriefly(t, "127.0.0.1:18492", nil))
+
+	gs, err := git.New(git.Config{Path: opts.Git.Path, URL: bare})
+	require.NoError(t, err)
+	all, err := gs.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]git.KeyValue{"app/a": {Value: []byte("new"), Format: "json"},
+		"app/b": {Value: []byte("b"), Format: "text"}}, all)
+
+	fromRemote, err := git.New(git.Config{Path: filepath.Join(t.TempDir(), "fresh"), URL: bare})
+	require.NoError(t, err)
+	remoteAll, err := fromRemote.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, all, remoteAll)
+}
+
+func TestRunServer_GitURLPushesInBackground(t *testing.T) {
+	setup := func(t *testing.T) (bare string) {
+		t.Helper()
+		bare = newBareRemote(t, map[string]string{"seed": "1"})
+		tmpDir := t.TempDir()
+		opts.DB = filepath.Join(tmpDir, "test.db")
+		opts.Secrets.Key = ""
+		opts.Git.Enabled = true
+		opts.Git.Path = filepath.Join(tmpDir, ".history")
+		opts.Git.Branch = "master"
+		opts.Git.Remote = ""
+		opts.Git.URL = bare
+		opts.Server.ShutdownTimeout = 5 * time.Second
+		t.Cleanup(func() { opts.Git.Enabled, opts.Git.URL = false, "" })
+		return bare
+	}
+	remoteValues := func(t *testing.T, bare string) map[string]git.KeyValue {
+		t.Helper()
+		gs, err := git.New(git.Config{Path: filepath.Join(t.TempDir(), "check"), URL: bare})
+		require.NoError(t, err)
+		all, err := gs.ReadAll()
+		require.NoError(t, err)
+		return all
+	}
+	put := func(t *testing.T, addr, key, value string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, "http://"+addr+"/kv/"+key, strings.NewReader(value))
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+	}
+
+	t.Run("key written after startup reaches the remote", func(t *testing.T) {
+		bare := setup(t)
+		addr := "127.0.0.1:18495"
+		require.NoError(t, runServerBriefly(t, addr, func() {
+			put(t, addr, "app/new", "v1")
+			require.Eventually(t, func() bool { _, ok := remoteValues(t, bare)["app/new"]; return ok },
+				5*time.Second, 50*time.Millisecond)
+		}))
+	})
+
+	t.Run("write right before shutdown is pushed before exit", func(t *testing.T) {
+		bare := setup(t)
+		addr := "127.0.0.1:18496"
+		require.NoError(t, runServerBriefly(t, addr, func() { put(t, addr, "app/last", "v2") }))
+		assert.Equal(t, []byte("v2"), remoteValues(t, bare)["app/last"].Value)
+	})
+
+	t.Run("unreachable remote with a local copy still starts", func(t *testing.T) {
+		bare := setup(t)
+		require.NoError(t, runServerBriefly(t, "127.0.0.1:18497", nil))
+		require.NoError(t, os.RemoveAll(bare))
+		require.NoError(t, runServerBriefly(t, "127.0.0.1:18497", nil))
+	})
+
+	t.Run("occupied port returns an error", func(t *testing.T) {
+		setup(t)
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer l.Close()
+		require.Error(t, runServerBriefly(t, l.Addr().String(), nil))
+	})
+}
+
+func TestRunServer_GitURLRefusesUnreadableSecret(t *testing.T) {
+	bare := newBareRemote(t, nil)
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+	crypto, err := store.NewCrypto([]byte("master-key-0123456789"))
+	require.NoError(t, err)
+	db, err := store.New(dbPath, store.WithEncryptor(crypto))
+	require.NoError(t, err)
+	_, err = db.Set(t.Context(), "app/secrets/db", []byte("pw"), "text")
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	opts.DB = dbPath
+	opts.Secrets.Key = ""
+	opts.Git.Enabled = true
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+	opts.Git.Remote = ""
+	opts.Git.URL = bare
+	defer func() { opts.Git.Enabled, opts.Git.URL = false, "" }()
+
+	err = runServerBriefly(t, "127.0.0.1:18493", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "app/secrets/db")
+	assert.Contains(t, err.Error(), "--secrets.key")
+
+	opts.Git.URL = ""
+	opts.Git.Path = filepath.Join(tmpDir, ".history-local")
+	require.NoError(t, runServerBriefly(t, "127.0.0.1:18494", nil))
 }

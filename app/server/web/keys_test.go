@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -644,6 +645,101 @@ func TestHandler_HandleKeyDelete(t *testing.T) {
 	})
 }
 
+func TestHandler_WritesRecordInGit(t *testing.T) {
+	auth := &mocks.AuthProviderMock{
+		EnabledFunc:             func() bool { return false },
+		GetSessionUserFunc:      func(_ context.Context, token string) (string, bool) { return "", false },
+		FilterUserKeysFunc:      func(username string, keys []string) []string { return keys },
+		CheckUserPermissionFunc: func(username, key string, write bool) bool { return true },
+		UserCanWriteFunc:        func(username string) bool { return true },
+	}
+	newStore := func(dbErr error) *mocks.KVStoreMock {
+		return &mocks.KVStoreMock{
+			ListFunc:           func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
+			SecretsEnabledFunc: func() bool { return false },
+			GetWithFormatFunc:  func(context.Context, string) ([]byte, string, error) { return nil, "", store.ErrNotFound },
+			SetFunc:            func(context.Context, string, []byte, string) (bool, error) { return true, dbErr },
+			SetWithVersionFunc: func(context.Context, string, []byte, string, time.Time) error { return dbErr },
+			DeleteFunc:         func(context.Context, string) error { return dbErr },
+		}
+	}
+	form := func(method, target string, values url.Values) *http.Request {
+		req := httptest.NewRequest(method, target, strings.NewReader(values.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return req
+	}
+
+	tests := []struct {
+		name   string
+		call   func(h *Handler, rec *httptest.ResponseRecorder)
+		wantOp string
+	}{
+		{name: "create", wantOp: "set", call: func(h *Handler, rec *httptest.ResponseRecorder) {
+			h.handleKeyCreate(rec, form(http.MethodPost, "/web/keys", url.Values{"key": {"k1"}, "value": {"v"}, "format": {"text"}}))
+		}},
+		{name: "update", wantOp: "set", call: func(h *Handler, rec *httptest.ResponseRecorder) {
+			req := form(http.MethodPut, "/web/keys/k1", url.Values{"value": {"v"}, "format": {"text"}})
+			req.SetPathValue("key", "k1")
+			h.handleKeyUpdate(rec, req)
+		}},
+		{name: "delete", wantOp: "delete", call: func(h *Handler, rec *httptest.ResponseRecorder) {
+			req := httptest.NewRequest(http.MethodDelete, "/web/keys/k1", http.NoBody)
+			req.SetPathValue("key", "k1")
+			h.handleKeyDelete(rec, req)
+		}},
+		{name: "restore", wantOp: "restore", call: func(h *Handler, rec *httptest.ResponseRecorder) {
+			req := form(http.MethodPost, "/web/keys/restore/k1", url.Values{"rev": {"abc1234"}})
+			req.SetPathValue("key", "k1")
+			h.handleKeyRestore(rec, req)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gitSvc, reqs := recordingGit()
+			gitSvc.GetRevisionFunc = func(key, rev string) ([]byte, string, error) { return []byte("v"), "text", nil }
+			h, err := New(Deps{Store: newStore(nil), Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
+			require.NoError(t, err)
+
+			rec := httptest.NewRecorder()
+			tc.call(h, rec)
+			assert.Equal(t, http.StatusOK, rec.Code)
+			require.Len(t, *reqs, 1)
+			assert.Equal(t, "k1", (*reqs)[0].Key)
+			assert.Equal(t, tc.wantOp, (*reqs)[0].Operation)
+		})
+
+		t.Run(tc.name+" db error records nothing", func(t *testing.T) {
+			gitSvc, reqs := recordingGit()
+			gitSvc.GetRevisionFunc = func(key, rev string) ([]byte, string, error) { return []byte("v"), "text", nil }
+			h, err := New(Deps{Store: newStore(errors.New("db error")), Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
+			require.NoError(t, err)
+
+			rec := httptest.NewRecorder()
+			tc.call(h, rec)
+			assert.Equal(t, http.StatusInternalServerError, rec.Code)
+			assert.Empty(t, *reqs)
+		})
+	}
+
+	t.Run("update conflict still renders conflict form", func(t *testing.T) {
+		gitSvc, reqs := recordingGit()
+		st := newStore(nil)
+		st.SetWithVersionFunc = func(context.Context, string, []byte, string, time.Time) error {
+			return &store.ConflictError{Info: store.ConflictInfo{CurrentValue: []byte("server value"), CurrentFormat: "text"}}
+		}
+		h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock(), Git: gitSvc}, Config{})
+		require.NoError(t, err)
+
+		req := form(http.MethodPut, "/web/keys/k1", url.Values{"value": {"mine"}, "format": {"text"}, "updated_at": {"1"}})
+		req.SetPathValue("key", "k1")
+		rec := httptest.NewRecorder()
+		h.handleKeyUpdate(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Conflict detected")
+		assert.Empty(t, *reqs)
+	})
+}
+
 func TestHandler_HandleKeyUpdate_ConflictDetection(t *testing.T) {
 	originalTime := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
 	modifiedTime := time.Date(2024, 1, 1, 12, 5, 0, 0, time.UTC) // 5 minutes later
@@ -842,7 +938,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 	t.Run("returns 400 when rev missing", func(t *testing.T) {
 		gitSvc := &mocks.GitServiceMock{
 			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return nil, "", nil },
-			CommitFunc:      func(req git.CommitRequest) error { return nil },
+			RecordFunc:      recordThrough,
 		}
 		h := newTestHandlerWithGit(t, gitSvc)
 		req := httptest.NewRequest(http.MethodPost, "/web/keys/restore/test-key", http.NoBody)
@@ -855,7 +951,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 	t.Run("returns 403 when user lacks write permission", func(t *testing.T) {
 		gitSvc := &mocks.GitServiceMock{
 			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
-			CommitFunc:      func(req git.CommitRequest) error { return nil },
+			RecordFunc:      recordThrough,
 		}
 		st := &mocks.KVStoreMock{
 			ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
@@ -883,7 +979,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 	t.Run("returns 500 when store set fails", func(t *testing.T) {
 		gitSvc := &mocks.GitServiceMock{
 			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
-			CommitFunc:      func(req git.CommitRequest) error { return nil },
+			RecordFunc:      recordThrough,
 		}
 		st := &mocks.KVStoreMock{
 			ListFunc:          func(context.Context, enum.SecretsFilter) ([]store.KeyInfo, error) { return nil, nil },
@@ -913,7 +1009,7 @@ func TestHandler_HandleKeyRestore(t *testing.T) {
 	t.Run("returns 404 when revision not found", func(t *testing.T) {
 		gitSvc := &mocks.GitServiceMock{
 			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return nil, "", errors.New("not found") },
-			CommitFunc:      func(req git.CommitRequest) error { return nil },
+			RecordFunc:      recordThrough,
 		}
 		h := newTestHandlerWithGit(t, gitSvc)
 
@@ -1021,6 +1117,7 @@ func TestHandler_SecretsNotConfigured(t *testing.T) {
 	t.Run("handleKeyRestore", func(t *testing.T) {
 		gitSvc := &mocks.GitServiceMock{
 			GetRevisionFunc: func(key, rev string) ([]byte, string, error) { return []byte("value"), "text", nil },
+			RecordFunc:      recordThrough,
 		}
 		st := &mocks.KVStoreMock{
 			SetFunc: func(context.Context, string, []byte, string) (bool, error) {

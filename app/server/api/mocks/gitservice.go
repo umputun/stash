@@ -15,17 +15,14 @@ import (
 //
 //		// make and configure a mocked api.GitService
 //		mockedGitService := &GitServiceMock{
-//			CommitFunc: func(req git.CommitRequest) error {
-//				panic("mock out the Commit method")
-//			},
-//			DeleteFunc: func(key string, author git.Author) error {
-//				panic("mock out the Delete method")
-//			},
 //			GetRevisionFunc: func(key string, rev string) ([]byte, string, error) {
 //				panic("mock out the GetRevision method")
 //			},
 //			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) {
 //				panic("mock out the History method")
+//			},
+//			RecordFunc: func(write func() (git.CommitRequest, error)) error {
+//				panic("mock out the Record method")
 //			},
 //		}
 //
@@ -34,32 +31,17 @@ import (
 //
 //	}
 type GitServiceMock struct {
-	// CommitFunc mocks the Commit method.
-	CommitFunc func(req git.CommitRequest) error
-
-	// DeleteFunc mocks the Delete method.
-	DeleteFunc func(key string, author git.Author) error
-
 	// GetRevisionFunc mocks the GetRevision method.
 	GetRevisionFunc func(key string, rev string) ([]byte, string, error)
 
 	// HistoryFunc mocks the History method.
 	HistoryFunc func(key string, limit int) ([]git.HistoryEntry, error)
 
+	// RecordFunc mocks the Record method.
+	RecordFunc func(write func() (git.CommitRequest, error)) error
+
 	// calls tracks calls to the methods.
 	calls struct {
-		// Commit holds details about calls to the Commit method.
-		Commit []struct {
-			// Req is the req argument value.
-			Req git.CommitRequest
-		}
-		// Delete holds details about calls to the Delete method.
-		Delete []struct {
-			// Key is the key argument value.
-			Key string
-			// Author is the author argument value.
-			Author git.Author
-		}
 		// GetRevision holds details about calls to the GetRevision method.
 		GetRevision []struct {
 			// Key is the key argument value.
@@ -74,79 +56,15 @@ type GitServiceMock struct {
 			// Limit is the limit argument value.
 			Limit int
 		}
+		// Record holds details about calls to the Record method.
+		Record []struct {
+			// Write is the write argument value.
+			Write func() (git.CommitRequest, error)
+		}
 	}
-	lockCommit      sync.RWMutex
-	lockDelete      sync.RWMutex
 	lockGetRevision sync.RWMutex
 	lockHistory     sync.RWMutex
-}
-
-// Commit calls CommitFunc.
-func (mock *GitServiceMock) Commit(req git.CommitRequest) error {
-	if mock.CommitFunc == nil {
-		panic("GitServiceMock.CommitFunc: method is nil but GitService.Commit was just called")
-	}
-	callInfo := struct {
-		Req git.CommitRequest
-	}{
-		Req: req,
-	}
-	mock.lockCommit.Lock()
-	mock.calls.Commit = append(mock.calls.Commit, callInfo)
-	mock.lockCommit.Unlock()
-	return mock.CommitFunc(req)
-}
-
-// CommitCalls gets all the calls that were made to Commit.
-// Check the length with:
-//
-//	len(mockedGitService.CommitCalls())
-func (mock *GitServiceMock) CommitCalls() []struct {
-	Req git.CommitRequest
-} {
-	var calls []struct {
-		Req git.CommitRequest
-	}
-	mock.lockCommit.RLock()
-	calls = mock.calls.Commit
-	mock.lockCommit.RUnlock()
-	return calls
-}
-
-// Delete calls DeleteFunc.
-func (mock *GitServiceMock) Delete(key string, author git.Author) error {
-	if mock.DeleteFunc == nil {
-		panic("GitServiceMock.DeleteFunc: method is nil but GitService.Delete was just called")
-	}
-	callInfo := struct {
-		Key    string
-		Author git.Author
-	}{
-		Key:    key,
-		Author: author,
-	}
-	mock.lockDelete.Lock()
-	mock.calls.Delete = append(mock.calls.Delete, callInfo)
-	mock.lockDelete.Unlock()
-	return mock.DeleteFunc(key, author)
-}
-
-// DeleteCalls gets all the calls that were made to Delete.
-// Check the length with:
-//
-//	len(mockedGitService.DeleteCalls())
-func (mock *GitServiceMock) DeleteCalls() []struct {
-	Key    string
-	Author git.Author
-} {
-	var calls []struct {
-		Key    string
-		Author git.Author
-	}
-	mock.lockDelete.RLock()
-	calls = mock.calls.Delete
-	mock.lockDelete.RUnlock()
-	return calls
+	lockRecord      sync.RWMutex
 }
 
 // GetRevision calls GetRevisionFunc.
@@ -218,5 +136,37 @@ func (mock *GitServiceMock) HistoryCalls() []struct {
 	mock.lockHistory.RLock()
 	calls = mock.calls.History
 	mock.lockHistory.RUnlock()
+	return calls
+}
+
+// Record calls RecordFunc.
+func (mock *GitServiceMock) Record(write func() (git.CommitRequest, error)) error {
+	if mock.RecordFunc == nil {
+		panic("GitServiceMock.RecordFunc: method is nil but GitService.Record was just called")
+	}
+	callInfo := struct {
+		Write func() (git.CommitRequest, error)
+	}{
+		Write: write,
+	}
+	mock.lockRecord.Lock()
+	mock.calls.Record = append(mock.calls.Record, callInfo)
+	mock.lockRecord.Unlock()
+	return mock.RecordFunc(write)
+}
+
+// RecordCalls gets all the calls that were made to Record.
+// Check the length with:
+//
+//	len(mockedGitService.RecordCalls())
+func (mock *GitServiceMock) RecordCalls() []struct {
+	Write func() (git.CommitRequest, error)
+} {
+	var calls []struct {
+		Write func() (git.CommitRequest, error)
+	}
+	mock.lockRecord.RLock()
+	calls = mock.calls.Record
+	mock.lockRecord.RUnlock()
 	return calls
 }

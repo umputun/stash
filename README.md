@@ -139,9 +139,10 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--git.enabled` | `STASH_GIT_ENABLED` | `false` | Enable git versioning |
 | `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
 | `--git.branch` | `STASH_GIT_BRANCH` | `master` | Git branch name |
-| `--git.remote` | `STASH_GIT_REMOTE` | - | Git remote name (for push) |
+| `--git.remote` | `STASH_GIT_REMOTE` | - | Git remote name (for push; `origin` with `--git.url`) |
+| `--git.url` | `STASH_GIT_URL` | - | Git remote URL; the local repository becomes a clone of it |
 | `--git.push` | `STASH_GIT_PUSH` | `false` | Auto-push after commits |
-| `--git.ssh-key` | `STASH_GIT_SSH_KEY` | - | SSH private key path for git push |
+| `--git.ssh-key` | `STASH_GIT_SSH_KEY` | - | SSH private key path for clone, pull and push |
 | `--secrets.key` | `STASH_SECRETS_KEY` | - | Master key for secrets encryption (min 16 chars) |
 | `--audit.enabled` | `STASH_AUDIT_ENABLED` | `false` | Enable audit logging |
 | `--audit.retention` | `STASH_AUDIT_RETENTION` | `2160h` | Audit log retention period (default 90 days) |
@@ -157,6 +158,8 @@ stash restore --rev=abc1234 --db=/path/to/stash.db --git.path=/data/.history
 | `--git.path` | `STASH_GIT_PATH` | `.history` | Git repository path |
 | `--git.branch` | `STASH_GIT_BRANCH` | `master` | Git branch name |
 | `--git.remote` | `STASH_GIT_REMOTE` | - | Git remote name (pulls before restore if set) |
+| `--git.url` | `STASH_GIT_URL` | - | Git remote URL (clones a missing repository, pulls before restore) |
+| `--git.ssh-key` | `STASH_GIT_SSH_KEY` | - | SSH private key path for clone and pull |
 | `--dbg` | `DEBUG` | `false` | Debug mode |
 
 ### Database URLs
@@ -396,6 +399,10 @@ Directory structure example:
 
 Values under [secrets paths](#secrets-vault) are written to the repository encrypted with the same master key as the database, marked with a `$ENC$` prefix. History views, revisions and `restore` decrypt them with `--secrets.key`; without the key, or with the wrong one, they fail rather than return ciphertext.
 
+Each commit message carries a `key:` line, and the history of a key is built from those lines. A change of format alone, with the same value, is recorded as a commit of its own. Commits made by hand without a `key:` line do not appear in any key's history.
+
+Git refuses keys containing control characters or `..`, and keys with an empty, `.` or `.git` directory part (`.git` is matched regardless of case), such as `a//b`, `a/./b` or `.git/x`. A final name such as `.git` stays valid, because the stored file gains the `.val` suffix. Refused keys stay in the database only, and their history view returns an invalid-key error.
+
 ### Remote Sync
 
 Enable auto-push to a remote repository for backup:
@@ -410,9 +417,32 @@ git remote add origin git@github.com:user/config-backup.git
 stash server --git.enabled --git.path=/data/.history --git.remote=origin --git.push
 ```
 
-When remote changes exist (someone else pushed), stash will attempt to pull before pushing. If there's a merge conflict, the local commit is preserved and a warning is logged with manual resolution instructions.
+After each commit stash pulls, then pushes. The pull only fast-forwards: if the local and remote histories diverge, the pull fails and a warning is logged, and the local commits stay unpushed until the repositories are reconciled by hand.
 
 **Note**: For local bare repositories on the same machine, use absolute paths (e.g., `/data/backup.git`). Relative paths like `../backup.git` are not supported by the underlying git library.
+
+### Remote as the History Home
+
+With `--git.url`, the remote repository holds the history and the local repository is a copy that can be lost, for example a container without a volume for `--git.path`:
+
+```bash
+stash server --db=postgres://... --git.enabled --git.path=/tmp/history \
+  --git.url=git@github.com:user/config-history.git --git.ssh-key=/run/secrets/deploy-key
+```
+
+Values live in the database, which must survive restarts: PostgreSQL, or SQLite on a kept volume. A database write succeeds even when the git commit or push fails. Only one stash instance may write to the branch.
+
+When `--git.path` has no repository, stash clones the branch from `--git.url`. An empty remote gets a fresh repository, and the first push creates the branch. A remote that has other branches but not `--git.branch` is refused with an error naming the branch. An existing local repository must have its remote pointing to exactly `--git.url`. On start it is reset to its local branch head, which discards uncommitted changes and keeps commits not yet pushed. If the branch is missing locally, for example after changing `--git.branch`, stash stops and asks to remove the local repository so it is cloned again.
+
+Before serving, stash compares the database with the last local commit and commits the differences, one commit per key, authored by `stash` with the operation `sync`. Keys git cannot hold are skipped with a warning and stay database-only: keys refused by the rules above, keys whose file name is too long for the filesystem, and keys whose files collide, such as `a` (stored as `a.val`) next to `a.val/b`. A stored value that cannot be decrypted, for example a secret written before the secrets key was rotated, is replaced by the database value encrypted with the current key. Older revisions stay encrypted with the key they were written with: a single older revision can be read only with its original key, and a history view that spans the rotation fails with either key. The startup sync reconstructs the current values that git can represent, and they reach the remote after a successful push.
+
+Pushes run at startup, after commits, and every minute while a push is pending. On shutdown, stash drains HTTP requests within `--server.shutdown-timeout`, then waits for the push worker and its final pending push. Each push attempt has its own 10-second timeout, covering the connection, the SSH handshake and the transfer, and writes wait for a push in progress, so during a remote outage writes slow down by up to that much per attempt. Requests that outlast the HTTP drain may not be pushed. A rejected push (the remote branch moved) is logged as an error and never forced.
+
+Some history can be lost. If a local commit fails during operation, push retries cannot recreate it; the next startup sync repairs the current value. Commits that never reached the remote before the local repository was lost are gone: the startup sync restores the current values, but not those intermediate history steps.
+
+A lost database must be restored before starting stash. Started against an empty database, the sync commits the deletion of every key; earlier commits still hold the data, and `stash restore` brings it back. The secrets key must be kept outside the instance: secrets in git are encrypted with it, and stash refuses to start in this mode when the database holds secrets it cannot decrypt.
+
+SSH remotes (`git@host:repo.git` or `ssh://user@host/repo.git`) use `--git.ssh-key` for clone, pull and push; without it, the SSH agent is used. Specify the SSH user in the URL: with `--git.ssh-key` an omitted user defaults to `git`, while agent authentication uses the local username. Host keys are checked against `SSH_KNOWN_HOSTS`, `~/.ssh/known_hosts` or `/etc/ssh/ssh_known_hosts`, so a container needs one of them. Passphrase-protected private key files cannot be loaded with `--git.ssh-key`.
 
 ### Restore from History
 
@@ -427,10 +457,11 @@ stash restore --rev=abc1234 --db=/data/stash.db --git.path=/data/.history
 ```
 
 The restore command:
-1. Pulls from remote if configured
-2. Checks out the specified revision
-3. Clears all keys from the database
-4. Restores all keys from the git repository
+1. Clones the repository from `--git.url` when `--git.path` has none
+2. Pulls from remote if configured
+3. Checks out the specified revision
+4. Clears all keys from the database
+5. Restores all keys from the committed state of that revision
 
 ## Secrets Vault
 

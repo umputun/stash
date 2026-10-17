@@ -45,8 +45,8 @@ Simple key-value configuration service - a minimal alternative to Consul KV or e
   - `crypto.go` - Secrets encryption (NaCl secretbox + Argon2id)
   - `audit.go` - Audit entry storage and queries
 - **app/git/** - Git versioning for key-value storage
-  - `git.go` - Git operations using go-git (commit, push, pull, checkout, readall)
-  - `service.go` - Service wrapper over the Storer interface, used by the server
+  - `git.go` - Git operations using go-git (clone, commit, push, pull, checkout, readall, startup sync)
+  - `service.go` - Service over the Storer interface: `Record` (DB write + commit under one lock), background push worker
 - **app/validator/** - Format validation, parses json, yaml, xml, toml, ini and hcl (text and shell pass through unchecked)
 - **app/enum/** - Generated enum types shared across packages (see Enum Types below)
 - **lib/** - Client SDKs: `stash` (Go), `stash-python`, `stash-js`, `stash-java`, `stash-rust`
@@ -234,6 +234,11 @@ POST   /logout                   # clear session, redirect to login
 - Query placeholders: SQLite uses `?`, PostgreSQL uses `$1, $2, ...` (adoptQuery converts)
 - Git versioning: optional, logs WARN on failures (DB is source of truth)
 - Git storage: path-based with `.val` suffix (app/config → .history/app/config.val)
+- Git writes: handlers call `GitService.Record(fn)`; fn does the DB write and returns the commit request, so DB and git record writes in the same order
+- Git history: commits are matched by the `key:` line in the message (format-only changes are empty commits); `storedKey` maps a key to the identity of its cleaned file path
+- Git keys: `validateKey` prechecks go-git's path rules (control chars, `..`, and empty/`.`/`.git` directory parts rejected; HFS/NTFS look-alikes are left to go-git); such keys stay DB-only
+- Git `--git.url`: clone when missing, reset to local branch head on open, startup `Store.Sync` from the uncached DB, background push via `Service.Run` (10s per attempt; `serve` stops the worker after the HTTP drain, then its final pending push runs); single writer per branch
+- E2E: `waitVisible` also waits for HTMX settle; a click on a just-swapped element before settle sends no request
 - Auth: YAML config file with users (web UI) and tokens (API), both use prefix-based ACL
 - Auth flow: username+password login creates session, session tracks username for permission checks
 - Sessions: stored in database (sessions table), persist across server restarts, background cleanup of expired sessions

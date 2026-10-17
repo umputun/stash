@@ -59,8 +59,7 @@ type KVStore interface {
 
 // GitService defines the interface for git operations.
 type GitService interface {
-	Commit(req git.CommitRequest) error
-	Delete(key string, author git.Author) error
+	Record(write func() (git.CommitRequest, error)) error
 	History(key string, limit int) ([]git.HistoryEntry, error)
 	GetRevision(key string, rev string) ([]byte, string, error)
 }
@@ -158,7 +157,8 @@ func New(deps Deps, cfg Config) (*Server, error) {
 	return s, nil
 }
 
-// Run starts the HTTP server and blocks until context is canceled.
+// Run starts the HTTP server and blocks until context is canceled and in-flight requests
+// finish, bounded by ShutdownTimeout. A listen error is returned right away.
 func (s *Server) Run(ctx context.Context) error {
 	httpServer := &http.Server{
 		Addr:              s.Address,
@@ -168,8 +168,14 @@ func (s *Server) Run(ctx context.Context) error {
 		IdleTimeout:       s.IdleTimeout,
 	}
 
+	// a local context lets a failed listen release the shutdown goroutine
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// graceful shutdown
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		log.Printf("[INFO] shutting down server")
 
@@ -191,7 +197,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 
 	log.Printf("[DEBUG] started server on %s", s.Address)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err := httpServer.ListenAndServe()
+	cancel()
+	<-shutdownDone
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil

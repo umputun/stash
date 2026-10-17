@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/umputun/stash/app/enum"
+	"github.com/umputun/stash/app/git"
 	"github.com/umputun/stash/app/server/web/mocks"
 	"github.com/umputun/stash/app/store"
 )
@@ -560,6 +561,22 @@ func newTestHandlerWithAuth(t *testing.T, auth AuthProvider) *Handler {
 	h, err := New(Deps{Store: st, Auth: auth, Validator: defaultValidatorMock()}, Config{})
 	require.NoError(t, err)
 	return h
+}
+
+func recordThrough(write func() (git.CommitRequest, error)) error {
+	_, err := write()
+	return err
+}
+
+func recordingGit() (*mocks.GitServiceMock, *[]git.CommitRequest) {
+	var reqs []git.CommitRequest
+	return &mocks.GitServiceMock{RecordFunc: func(write func() (git.CommitRequest, error)) error {
+		req, err := write()
+		if err == nil {
+			reqs = append(reqs, req)
+		}
+		return err
+	}}, &reqs
 }
 
 // newTestHandlerWithGit creates a test handler with git service.

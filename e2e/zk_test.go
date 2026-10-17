@@ -59,7 +59,7 @@ func deleteKeyViaAPI(t *testing.T, key string) {
 	req.Header.Set("Authorization", "Bearer "+apiToken)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestZK_ShowsDistinctIcon(t *testing.T) {
