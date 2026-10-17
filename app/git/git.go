@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -71,8 +72,9 @@ type CommitRequest struct {
 type Config struct {
 	Path      string    // local repository path
 	Branch    string    // branch name (default: master)
-	Remote    string    // remote name (optional, for push/pull)
-	SSHKey    string    // path to SSH private key (optional, for push)
+	Remote    string    // remote name (optional, for push/pull; "origin" when URL is set)
+	URL       string    // remote URL (optional); the local repository is cloned from it and kept in step
+	SSHKey    string    // path to SSH private key (optional, for clone, push and pull)
 	Encryptor Encryptor // encrypts secret values in the repository (optional)
 }
 
@@ -110,6 +112,9 @@ func New(cfg Config) (*Store, error) {
 	if cfg.Branch == "" {
 		cfg.Branch = defaultBranch
 	}
+	if cfg.URL != "" && cfg.Remote == "" {
+		cfg.Remote = "origin"
+	}
 
 	s := &Store{cfg: cfg, decrypt: make(chan struct{}, maxConcurrentDecrypt)}
 	if err := s.initRepo(); err != nil {
@@ -124,15 +129,122 @@ func (s *Store) initRepo() error {
 	repo, err := git.PlainOpen(s.cfg.Path)
 	if err == nil {
 		s.repo = repo
+		if s.cfg.URL != "" {
+			return s.openRemoteCopy()
+		}
 		return s.ensureBranch()
 	}
 
-	// create new repo if not exists
-	if errors.Is(err, git.ErrRepositoryNotExists) {
-		return s.createNewRepo()
+	if !errors.Is(err, git.ErrRepositoryNotExists) {
+		return fmt.Errorf("failed to open repo: %w", err)
 	}
+	if s.cfg.URL != "" {
+		return s.cloneRemote()
+	}
+	return s.createNewRepo()
+}
 
-	return fmt.Errorf("failed to open repo: %w", err)
+// cloneRemote clones the configured branch from URL. An empty remote gets a fresh local
+// repository with the remote added, so the first push creates the branch.
+func (s *Store) cloneRemote() error {
+	auth, err := s.auth(s.cfg.URL)
+	if err != nil {
+		return err
+	}
+	repo, err := git.PlainClone(s.cfg.Path, false, &git.CloneOptions{
+		URL: s.cfg.URL, RemoteName: s.cfg.Remote, Auth: auth,
+		ReferenceName: plumbing.NewBranchReferenceName(s.cfg.Branch), SingleBranch: true,
+	})
+	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		if initErr := s.createNewRepo(); initErr != nil {
+			return initErr
+		}
+		return s.ensureRemote()
+	}
+	if err != nil {
+		return fmt.Errorf("failed to clone branch %q from %s: %w", s.cfg.Branch, s.cfg.URL, err)
+	}
+	s.repo = repo
+	return nil
+}
+
+// openRemoteCopy prepares an existing local copy of the remote: the remote must point to URL,
+// and the worktree is forced back to the local branch head. That drops what an interrupted
+// commit left behind and a detached HEAD left by restore, and keeps commits not yet pushed.
+func (s *Store) openRemoteCopy() error {
+	if err := s.ensureRemote(); err != nil {
+		return err
+	}
+	wt, err := s.repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+	branchRef := plumbing.NewBranchReferenceName(s.cfg.Branch)
+	if _, refErr := s.repo.Reference(branchRef, true); refErr != nil {
+		// creating the branch from the local HEAD would graft unrelated history onto it
+		return fmt.Errorf("local repository %s has no branch %q; remove it to clone the branch from %s",
+			s.cfg.Path, s.cfg.Branch, s.cfg.URL)
+	}
+	if err := wt.Checkout(&git.CheckoutOptions{Branch: branchRef, Force: true}); err != nil {
+		return fmt.Errorf("failed to checkout branch %s: %w", s.cfg.Branch, err)
+	}
+	if err := wt.Reset(&git.ResetOptions{Mode: git.HardReset}); err != nil {
+		return fmt.Errorf("failed to reset to branch %s: %w", s.cfg.Branch, err)
+	}
+	return nil
+}
+
+// ensureRemote adds the remote pointing to URL when missing and refuses one pointing elsewhere.
+func (s *Store) ensureRemote() error {
+	rem, err := s.repo.Remote(s.cfg.Remote)
+	if errors.Is(err, git.ErrRemoteNotFound) {
+		if _, addErr := s.repo.CreateRemote(&config.RemoteConfig{Name: s.cfg.Remote, URLs: []string{s.cfg.URL}}); addErr != nil {
+			return fmt.Errorf("failed to add remote %s: %w", s.cfg.Remote, addErr)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to read remote %s: %w", s.cfg.Remote, err)
+	}
+	// go-git fetches from the first url and pushes to the last, so only a single matching url is safe
+	if urls := rem.Config().URLs; len(urls) != 1 || urls[0] != s.cfg.URL {
+		return fmt.Errorf("remote %s points to %v, not %s", s.cfg.Remote, urls, s.cfg.URL)
+	}
+	return nil
+}
+
+// auth returns the SSH key auth for remoteURL, nil without a configured key (go-git then
+// falls back to ssh-agent for SSH remotes).
+func (s *Store) auth(remoteURL string) (transport.AuthMethod, error) {
+	if s.cfg.SSHKey == "" {
+		return nil, nil //nolint:nilnil // no key configured is a valid state
+	}
+	keys, err := ssh.NewPublicKeysFromFile(s.sshUser(remoteURL), s.cfg.SSHKey, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load SSH key: %w", err)
+	}
+	return keys, nil
+}
+
+// sshUser returns the user named in an SSH remote URL, "git" when it names none.
+func (s *Store) sshUser(remoteURL string) string {
+	ep, err := transport.NewEndpoint(remoteURL)
+	if err != nil || ep.User == "" || (ep.Protocol != "ssh" && ep.Protocol != "") {
+		return "git"
+	}
+	return ep.User
+}
+
+// remoteURL returns the URL of the configured remote, empty when it has none.
+func (s *Store) remoteURL() string {
+	if s.cfg.URL != "" {
+		return s.cfg.URL
+	}
+	rem, err := s.repo.Remote(s.cfg.Remote)
+	if err != nil || len(rem.Config().URLs) == 0 {
+		return ""
+	}
+	return rem.Config().URLs[0]
 }
 
 // ensureBranch checks out the configured branch, creating it if necessary
@@ -388,16 +500,12 @@ func (s *Store) Push() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var auth transport.AuthMethod
-	if s.cfg.SSHKey != "" {
-		var err error
-		auth, err = ssh.NewPublicKeysFromFile("git", s.cfg.SSHKey, "")
-		if err != nil {
-			return fmt.Errorf("failed to load SSH key: %w", err)
-		}
+	auth, err := s.auth(s.remoteURL())
+	if err != nil {
+		return err
 	}
 
-	err := s.repo.Push(&git.PushOptions{
+	err = s.repo.Push(&git.PushOptions{
 		RemoteName: s.cfg.Remote,
 		Auth:       auth,
 		RefSpecs: []config.RefSpec{
@@ -431,13 +539,9 @@ func (s *Store) Pull() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var auth transport.AuthMethod
-	if s.cfg.SSHKey != "" {
-		var err error
-		auth, err = ssh.NewPublicKeysFromFile("git", s.cfg.SSHKey, "")
-		if err != nil {
-			return fmt.Errorf("failed to load SSH key: %w", err)
-		}
+	auth, err := s.auth(s.remoteURL())
+	if err != nil {
+		return err
 	}
 
 	wt, err := s.repo.Worktree()
@@ -496,64 +600,65 @@ func (s *Store) Checkout(rev string) error {
 	return nil
 }
 
-// ReadAll reads all key-value pairs from the repository with their formats.
-// Format comes from the newest commit for each key, "text" when that commit has none.
+// ReadAll reads all key-value pairs of the HEAD commit with their formats, so uncommitted
+// worktree changes are ignored. Format comes from the newest commit for each key, "text" when
+// that commit has none.
 func (s *Store) ReadAll() (map[string]KeyValue, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result := make(map[string]KeyValue)
+	stored, err := s.headTree()
+	if err != nil {
+		return nil, err
+	}
 	formats := s.keyFormats()
 
-	walkErr := filepath.Walk(s.cfg.Path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// skip directories and .git folder
-		if info.IsDir() {
-			if info.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// only process .val files; a symlink named like one would make ReadFile follow
-		// it to whatever a checkout points at, so links are not values
-		if !strings.HasSuffix(path, ".val") || info.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
-
-		content, readErr := os.ReadFile(path) //nolint:gosec // regular file under s.cfg.Path, links skipped above
-		if readErr != nil {
-			return fmt.Errorf("failed to read %s: %w", path, readErr)
-		}
-
-		// convert path back to key
-		relPath, relErr := filepath.Rel(s.cfg.Path, path)
-		if relErr != nil {
-			return fmt.Errorf("failed to get relative path: %w", relErr)
-		}
-		key := s.pathToKey(relPath)
-
+	result := make(map[string]KeyValue, len(stored))
+	for key, content := range stored {
 		value, decErr := s.decodeValue(key, content)
 		if decErr != nil {
-			return decErr
+			return nil, decErr
 		}
-
 		format, ok := formats[key]
 		if !ok {
 			format = "text"
 		}
 		result[key] = KeyValue{Value: value, Format: format}
+	}
+	return result, nil
+}
 
-		return nil
-	})
-
-	if walkErr != nil {
-		return nil, fmt.Errorf("failed to walk repository: %w", walkErr)
+// headTree returns the stored value of every key in the HEAD commit, as written to the
+// repository. Symlinks and files without the .val suffix are not values.
+func (s *Store) headTree() (map[string][]byte, error) {
+	ref, err := s.repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	commit, err := s.repo.CommitObject(ref.Hash())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD commit: %w", err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD tree: %w", err)
 	}
 
+	result := map[string][]byte{}
+	err = tree.Files().ForEach(func(f *object.File) error {
+		if !strings.HasSuffix(f.Name, ".val") || f.Mode == filemode.Symlink {
+			return nil
+		}
+		content, readErr := f.Contents()
+		if readErr != nil {
+			return fmt.Errorf("failed to read %s: %w", f.Name, readErr)
+		}
+		result[s.pathToKey(f.Name)] = []byte(content)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read HEAD tree: %w", err)
+	}
 	return result, nil
 }
 

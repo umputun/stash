@@ -253,15 +253,17 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - Modify: `app/git/git.go`, `app/git/git_test.go`
 - Modify: `app/main.go`, `app/main_test.go`
 
-- [ ] write failing tests against a local bare remote: missing path clones; empty remote initializes and adds the remote; non-empty remote without the branch errors naming the branch; existing repo with matching remote opens; different remote URL errors; dirty worktree after a simulated interrupted commit is reset while unpushed commits stay; detached HEAD after restore is back on the branch
-- [ ] add `Config.URL`, url-mode branch in `initRepo`
-- [ ] write failing tests for SSH user selection: scp-style, `ssh://` with and without a user
-- [ ] `(s *Store) auth()` takes the user from the URL (falls back to `git`), used by clone, push and pull
-- [ ] write failing tests for ReadAll: uncommitted worktree changes are ignored, symlinks and non-`.val` entries skipped
-- [ ] `(s *Store) headTree()` and ReadAll on top of it; restore tests still pass unchanged
-- [ ] write failing tests: `stash server` with `--git.url` and without `--git.enabled` fails; `stash restore --git.url` with a missing path clones, then restores
-- [ ] add `--git.url` flag, the server-only validation, and the `origin` default written to `opts.Git.Remote` after flag parsing
-- [ ] run tests - must pass before next task
+- [x] write failing tests against a local bare remote: missing path clones; empty remote initializes and adds the remote; non-empty remote without the branch errors naming the branch; existing repo with matching remote opens; different remote URL errors; dirty worktree after a simulated interrupted commit is reset while unpushed commits stay; detached HEAD after restore is back on the branch
+- [x] add `Config.URL`, url-mode branch in `initRepo`
+- [x] write failing tests for SSH user selection: scp-style, `ssh://` with and without a user
+- [x] `(s *Store) auth()` takes the user from the URL (falls back to `git`), used by clone, push and pull
+- [x] write failing tests for ReadAll: uncommitted worktree changes are ignored, symlinks and non-`.val` entries skipped
+- [x] `(s *Store) headTree()` and ReadAll on top of it; restore tests still pass unchanged
+- [x] write failing tests: `stash server` with `--git.url` and without `--git.enabled` fails; `stash restore --git.url` with a missing path clones, then restores
+- [x] add `--git.url` flag, the server-only validation, and the `origin` default (see note)
+- [x] run tests - must pass before next task
+- ➕ the `origin` default lives in `git.New` (remote name defaults when URL is set) and `runRestore` pulls when `--git.remote` or `--git.url` is set, instead of rewriting `opts.Git.Remote` after parsing; same behavior without mutating parsed options
+- ➕ the existing "damaged payload" secrets test now commits the damaged file: ReadAll reads HEAD, so an uncommitted edit is no longer a stored value
 
 ### Task 6: Startup sync from the database
 

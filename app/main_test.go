@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	gitconfig "github.com/go-git/go-git/v5/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -2695,4 +2697,65 @@ func TestIntegration_SSE_AuthDenied(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not shut down in time")
 	}
+}
+
+func newBareRemote(t *testing.T, kv map[string]string) string {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), "remote.git")
+	_, err := gogit.PlainInit(bare, true)
+	require.NoError(t, err)
+
+	seedPath := filepath.Join(t.TempDir(), "seed")
+	seed, err := git.New(git.Config{Path: seedPath, Remote: "origin"})
+	require.NoError(t, err)
+	seedRepo, err := gogit.PlainOpen(seedPath)
+	require.NoError(t, err)
+	_, err = seedRepo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{bare}})
+	require.NoError(t, err)
+	for k, v := range kv {
+		require.NoError(t, seed.Commit(git.CommitRequest{Key: k, Value: []byte(v), Operation: "set", Author: git.DefaultAuthor()}))
+	}
+	require.NoError(t, seed.Push())
+	return bare
+}
+
+func TestRun_GitURLRequiresGitEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	opts.DB = filepath.Join(tmpDir, "test.db")
+	opts.Server.Address = "127.0.0.1:18491"
+	opts.Auth.File = ""
+	opts.Git.Enabled = false
+	opts.Git.URL = "/some/remote.git"
+	defer func() { opts.Git.URL = "" }()
+
+	err := runServer(t.Context())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--git.url requires --git.enabled")
+}
+
+func TestRunRestore_FromGitURL(t *testing.T) {
+	bare := newBareRemote(t, map[string]string{"app/key1": "value1", "app/key2": "value2"})
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	opts.DB = dbPath
+	opts.Git.Enabled = false
+	opts.Git.Path = filepath.Join(tmpDir, ".history")
+	opts.Git.Branch = "master"
+	opts.Git.Remote = ""
+	opts.Git.URL = bare
+	opts.RestoreCmd.Rev = "master"
+	defer func() { opts.Git.URL = "" }()
+
+	require.NoError(t, runRestore(t.Context()))
+
+	kvStore, err := store.New(dbPath)
+	require.NoError(t, err)
+	defer kvStore.Close()
+	val, err := kvStore.Get(t.Context(), "app/key1")
+	require.NoError(t, err)
+	assert.Equal(t, "value1", string(val))
+	val, err = kvStore.Get(t.Context(), "app/key2")
+	require.NoError(t, err)
+	assert.Equal(t, "value2", string(val))
 }

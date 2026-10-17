@@ -31,6 +31,7 @@ var opts struct {
 		Path    string `long:"path" env:"PATH" default:".history" description:"git repository path"`
 		Branch  string `long:"branch" env:"BRANCH" default:"master" description:"git branch"`
 		Remote  string `long:"remote" env:"REMOTE" description:"git remote name (optional)"`
+		URL     string `long:"url" env:"URL" description:"git remote URL; the local repository becomes a clone of it"`
 		Push    bool   `long:"push" env:"PUSH" description:"auto-push after commits"`
 		SSHKey  string `long:"ssh-key" env:"SSH_KEY" description:"SSH private key path for git push"`
 	} `group:"git" namespace:"git" env-namespace:"STASH_GIT"`
@@ -136,6 +137,9 @@ func main() {
 }
 
 func runServer(ctx context.Context) error {
+	if opts.Git.URL != "" && !opts.Git.Enabled {
+		return errors.New("--git.url requires --git.enabled")
+	}
 	baseURL, err := validateBaseURL(opts.Server.BaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid base URL: %w", err)
@@ -256,9 +260,9 @@ func runRestore(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize git store: %w", err)
 	}
 
-	// pull from remote if configured
-	if opts.Git.Remote != "" {
-		log.Printf("[INFO] pulling from remote %s", opts.Git.Remote)
+	// pull from remote if configured; with --git.url the store names the remote origin by default
+	if opts.Git.Remote != "" || opts.Git.URL != "" {
+		log.Printf("[INFO] pulling from remote")
 		if pullErr := gitStore.Pull(); pullErr != nil {
 			log.Printf("[WARN] pull failed: %v", pullErr)
 		}
@@ -467,6 +471,7 @@ func gitConfig(encryptor *store.Crypto) git.Config {
 		Path:   opts.Git.Path,
 		Branch: opts.Git.Branch,
 		Remote: opts.Git.Remote,
+		URL:    opts.Git.URL,
 		SSHKey: opts.Git.SSHKey,
 	}
 	if encryptor != nil {
