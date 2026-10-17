@@ -299,17 +299,20 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - ➕ `Push` is `PushContext(context.Background())`, so legacy keeps no deadline; the final push on shutdown runs only when a push is pending; worker wiring lives in `serve` in `main.go` (worker context derived with `context.WithoutCancel`); the shutdown integration test writes right before cancelling rather than mid-request, and the in-flight ordering itself is pinned by the `Server.Run` drain test; `service.go` logs through lgr like the rest of the package
 
 ### Task 8: Verify acceptance criteria
-- [ ] verify all requirements from Overview are implemented
-- [ ] verify backward compatibility: no `--git.url` behaves as before (existing tests unchanged in intent), repos written before this change read the same history and formats
-- [ ] run full test suite: `make test`
-- [ ] run e2e tests: `make e2e`
-- [ ] verify test coverage meets project standard (80%)
+- [x] verify all requirements from Overview are implemented
+- [x] verify backward compatibility: no `--git.url` behaves as before (existing tests unchanged in intent), repos written before this change read the same history and formats
+- [x] run full test suite: `make test`
+- [x] run e2e tests: `make e2e`
+- [x] verify test coverage meets project standard (80%)
+- ➕ e2e failed on a random test in every run, master included: test helpers clicked rows swapped in by HTMX before they were wired at settle (traced in the browser). Fixed in the e2e helpers (`waitVisible` waits for settle, two secrets clicks wait first), plus six lint issues that only show under the `e2e` build tag; 47/47 in four runs after the fix
+- ➕ coverage: git 87%, server 86.9%, api 93%, web 87.6%; `app` (main) is 71.5% because `main()` and the audit cleanup functions are untested, while every function this branch added there is at 80% or more
+- ➕ backward-compatible changes without `--git.url`, all bug fixes: unchanged re-saves no longer log a failed commit, format-only changes are recorded, git refuses unsafe keys before writing, DB and git record writes in the same order, restore reads committed values, `--git.push` pull+push runs after the write lock, SSH user taken from the remote URL, server waits for in-flight requests on shutdown
 
 ### Task 9: [Final] Update documentation
-- [ ] README.md: `--git.url` flag row, "Remote Sync" section rewritten with the contract from Solution Overview; fix the "manual resolution instructions" sentence, which the code never produced
-- [ ] README: SSH remote setup (key, ssh-agent fallback, known_hosts requirement in containers), the branch requirement for a non-empty remote, and that hand edits on the remote without a `key:` line do not show in History
-- [ ] site/ docs mirror of the README git section, if present
-- [ ] CLAUDE.md: git storage notes (format-only empty commits and key-line history selection, Record lock, url mode)
+- [x] README.md: `--git.url` flag row, "Remote Sync" section rewritten with the contract from Solution Overview; fix the "manual resolution instructions" sentence, which the code never produced
+- [x] README: SSH remote setup (key, ssh-agent fallback, known_hosts requirement in containers), the branch requirement for a non-empty remote, and that hand edits on the remote without a `key:` line do not show in History
+- [x] site/ docs mirror of the README git section, if present (site/ holds no markdown copy of the README sections; nothing to mirror)
+- [x] CLAUDE.md: git storage notes (format-only empty commits and key-line history selection, Record lock, url mode)
 - [ ] move this plan to `docs/plans/completed/`
 
 ## Post-Completion
