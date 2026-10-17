@@ -506,6 +506,13 @@ func (s *Store) deleteLocked(key string, author Author) error {
 	if rmErr := root.Remove(filePath); rmErr != nil {
 		return fmt.Errorf("failed to remove file: %w", rmErr)
 	}
+	// go-git leaves emptied directories behind, and an empty a.val/ blocks a later key a;
+	// the walk stops at the first directory that is not empty
+	for dir := filepath.Dir(filePath); dir != "."; dir = filepath.Dir(dir) {
+		if root.Remove(dir) != nil {
+			break
+		}
+	}
 
 	// stage deletion
 	wt, err := s.repo.Worktree()

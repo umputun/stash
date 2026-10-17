@@ -128,6 +128,31 @@ func TestStore_Commit(t *testing.T) {
 }
 
 func TestStore_Delete(t *testing.T) {
+	t.Run("removes directories the delete leaves empty", func(t *testing.T) {
+		// an empty a.val/ left behind by deleting a.val/b kept key a from ever being written
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		author := DefaultAuthor()
+		require.NoError(t, st.Commit(CommitRequest{Key: "a.val/b", Value: []byte("1"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "x/y/z", Value: []byte("2"), Operation: "set", Author: author}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "x/keep", Value: []byte("3"), Operation: "set", Author: author}))
+
+		require.NoError(t, st.Delete("a.val/b", author))
+		require.NoError(t, st.Delete("x/y/z", author))
+		_, statErr := os.Stat(filepath.Join(path, "a.val"))
+		assert.True(t, os.IsNotExist(statErr))
+		_, statErr = os.Stat(filepath.Join(path, "x", "y"))
+		assert.True(t, os.IsNotExist(statErr))
+		_, statErr = os.Stat(filepath.Join(path, "x", "keep.val"))
+		require.NoError(t, statErr)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("4"), Operation: "set", Author: author}))
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"a": {Value: []byte("4"), Format: "text"}, "x/keep": {Value: []byte("3"), Format: "text"}}, all)
+	})
+
 	t.Run("deletes existing key", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
