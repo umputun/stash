@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -456,6 +457,85 @@ func TestServer_CrossOriginProtection(t *testing.T) {
 			assert.NotEqual(t, http.StatusForbidden, rec.Code, "should not be rejected as cross-origin")
 		})
 	}
+}
+
+func TestServer_Run(t *testing.T) {
+	freeAddr := func(t *testing.T) string {
+		t.Helper()
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		addr := l.Addr().String()
+		require.NoError(t, l.Close())
+		return addr
+	}
+
+	t.Run("returns only after an in-flight request finishes", func(t *testing.T) {
+		entered, release := make(chan struct{}), make(chan struct{})
+		st := &mocks.KVStoreMock{
+			SetFunc: func(context.Context, string, []byte, string) (bool, error) {
+				close(entered)
+				<-release
+				return true, nil
+			},
+		}
+		addr := freeAddr(t)
+		srv, err := New(Deps{Store: st, Validator: validator.NewService()},
+			Config{Address: addr, ReadTimeout: 5 * time.Second, ShutdownTimeout: 10 * time.Second, Version: "test"})
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		runDone := make(chan error, 1)
+		go func() { runDone <- srv.Run(ctx) }()
+		require.Eventually(t, func() bool {
+			resp, getErr := http.Get("http://" + addr + "/ping")
+			if getErr != nil {
+				return false
+			}
+			_ = resp.Body.Close()
+			return true
+		}, 2*time.Second, 10*time.Millisecond)
+
+		reqDone := make(chan int, 1)
+		go func() {
+			req, _ := http.NewRequest(http.MethodPut, "http://"+addr+"/kv/k", strings.NewReader("v"))
+			resp, reqErr := http.DefaultClient.Do(req)
+			if reqErr != nil {
+				reqDone <- 0
+				return
+			}
+			_ = resp.Body.Close()
+			reqDone <- resp.StatusCode
+		}()
+		<-entered
+		cancel()
+
+		select {
+		case runErr := <-runDone:
+			t.Fatalf("run returned while a request was still in flight: %v", runErr)
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(release)
+		require.NoError(t, <-runDone)
+		assert.Equal(t, http.StatusCreated, <-reqDone)
+	})
+
+	t.Run("returns the bind error promptly", func(t *testing.T) {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer l.Close()
+		srv, err := New(Deps{Store: &mocks.KVStoreMock{}, Validator: validator.NewService()},
+			Config{Address: l.Addr().String(), ReadTimeout: 5 * time.Second, ShutdownTimeout: 10 * time.Second, Version: "test"})
+		require.NoError(t, err)
+
+		runDone := make(chan error, 1)
+		go func() { runDone <- srv.Run(t.Context()) }()
+		select {
+		case err := <-runDone:
+			require.Error(t, err)
+		case <-time.After(2 * time.Second):
+			t.Fatal("run did not return the bind error")
+		}
+	})
 }
 
 func newTestServer(t *testing.T, st KVStore) *Server {

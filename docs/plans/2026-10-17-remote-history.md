@@ -287,15 +287,16 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - Modify: `app/server/server.go`, `app/server/server_test.go`
 - Modify: `app/main.go`, `app/main_test.go`
 
-- [ ] write failing tests for `Store.PushContext`: pushes to the bare remote; respects a cancelled context
-- [ ] add `Store.PushContext` and the `Storer` method; regenerate `app/git/mocks`
-- [ ] write failing tests: `Run` makes an initial push at start; startup push fails with zero later writes, the next tick succeeds and the remote catches up; async mode pushes after a commit without inline pull; an idle tick with nothing pending does not push; non-fast-forward rejection is logged as an error and not forced; legacy `PushSync` keeps inline pull+push; `PushSync` with `PushInterval` set stays async; `Run` with zero interval returns at once; cancelling ctx makes one final push and `Run` returns only after it
-- [ ] `ServiceOpts`, signal channel, pending tracking, `Service.Run(ctx)` with the initial attempt, the 10s push timeout and the final push, `(s *Service) isRejected`; legacy push path unchanged
-- [ ] write failing tests for `Server.Run`: it returns only after an in-flight request finishes (bounded by `ShutdownTimeout`); with the port already taken it returns the bind error promptly
-- [ ] `Server.Run` uses a local cancellable context and waits for its shutdown goroutine before returning
-- [ ] `runServer` url mode: start `Run` with a worker context; on every return from `Server.Run`, including the bind error, cancel it and wait for `Run` to return; test the occupied-port path in `main_test.go`
-- [ ] integration tests in `main_test.go`: populated DB and stale remote, remote head matches DB after startup; unreachable remote with an existing local repo, server still starts; a key written through the API after startup reaches the bare remote; a write in flight at shutdown is committed and pushed before the process exits
-- [ ] run tests - must pass before next task
+- [x] write failing tests for `Store.PushContext`: pushes to the bare remote; respects a cancelled context
+- [x] add `Store.PushContext` and the `Storer` method; regenerate `app/git/mocks`
+- [x] write failing tests: `Run` makes an initial push at start; startup push fails with zero later writes, the next tick succeeds and the remote catches up; async mode pushes after a commit without inline pull; an idle tick with nothing pending does not push; non-fast-forward rejection is logged as an error and not forced; legacy `PushSync` keeps inline pull+push; `PushSync` with `PushInterval` set stays async; `Run` with zero interval returns at once; cancelling ctx makes one final push and `Run` returns only after it
+- [x] `ServiceOpts`, signal channel, pending tracking, `Service.Run(ctx)` with the initial attempt, the 10s push timeout and the final push, `(s *Service) isRejected`; legacy push path unchanged
+- [x] write failing tests for `Server.Run`: it returns only after an in-flight request finishes (bounded by `ShutdownTimeout`); with the port already taken it returns the bind error promptly
+- [x] `Server.Run` uses a local cancellable context and waits for its shutdown goroutine before returning
+- [x] `runServer` url mode: start `Run` with a worker context; on every return from `Server.Run`, including the bind error, cancel it and wait for `Run` to return; test the occupied-port path in `main_test.go`
+- [x] integration tests in `main_test.go`: populated DB and stale remote, remote head matches DB after startup; unreachable remote with an existing local repo, server still starts; a key written through the API after startup reaches the bare remote; a write in flight at shutdown is committed and pushed before the process exits
+- [x] run tests - must pass before next task
+- ➕ `Push` is `PushContext(context.Background())`, so legacy keeps no deadline; the final push on shutdown runs only when a push is pending; worker wiring lives in `serve` in `main.go` (worker context derived with `context.WithoutCancel`); the shutdown integration test writes right before cancelling rather than mid-request, and the in-flight ordering itself is pinned by the `Server.Run` drain test; `service.go` logs through lgr like the rest of the package
 
 ### Task 8: Verify acceptance criteria
 - [ ] verify all requirements from Overview are implemented

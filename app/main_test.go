@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2760,7 +2761,7 @@ func TestRunRestore_FromGitURL(t *testing.T) {
 	assert.Equal(t, "value2", string(val))
 }
 
-func runServerBriefly(t *testing.T, addr string) error {
+func runServerBriefly(t *testing.T, addr string, whileUp func()) error {
 	t.Helper()
 	opts.Server.Address = addr
 	opts.Server.ReadTimeout = 5 * time.Second
@@ -2781,6 +2782,9 @@ func runServerBriefly(t *testing.T, addr string) error {
 			_ = resp.Body.Close()
 			break
 		}
+	}
+	if whileUp != nil {
+		whileUp()
 	}
 	cancel()
 	select {
@@ -2813,7 +2817,7 @@ func TestRunServer_GitURLSyncsFromDatabase(t *testing.T) {
 	opts.Git.URL = bare
 	defer func() { opts.Git.Enabled, opts.Git.URL = false, "" }()
 
-	require.NoError(t, runServerBriefly(t, "127.0.0.1:18492"))
+	require.NoError(t, runServerBriefly(t, "127.0.0.1:18492", nil))
 
 	gs, err := git.New(git.Config{Path: opts.Git.Path, URL: bare})
 	require.NoError(t, err)
@@ -2821,6 +2825,79 @@ func TestRunServer_GitURLSyncsFromDatabase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]git.KeyValue{"app/a": {Value: []byte("new"), Format: "json"},
 		"app/b": {Value: []byte("b"), Format: "text"}}, all)
+
+	fromRemote, err := git.New(git.Config{Path: filepath.Join(t.TempDir(), "fresh"), URL: bare})
+	require.NoError(t, err)
+	remoteAll, err := fromRemote.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, all, remoteAll)
+}
+
+func TestRunServer_GitURLPushesInBackground(t *testing.T) {
+	setup := func(t *testing.T) (bare string) {
+		t.Helper()
+		bare = newBareRemote(t, map[string]string{"seed": "1"})
+		tmpDir := t.TempDir()
+		opts.DB = filepath.Join(tmpDir, "test.db")
+		opts.Secrets.Key = ""
+		opts.Git.Enabled = true
+		opts.Git.Path = filepath.Join(tmpDir, ".history")
+		opts.Git.Branch = "master"
+		opts.Git.Remote = ""
+		opts.Git.URL = bare
+		opts.Server.ShutdownTimeout = 5 * time.Second
+		t.Cleanup(func() { opts.Git.Enabled, opts.Git.URL = false, "" })
+		return bare
+	}
+	remoteValues := func(t *testing.T, bare string) map[string]git.KeyValue {
+		t.Helper()
+		gs, err := git.New(git.Config{Path: filepath.Join(t.TempDir(), "check"), URL: bare})
+		require.NoError(t, err)
+		all, err := gs.ReadAll()
+		require.NoError(t, err)
+		return all
+	}
+	put := func(t *testing.T, addr, key, value string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, "http://"+addr+"/kv/"+key, strings.NewReader(value))
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusCreated, resp.StatusCode)
+	}
+
+	t.Run("key written after startup reaches the remote", func(t *testing.T) {
+		bare := setup(t)
+		addr := "127.0.0.1:18495"
+		require.NoError(t, runServerBriefly(t, addr, func() {
+			put(t, addr, "app/new", "v1")
+			require.Eventually(t, func() bool { _, ok := remoteValues(t, bare)["app/new"]; return ok },
+				5*time.Second, 50*time.Millisecond)
+		}))
+	})
+
+	t.Run("write right before shutdown is pushed before exit", func(t *testing.T) {
+		bare := setup(t)
+		addr := "127.0.0.1:18496"
+		require.NoError(t, runServerBriefly(t, addr, func() { put(t, addr, "app/last", "v2") }))
+		assert.Equal(t, []byte("v2"), remoteValues(t, bare)["app/last"].Value)
+	})
+
+	t.Run("unreachable remote with a local copy still starts", func(t *testing.T) {
+		bare := setup(t)
+		require.NoError(t, runServerBriefly(t, "127.0.0.1:18497", nil))
+		require.NoError(t, os.RemoveAll(bare))
+		require.NoError(t, runServerBriefly(t, "127.0.0.1:18497", nil))
+	})
+
+	t.Run("occupied port returns an error", func(t *testing.T) {
+		setup(t)
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer l.Close()
+		require.Error(t, runServerBriefly(t, l.Addr().String(), nil))
+	})
 }
 
 func TestRunServer_GitURLRefusesUnreadableSecret(t *testing.T) {
@@ -2844,12 +2921,12 @@ func TestRunServer_GitURLRefusesUnreadableSecret(t *testing.T) {
 	opts.Git.URL = bare
 	defer func() { opts.Git.Enabled, opts.Git.URL = false, "" }()
 
-	err = runServerBriefly(t, "127.0.0.1:18493")
+	err = runServerBriefly(t, "127.0.0.1:18493", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "app/secrets/db")
 	assert.Contains(t, err.Error(), "--secrets.key")
 
 	opts.Git.URL = ""
 	opts.Git.Path = filepath.Join(tmpDir, ".history-local")
-	require.NoError(t, runServerBriefly(t, "127.0.0.1:18494"))
+	require.NoError(t, runServerBriefly(t, "127.0.0.1:18494", nil))
 }

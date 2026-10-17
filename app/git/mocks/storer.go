@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"sync"
 
 	"github.com/umputun/stash/app/git"
@@ -33,6 +34,9 @@ import (
 //			PushFunc: func() error {
 //				panic("mock out the Push method")
 //			},
+//			PushContextFunc: func(ctx context.Context) error {
+//				panic("mock out the PushContext method")
+//			},
 //		}
 //
 //		// use mockedStorer in code that requires git.Storer
@@ -57,6 +61,9 @@ type StorerMock struct {
 
 	// PushFunc mocks the Push method.
 	PushFunc func() error
+
+	// PushContextFunc mocks the PushContext method.
+	PushContextFunc func(ctx context.Context) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -92,6 +99,11 @@ type StorerMock struct {
 		// Push holds details about calls to the Push method.
 		Push []struct {
 		}
+		// PushContext holds details about calls to the PushContext method.
+		PushContext []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+		}
 	}
 	lockCommit      sync.RWMutex
 	lockDelete      sync.RWMutex
@@ -99,6 +111,7 @@ type StorerMock struct {
 	lockHistory     sync.RWMutex
 	lockPull        sync.RWMutex
 	lockPush        sync.RWMutex
+	lockPushContext sync.RWMutex
 }
 
 // Commit calls CommitFunc.
@@ -292,5 +305,37 @@ func (mock *StorerMock) PushCalls() []struct {
 	mock.lockPush.RLock()
 	calls = mock.calls.Push
 	mock.lockPush.RUnlock()
+	return calls
+}
+
+// PushContext calls PushContextFunc.
+func (mock *StorerMock) PushContext(ctx context.Context) error {
+	if mock.PushContextFunc == nil {
+		panic("StorerMock.PushContextFunc: method is nil but Storer.PushContext was just called")
+	}
+	callInfo := struct {
+		Ctx context.Context
+	}{
+		Ctx: ctx,
+	}
+	mock.lockPushContext.Lock()
+	mock.calls.PushContext = append(mock.calls.PushContext, callInfo)
+	mock.lockPushContext.Unlock()
+	return mock.PushContextFunc(ctx)
+}
+
+// PushContextCalls gets all the calls that were made to PushContext.
+// Check the length with:
+//
+//	len(mockedStorer.PushContextCalls())
+func (mock *StorerMock) PushContextCalls() []struct {
+	Ctx context.Context
+} {
+	var calls []struct {
+		Ctx context.Context
+	}
+	mock.lockPushContext.RLock()
+	calls = mock.calls.PushContext
+	mock.lockPushContext.RUnlock()
 	return calls
 }

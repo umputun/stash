@@ -1,12 +1,17 @@
 package git_test
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-pkgz/lgr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -52,7 +57,7 @@ func TestService_Record(t *testing.T) {
 				PushFunc:   func() error { return tc.pushErr },
 			}
 
-			s := git.NewService(st, tc.pushSync)
+			s := git.NewService(st, git.ServiceOpts{PushSync: tc.pushSync})
 			err := s.Record(func() (git.CommitRequest, error) { return tc.req, tc.writeErr })
 			if tc.writeErr != nil {
 				require.ErrorIs(t, err, tc.writeErr)
@@ -93,7 +98,7 @@ func TestService_Record_OrdersWriteAndCommit(t *testing.T) {
 		add("commit " + req.Key)
 		return nil
 	}}
-	s := git.NewService(st, false)
+	s := git.NewService(st, git.ServiceOpts{})
 
 	aWrote, bWrote := make(chan struct{}), make(chan struct{})
 	var wg sync.WaitGroup
@@ -141,7 +146,7 @@ func TestService_Record_PushOutsideLock(t *testing.T) {
 			return nil
 		},
 	}
-	s := git.NewService(st, true)
+	s := git.NewService(st, git.ServiceOpts{PushSync: true})
 
 	done := make(chan struct{})
 	go func() {
@@ -162,8 +167,154 @@ func TestService_Record_PushOutsideLock(t *testing.T) {
 
 func TestNewService(t *testing.T) {
 	st := &mocks.StorerMock{}
-	s := git.NewService(st, true)
+	s := git.NewService(st, git.ServiceOpts{PushSync: true})
 	assert.NotNil(t, s)
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n, err := b.buf.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("write: %w", err)
+	}
+	return n, nil
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestService_Run(t *testing.T) {
+	startRun := func(t *testing.T, s *git.Service) (cancel func(), done chan struct{}) {
+		t.Helper()
+		ctx, cancelCtx := context.WithCancel(t.Context())
+		done = make(chan struct{})
+		go func() {
+			defer close(done)
+			s.Run(ctx)
+		}()
+		return cancelCtx, done
+	}
+	commitReq := func() (git.CommitRequest, error) { return git.CommitRequest{Key: "k", Operation: "update"}, nil }
+
+	t.Run("zero interval returns at once", func(t *testing.T) {
+		st := &mocks.StorerMock{}
+		git.NewService(st, git.ServiceOpts{}).Run(t.Context())
+		assert.Empty(t, st.PushContextCalls())
+	})
+
+	t.Run("initial push at start with a bounded context, no final push when nothing is pending", func(t *testing.T) {
+		st := &mocks.StorerMock{PushContextFunc: func(ctx context.Context) error {
+			deadline, ok := ctx.Deadline()
+			assert.True(t, ok)
+			assert.LessOrEqual(t, time.Until(deadline), 10*time.Second)
+			return nil
+		}}
+		s := git.NewService(st, git.ServiceOpts{PushInterval: time.Hour})
+		cancel, done := startRun(t, s)
+		require.Eventually(t, func() bool { return len(st.PushContextCalls()) == 1 }, time.Second, 5*time.Millisecond)
+		cancel()
+		<-done
+		assert.Len(t, st.PushContextCalls(), 1)
+	})
+
+	t.Run("failed startup push is retried on a tick with no writes, idle ticks do not push", func(t *testing.T) {
+		var calls atomic.Int32
+		st := &mocks.StorerMock{PushContextFunc: func(context.Context) error {
+			if calls.Add(1) == 1 {
+				return errors.New("remote unreachable")
+			}
+			return nil
+		}}
+		s := git.NewService(st, git.ServiceOpts{PushInterval: 20 * time.Millisecond})
+		cancel, done := startRun(t, s)
+		defer func() { cancel(); <-done }()
+
+		require.Eventually(t, func() bool { return calls.Load() == 2 }, time.Second, 5*time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
+		assert.Equal(t, int32(2), calls.Load())
+	})
+
+	t.Run("commit triggers a push without inline pull", func(t *testing.T) {
+		st := &mocks.StorerMock{
+			CommitFunc:      func(req git.CommitRequest) error { return nil },
+			PushContextFunc: func(context.Context) error { return nil },
+		}
+		s := git.NewService(st, git.ServiceOpts{PushSync: true, PushInterval: time.Hour})
+		cancel, done := startRun(t, s)
+		defer func() { cancel(); <-done }()
+		require.Eventually(t, func() bool { return len(st.PushContextCalls()) == 1 }, time.Second, 5*time.Millisecond)
+
+		require.NoError(t, s.Record(commitReq))
+		require.Eventually(t, func() bool { return len(st.PushContextCalls()) == 2 }, time.Second, 5*time.Millisecond)
+		assert.Empty(t, st.PullCalls())
+		assert.Empty(t, st.PushCalls())
+	})
+
+	t.Run("rejected push is logged as an error and retried, never forced", func(t *testing.T) {
+		buf := &syncBuffer{}
+		lgr.Setup(lgr.Out(buf), lgr.Err(buf))
+		t.Cleanup(func() { lgr.Setup(lgr.Out(os.Stdout), lgr.Err(os.Stderr)) })
+
+		var calls atomic.Int32
+		st := &mocks.StorerMock{PushContextFunc: func(context.Context) error {
+			calls.Add(1)
+			return fmt.Errorf("failed to push: %w", errors.New("non-fast-forward update: refs/heads/master"))
+		}}
+		s := git.NewService(st, git.ServiceOpts{PushInterval: 20 * time.Millisecond})
+		cancel, done := startRun(t, s)
+		require.Eventually(t, func() bool { return calls.Load() >= 2 }, time.Second, 5*time.Millisecond)
+		cancel()
+		<-done
+		assert.Contains(t, buf.String(), "ERROR")
+		assert.Contains(t, buf.String(), "remote branch moved")
+	})
+
+	t.Run("cancel makes one final push and run returns after it", func(t *testing.T) {
+		var calls atomic.Int32
+		finalStarted, release := make(chan struct{}), make(chan struct{})
+		st := &mocks.StorerMock{
+			CommitFunc: func(req git.CommitRequest) error { return nil },
+			PushContextFunc: func(ctx context.Context) error {
+				switch calls.Add(1) {
+				case 1:
+					return nil
+				case 2:
+					return errors.New("remote unreachable")
+				default:
+					close(finalStarted)
+					<-release
+					_, ok := ctx.Deadline()
+					assert.True(t, ok)
+					return nil
+				}
+			},
+		}
+		s := git.NewService(st, git.ServiceOpts{PushInterval: time.Hour})
+		cancel, done := startRun(t, s)
+		require.Eventually(t, func() bool { return calls.Load() == 1 }, time.Second, 5*time.Millisecond)
+		require.NoError(t, s.Record(commitReq))
+		require.Eventually(t, func() bool { return calls.Load() == 2 }, time.Second, 5*time.Millisecond)
+
+		cancel()
+		<-finalStarted
+		select {
+		case <-done:
+			t.Fatal("run returned before the final push finished")
+		case <-time.After(100 * time.Millisecond):
+		}
+		close(release)
+		<-done
+		assert.Equal(t, int32(3), calls.Load())
+	})
 }
 
 func TestService_History(t *testing.T) {
@@ -172,7 +323,7 @@ func TestService_History(t *testing.T) {
 		st := &mocks.StorerMock{
 			HistoryFunc: func(key string, limit int) ([]git.HistoryEntry, error) { return entries, nil },
 		}
-		s := git.NewService(st, false)
+		s := git.NewService(st, git.ServiceOpts{})
 		result, err := s.History("test-key", 10)
 		require.NoError(t, err)
 		assert.Equal(t, entries, result)
@@ -187,7 +338,7 @@ func TestService_History(t *testing.T) {
 				return nil, errors.New("history error")
 			},
 		}
-		s := git.NewService(st, false)
+		s := git.NewService(st, git.ServiceOpts{})
 		_, err := s.History("test-key", 10)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "history:")
@@ -202,7 +353,7 @@ func TestService_GetRevision(t *testing.T) {
 				return []byte("value"), "json", nil
 			},
 		}
-		s := git.NewService(st, false)
+		s := git.NewService(st, git.ServiceOpts{})
 		value, format, err := s.GetRevision("test-key", "abc123")
 		require.NoError(t, err)
 		assert.Equal(t, []byte("value"), value)
@@ -218,7 +369,7 @@ func TestService_GetRevision(t *testing.T) {
 				return nil, "", errors.New("revision error")
 			},
 		}
-		s := git.NewService(st, false)
+		s := git.NewService(st, git.ServiceOpts{})
 		_, _, err := s.GetRevision("test-key", "abc123")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "get revision:")

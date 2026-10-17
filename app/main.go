@@ -203,8 +203,10 @@ func runServer(ctx context.Context) error {
 		SSE:        sseService,
 	}
 	// assigned only when enabled: a nil *git.Service in the interface field is not nil
+	var gitSvc *git.Service
 	if gitStore != nil {
-		deps.Git = git.NewService(gitStore, opts.Git.Push)
+		gitSvc = git.NewService(gitStore, gitServiceOpts())
+		deps.Git = gitSvc
 	}
 
 	srv, err := server.New(
@@ -240,10 +242,37 @@ func runServer(ctx context.Context) error {
 		startAuditCleanup(ctx, rawStore, opts.Audit.Retention)
 	}
 
-	if err := srv.Run(ctx); err != nil {
+	return serve(ctx, srv, gitSvc)
+}
+
+// serve runs the HTTP server and the git push worker. The worker is stopped only after the server
+// returns, on every path, so writes that finished during the drain are pushed before exit.
+func serve(ctx context.Context, srv *server.Server, gitSvc *git.Service) error {
+	workerCtx, stopWorker := context.WithCancel(context.WithoutCancel(ctx))
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		if gitSvc != nil {
+			gitSvc.Run(workerCtx)
+		}
+	}()
+
+	err := srv.Run(ctx)
+	stopWorker()
+	<-workerDone
+	if err != nil {
 		return fmt.Errorf("server failed: %w", err)
 	}
 	return nil
+}
+
+// gitServiceOpts returns when the git service pushes: in the background with --git.url,
+// inline after each commit with --git.push.
+func gitServiceOpts() git.ServiceOpts {
+	if opts.Git.URL != "" {
+		return git.ServiceOpts{PushInterval: time.Minute}
+	}
+	return git.ServiceOpts{PushSync: opts.Git.Push}
 }
 
 func runRestore(ctx context.Context) error {

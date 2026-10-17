@@ -5,6 +5,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -503,6 +504,11 @@ func (s *Store) deleteLocked(key string, author Author) error {
 
 // Push pushes commits to remote repository
 func (s *Store) Push() error {
+	return s.PushContext(context.Background())
+}
+
+// PushContext pushes the branch to the remote, giving up when ctx is done.
+func (s *Store) PushContext(ctx context.Context) error {
 	if s.cfg.Remote == "" {
 		return nil // no remote configured
 	}
@@ -515,7 +521,7 @@ func (s *Store) Push() error {
 		return err
 	}
 
-	err = s.repo.Push(&git.PushOptions{
+	err = s.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName: s.cfg.Remote,
 		Auth:       auth,
 		RefSpecs: []config.RefSpec{

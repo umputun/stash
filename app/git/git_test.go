@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -338,6 +339,32 @@ func TestStore_Push(t *testing.T) {
 		// should return nil without attempting to load key since no remote configured
 		err = store.Push()
 		require.NoError(t, err)
+	})
+
+	t.Run("push context sends the branch to the remote", func(t *testing.T) {
+		bare := seedRemote(t, nil)
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+		require.NoError(t, st.PushContext(t.Context()))
+
+		remoteRepo, err := git.PlainOpen(bare)
+		require.NoError(t, err)
+		ref, err := remoteRepo.Reference(plumbing.NewBranchReferenceName("master"), true)
+		require.NoError(t, err)
+		head, err := st.repo.Head()
+		require.NoError(t, err)
+		assert.Equal(t, head.Hash(), ref.Hash())
+	})
+
+	t.Run("push context respects a canceled context", func(t *testing.T) {
+		bare := seedRemote(t, nil)
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history"), URL: bare})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		require.Error(t, st.PushContext(ctx))
 	})
 }
 
