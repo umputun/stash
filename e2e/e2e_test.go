@@ -97,8 +97,8 @@ func TestMain(m *testing.M) {
 		slowMo = 50 // slow down visible browser for easier observation
 	}
 	browser, err = pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(headless),
-		SlowMo:   playwright.Float(slowMo),
+		Headless: new(headless),
+		SlowMo:   new(slowMo),
 	})
 	if err != nil {
 		_ = pw.Stop()
@@ -124,7 +124,7 @@ func TestMain(m *testing.M) {
 func waitForServer(serverURL string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(serverURL) //nolint:gosec // test code with controlled URL
+		resp, err := http.Get(serverURL)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			_ = resp.Body.Close()
 			return nil
@@ -157,6 +157,12 @@ func waitVisible(t *testing.T, loc playwright.Locator) {
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(15000),
 	}))
+	// swapped-in elements are visible before htmx wires them at settle; a click then sends nothing
+	page, err := loc.Page()
+	require.NoError(t, err)
+	_, err = page.WaitForFunction(`() => !document.querySelector('.htmx-swapping, .htmx-settling')`, nil,
+		playwright.PageWaitForFunctionOptions{Timeout: playwright.Float(15000)})
+	require.NoError(t, err)
 }
 
 // waitHidden waits for locator to become hidden.

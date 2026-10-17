@@ -490,6 +490,7 @@ func TestSecrets_EditSecretValue(t *testing.T) {
 
 	// verify update by clicking the key cell to open view modal
 	keyCell := row.Locator("td.key-cell")
+	waitVisible(t, keyCell)
 	require.NoError(t, keyCell.Click())
 	waitVisible(t, modal)
 
@@ -554,6 +555,7 @@ func TestSecrets_History(t *testing.T) {
 
 	// open view modal by clicking the key cell
 	keyCell := row.Locator("td.key-cell")
+	waitVisible(t, keyCell)
 	require.NoError(t, keyCell.Click())
 	waitVisible(t, modal)
 
@@ -644,7 +646,7 @@ func TestZK_InSecretsPath(t *testing.T) {
 	assert.False(t, editVisible, "edit button should be hidden for ZK-encrypted values")
 
 	// cleanup - delete via API
-	req, err = http.NewRequest(http.MethodDelete, secretsBaseURL+"/kv/"+zkKey, nil)
+	req, err = http.NewRequest(http.MethodDelete, secretsBaseURL+"/kv/"+zkKey, http.NoBody)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer e2e-secrets-token-12345")
 

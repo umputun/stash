@@ -213,7 +213,7 @@ func TestAudit_Pagination(t *testing.T) {
 	login(t, page, "admin", "testpass")
 
 	// create 105 keys via API to generate audit entries (page size is 100)
-	for i := 0; i < 105; i++ {
+	for i := range 105 {
 		key := fmt.Sprintf("pagination-test/key%03d", i)
 		req, err := http.NewRequest(http.MethodPut, baseURL+"/kv/"+key, strings.NewReader("value"))
 		require.NoError(t, err)
