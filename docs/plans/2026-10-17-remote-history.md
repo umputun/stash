@@ -225,11 +225,13 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - Modify: `app/git/git.go`
 - Modify: `app/git/git_test.go`
 
-- [ ] write failing tests: format-only change produces a commit; History shows the new format at that entry; GetRevision and ReadAll return it; an unchanged value and format returns nil with no commit; a repo built with the oldest message shape (`git_test.go` fixtures) reads the same history and formats
-- [ ] Commit allows an empty commit when only the format changed and returns nil when nothing changed
-- [ ] `rawHistory` and `getFileFormat` (now taking the key) select commits by the message `key:` line via `(s *Store) parseKeyFromCommit` instead of `FileName`; ReadAll uses a key-to-format map from one log walk
-- [ ] shrink `getFileContentAtCommit` to `(commit, filePath)`
-- [ ] run tests - must pass before next task
+- [x] write failing tests: format-only change produces a commit; History shows the new format at that entry; GetRevision and ReadAll return it; an unchanged value and format returns nil with no commit; a repo built with the oldest message shape (`git_test.go` fixtures) reads the same history and formats
+- [x] Commit allows an empty commit when only the format changed and returns nil when nothing changed
+- [x] `rawHistory` and `getFileFormat` (now taking the key) select commits by the message `key:` line via `(s *Store) parseKeyFromCommit` instead of `FileName`; ReadAll uses a key-to-format map from one log walk
+- [x] shrink `getFileContentAtCommit` to `(commit, filePath)`
+- [x] run tests - must pass before next task
+- ➕ review fix: one storage identity `(s *Store) storedKey` (clean `keyToPath(key)`, strip `.val`) used by history, `getFileFormat` and `keyFormats`, since go-git stages the cleaned path (`a//b` and `a/b` share a file; `a/.` is stored as `a/..val`, not `a`); `validateKey` also rejects empty path parts
+- ⚠️ compatibility exception: History for a DB key with `//` now returns an invalid-key error; before it returned an empty list because the file-path filter never matched the cleaned path, so no usable history is lost and the DB still accepts such keys
 
 ### Task 4: One lock over DB write and git commit (both modes)
 

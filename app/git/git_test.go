@@ -429,7 +429,7 @@ func TestStore_PathTraversal(t *testing.T) {
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
 		require.NoError(t, err)
 
-		invalidKeys := []string{".git/x", ".git/hooks/x", "./.git/x", ".GIT/x", ".Git/config", "a/.git/x", "a/./b", "./x",
+		invalidKeys := []string{".git/x", ".git/hooks/x", "./.git/x", ".GIT/x", ".Git/config", "a/.git/x", "a/./b", "./x", "a//b",
 			"x\nkey: y", "x\rformat: json", "a\x00b", "tab\there", "del\x7f"}
 		for _, key := range invalidKeys {
 			err = store.Commit(CommitRequest{Key: key, Value: []byte("v"), Operation: "set", Author: DefaultAuthor()})
@@ -1212,4 +1212,162 @@ func TestStore_Symlinks(t *testing.T) {
 		_, statErr := os.Lstat(filepath.Join(path, "link.val"))
 		assert.True(t, os.IsNotExist(statErr))
 	})
+}
+
+func TestStore_FormatOnlyChange(t *testing.T) {
+	t.Run("format-only change is recorded", func(t *testing.T) {
+		// a same-value format change failed as an empty commit, so history kept the old format
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/cfg", Value: []byte("a: 1"), Operation: "create", Format: "text",
+			Author: DefaultAuthor()}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "app/cfg", Value: []byte("a: 1"), Operation: "update", Format: "yaml",
+			Author: DefaultAuthor()}))
+
+		history, err := st.History("app/cfg", 0)
+		require.NoError(t, err)
+		require.Len(t, history, 2)
+		assert.Equal(t, "yaml", history[0].Format)
+		assert.Equal(t, "a: 1", string(history[0].Value))
+		assert.Equal(t, "text", history[1].Format)
+
+		value, format, err := st.GetRevision("app/cfg", history[0].Hash)
+		require.NoError(t, err)
+		assert.Equal(t, "a: 1", string(value))
+		assert.Equal(t, "yaml", format)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, KeyValue{Value: []byte("a: 1"), Format: "yaml"}, all["app/cfg"])
+	})
+
+	t.Run("unchanged value and format is a no-op", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+
+		req := CommitRequest{Key: "k", Value: []byte("v"), Operation: "update", Format: "json", Author: DefaultAuthor()}
+		require.NoError(t, st.Commit(req))
+		head, err := st.Head()
+		require.NoError(t, err)
+
+		require.NoError(t, st.Commit(req))
+		head2, err := st.Head()
+		require.NoError(t, err)
+		assert.Equal(t, head, head2)
+
+		history, err := st.History("k", 0)
+		require.NoError(t, err)
+		assert.Len(t, history, 1)
+	})
+
+	t.Run("history of one key ignores commits of another key", func(t *testing.T) {
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("1"), Operation: "create", Author: DefaultAuthor()}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "a/b", Value: []byte("2"), Operation: "create", Author: DefaultAuthor()}))
+		require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("3"), Operation: "update", Author: DefaultAuthor()}))
+
+		history, err := st.History("a", 0)
+		require.NoError(t, err)
+		require.Len(t, history, 2)
+		assert.Equal(t, "3", string(history[0].Value))
+		assert.Equal(t, "1", string(history[1].Value))
+
+		limited, err := st.History("a", 1)
+		require.NoError(t, err)
+		require.Len(t, limited, 1)
+		assert.Equal(t, "3", string(limited[0].Value))
+	})
+}
+
+func TestStore_OldMessageShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".history")
+	st, err := New(Config{Path: path})
+	require.NoError(t, err)
+
+	wt, err := st.repo.Worktree()
+	require.NoError(t, err)
+	commitOld := func(msg string) {
+		_, cErr := wt.Commit(msg, &git.CommitOptions{Author: &object.Signature{Name: "stash", Email: "stash@localhost", When: time.Now()}})
+		require.NoError(t, cErr)
+	}
+
+	require.NoError(t, os.WriteFile(filepath.Join(path, "old.val"), []byte("v1"), 0o600))
+	_, err = wt.Add("old.val")
+	require.NoError(t, err)
+	commitOld("set old\n\ntimestamp: 2025-11-24T10:00:00Z\noperation: set\nkey: old")
+
+	require.NoError(t, os.WriteFile(filepath.Join(path, "gone.val"), []byte("x"), 0o600))
+	_, err = wt.Add("gone.val")
+	require.NoError(t, err)
+	commitOld("set gone\n\ntimestamp: 2025-11-24T10:01:00Z\noperation: set\nkey: gone")
+	_, err = wt.Remove("gone.val")
+	require.NoError(t, err)
+	commitOld("delete gone\n\ntimestamp: 2025-11-24T10:02:00Z\noperation: delete\nkey: gone")
+
+	history, err := st.History("old", 0)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.Equal(t, "text", history[0].Format)
+	assert.Equal(t, "v1", string(history[0].Value))
+	assert.Equal(t, "set", history[0].Operation)
+
+	gone, err := st.History("gone", 0)
+	require.NoError(t, err)
+	require.Len(t, gone, 2)
+	assert.Equal(t, "delete", gone[0].Operation)
+	assert.Nil(t, gone[0].Value)
+
+	all, err := st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]KeyValue{"old": {Value: []byte("v1"), Format: "text"}}, all)
+}
+
+func TestStore_ReadAllFormatForUncleanKey(t *testing.T) {
+	// a key with a double slash was stored under the cleaned path, so a format lookup by raw key missed it
+	path := filepath.Join(t.TempDir(), ".history")
+	st, err := New(Config{Path: path})
+	require.NoError(t, err)
+
+	wt, err := st.repo.Worktree()
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(path, "a"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(path, "a", "b.val"), []byte("{}"), 0o600))
+	_, err = wt.Add("a/b.val")
+	require.NoError(t, err)
+	_, err = wt.Commit("set a//b\n\ntimestamp: 2025-12-01T10:00:00Z\noperation: set\nkey: a//b\nformat: json",
+		&git.CommitOptions{Author: &object.Signature{Name: "stash", Email: "stash@localhost", When: time.Now()}})
+	require.NoError(t, err)
+
+	all, err := st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]KeyValue{"a/b": {Value: []byte("{}"), Format: "json"}}, all)
+
+	require.NoError(t, st.Commit(CommitRequest{Key: "a/b", Value: []byte("{}"), Operation: "update", Format: "text",
+		Author: DefaultAuthor()}))
+	all, err = st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, "text", all["a/b"].Format)
+
+	history, err := st.History("a/b", 0)
+	require.NoError(t, err)
+	require.Len(t, history, 2)
+	assert.Equal(t, "text", history[0].Format)
+	assert.Equal(t, "json", history[1].Format)
+}
+
+func TestStore_ReadAllFormatForDotFileKey(t *testing.T) {
+	st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+	require.NoError(t, err)
+
+	require.NoError(t, st.Commit(CommitRequest{Key: "a/.", Value: []byte("{}"), Operation: "create", Format: "json",
+		Author: DefaultAuthor()}))
+	require.NoError(t, st.Commit(CommitRequest{Key: "a", Value: []byte("x: 1"), Operation: "create", Format: "yaml",
+		Author: DefaultAuthor()}))
+
+	all, err := st.ReadAll()
+	require.NoError(t, err)
+	assert.Equal(t, map[string]KeyValue{"a/.": {Value: []byte("{}"), Format: "json"}, "a": {Value: []byte("x: 1"), Format: "yaml"}}, all)
 }

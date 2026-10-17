@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 
@@ -303,13 +305,17 @@ func (s *Store) Commit(req CommitRequest) error {
 	msg := fmt.Sprintf("%s %s\n\ntimestamp: %s\noperation: %s\nkey: %s\nformat: %s",
 		req.Operation, req.Key, now.Format(time.RFC3339), req.Operation, req.Key, format)
 
-	_, commitErr := wt.Commit(msg, &git.CommitOptions{
-		Author: &object.Signature{
-			Name:  req.Author.Name,
-			Email: req.Author.Email,
-			When:  now,
-		},
-	})
+	opts := &git.CommitOptions{Author: &object.Signature{Name: req.Author.Name, Email: req.Author.Email, When: now}}
+	_, commitErr := wt.Commit(msg, opts)
+	if errors.Is(commitErr, git.ErrEmptyCommit) {
+		// the value is unchanged; format lives only in the commit message, so a format change
+		// still needs a commit of its own
+		if s.getFileFormat(req.Key) == format {
+			return nil
+		}
+		opts.AllowEmptyCommits = true
+		_, commitErr = wt.Commit(msg, opts)
+	}
 	if commitErr != nil {
 		return fmt.Errorf("failed to commit: %w", commitErr)
 	}
@@ -491,17 +497,13 @@ func (s *Store) Checkout(rev string) error {
 }
 
 // ReadAll reads all key-value pairs from the repository with their formats.
-// Format is extracted from the commit message metadata of the last commit that modified each file.
-// If no format is found in the commit message, defaults to "text".
-//
-// Note: this function has O(n) git log queries where n is the number of files,
-// as getFileFormat opens a git log iterator for each file. This is acceptable
-// for restore operations which are infrequent admin commands.
+// Format comes from the newest commit for each key, "text" when that commit has none.
 func (s *Store) ReadAll() (map[string]KeyValue, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	result := make(map[string]KeyValue)
+	formats := s.keyFormats()
 
 	walkErr := filepath.Walk(s.cfg.Path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -539,9 +541,10 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 			return decErr
 		}
 
-		// get format from the last commit that modified this file
-		format := s.getFileFormat(relPath)
-
+		format, ok := formats[key]
+		if !ok {
+			format = "text"
+		}
 		result[key] = KeyValue{Value: value, Format: format}
 
 		return nil
@@ -583,11 +586,11 @@ func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filePath := s.keyToPath(key)
+	filePath, want := path.Clean(s.keyToPath(key)), s.storedKey(key)
 
-	logIter, err := s.repo.Log(&git.LogOptions{
-		FileName: &filePath,
-	})
+	// commits are selected by their key: line, not by changed file, so format-only commits,
+	// which change no file, are part of the history
+	logIter, err := s.repo.Log(&git.LogOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get log: %w", err)
 	}
@@ -606,6 +609,9 @@ func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 			log.Printf("[WARN] git history iteration error for key %q: %v", key, iterErr)
 			break
 		}
+		if s.storedKey(s.parseKeyFromCommit(commit.Message)) != want {
+			continue
+		}
 
 		// extract metadata from commit
 		entry := HistoryEntry{
@@ -617,7 +623,7 @@ func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 		}
 
 		// get file content at this commit (may be missing for delete commits)
-		entry.Value = s.getFileContentAtCommit(commit, filePath, key, entry.Hash)
+		entry.Value = s.getFileContentAtCommit(commit, filePath)
 
 		entries = append(entries, entry)
 		count++
@@ -628,10 +634,10 @@ func (s *Store) rawHistory(key string, limit int) ([]HistoryEntry, error) {
 
 // getFileContentAtCommit retrieves file content at a specific commit.
 // returns nil if file doesn't exist (expected for delete commits).
-func (s *Store) getFileContentAtCommit(commit *object.Commit, filePath, key, hash string) []byte {
+func (s *Store) getFileContentAtCommit(commit *object.Commit, filePath string) []byte {
 	tree, treeErr := commit.Tree()
 	if treeErr != nil {
-		log.Printf("[DEBUG] git history: failed to get tree at %s for key %q: %v", hash, key, treeErr)
+		log.Printf("[DEBUG] git history: failed to get tree at %s for %q: %v", commit.Hash, filePath, treeErr)
 		return nil
 	}
 
@@ -642,7 +648,7 @@ func (s *Store) getFileContentAtCommit(commit *object.Commit, filePath, key, has
 
 	content, contentErr := file.Contents()
 	if contentErr != nil {
-		log.Printf("[DEBUG] git history: failed to read content at %s for key %q: %v", hash, key, contentErr)
+		log.Printf("[DEBUG] git history: failed to read content at %s for %q: %v", commit.Hash, filePath, contentErr)
 		return nil
 	}
 
@@ -707,25 +713,66 @@ func (s *Store) rawRevision(key, rev string) ([]byte, string, error) {
 	return []byte(content), s.parseFormatFromCommit(commit.Message), nil
 }
 
-// getFileFormat finds the last commit that modified a file and extracts format from its message.
-// returns "text" if no format is found.
-func (s *Store) getFileFormat(filePath string) string {
-	// get log for this specific file
-	logIter, err := s.repo.Log(&git.LogOptions{
-		FileName: &filePath,
-	})
+// getFileFormat returns the format from the newest commit for key, "text" if there is none.
+func (s *Store) getFileFormat(key string) string {
+	logIter, err := s.repo.Log(&git.LogOptions{})
 	if err != nil {
 		return "text"
 	}
 	defer logIter.Close()
 
-	// get the most recent commit for this file
-	commit, err := logIter.Next()
-	if err != nil {
-		return "text"
-	}
+	format, want := "text", s.storedKey(key)
+	_ = logIter.ForEach(func(commit *object.Commit) error {
+		if s.storedKey(s.parseKeyFromCommit(commit.Message)) != want {
+			return nil
+		}
+		format = s.parseFormatFromCommit(commit.Message)
+		return storer.ErrStop
+	})
+	return format
+}
 
-	return s.parseFormatFromCommit(commit.Message)
+// keyFormats returns the format of every stored key from its newest commit, in one log walk.
+func (s *Store) keyFormats() map[string]string {
+	formats := map[string]string{}
+	logIter, err := s.repo.Log(&git.LogOptions{})
+	if err != nil {
+		return formats
+	}
+	defer logIter.Close()
+
+	_ = logIter.ForEach(func(commit *object.Commit) error {
+		key := s.parseKeyFromCommit(commit.Message)
+		if key == "" {
+			return nil
+		}
+		key = s.storedKey(key)
+		if _, seen := formats[key]; !seen {
+			formats[key] = s.parseFormatFromCommit(commit.Message)
+		}
+		return nil
+	})
+	return formats
+}
+
+// storedKey returns the key as ReadAll derives it from the stored file. go-git cleans the path
+// it stages, so keys such as a//b and a/b share one file and one identity; empty stays empty.
+func (s *Store) storedKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	return s.pathToKey(path.Clean(s.keyToPath(key)))
+}
+
+// parseKeyFromCommit extracts the key from the "key: <value>" line of a commit message,
+// empty if there is none.
+func (s *Store) parseKeyFromCommit(message string) string {
+	for line := range strings.SplitSeq(message, "\n") {
+		if key, found := strings.CutPrefix(line, "key: "); found {
+			return key
+		}
+	}
+	return ""
 }
 
 // parseFormatFromCommit extracts format value from commit message metadata.
@@ -787,7 +834,7 @@ func (s *Store) validateKey(key string) error {
 	// "." would also make two keys share one file. The last part always ends in .val
 	parts := strings.Split(s.keyToPath(key), "/")
 	for _, part := range parts[:len(parts)-1] {
-		if part == "." || strings.EqualFold(part, ".git") {
+		if part == "" || part == "." || strings.EqualFold(part, ".git") {
 			return fmt.Errorf("invalid key: path component %q not allowed", part)
 		}
 	}
@@ -812,6 +859,6 @@ func (s *Store) validateKey(key string) error {
 
 // pathToKey converts a file path back to a key
 // e.g., "app/config/db.val" -> "app/config/db"
-func (s *Store) pathToKey(path string) string {
-	return strings.TrimSuffix(path, ".val")
+func (s *Store) pathToKey(relPath string) string {
+	return strings.TrimSuffix(relPath, ".val")
 }
