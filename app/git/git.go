@@ -347,12 +347,38 @@ func (s *Store) writeKeyFile(key string, value []byte) (string, error) {
 	defer root.Close()
 
 	if err := root.MkdirAll(filepath.Dir(filePath), 0o750); err != nil {
-		return "", fmt.Errorf("failed to create directory: %w", err)
+		return "", &valueFileError{err: fmt.Errorf("failed to create directory: %w", err)}
 	}
 	if err := root.WriteFile(filePath, value, 0o600); err != nil {
-		return "", fmt.Errorf("failed to write file: %w", err)
+		return "", &valueFileError{err: fmt.Errorf("failed to write file: %w", err)}
 	}
 	return filePath, nil
+}
+
+// valueFileError is a failure to write a key's value file, which happens before anything is staged.
+type valueFileError struct {
+	err error
+}
+
+// Error returns the wrapped error's text.
+func (e *valueFileError) Error() string { return e.err.Error() }
+
+// Unwrap returns the wrapped error.
+func (e *valueFileError) Unwrap() error { return e.err }
+
+// unrepresentable reports a value file the filesystem cannot hold for this key: a name too long,
+// or a path whose file and directory parts collide with another key's (a.val versus a.val/b).
+func (s *Store) unrepresentable(err error) bool {
+	var vfe *valueFileError
+	if !errors.As(err, &vfe) {
+		return false
+	}
+	for _, errno := range []syscall.Errno{syscall.ENAMETOOLONG, syscall.ENOTDIR, syscall.EISDIR, syscall.EEXIST} {
+		if errors.Is(vfe, errno) {
+			return true
+		}
+	}
+	return false
 }
 
 // encodeValue prepares a value for the repository: secret values are encrypted and marked
@@ -773,9 +799,9 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error) {
 		}
 		req := CommitRequest{Key: key, Value: kv.Value, Operation: "sync", Format: kv.Format, Author: DefaultAuthor()}
 		err := s.commitLocked(req)
-		if errors.Is(err, syscall.ENAMETOOLONG) {
+		if s.unrepresentable(err) {
 			// the value file is written before staging, so nothing of this key reaches the next commit
-			log.Printf("[WARN] git sync skipped %q: its file name is too long for the filesystem", key)
+			log.Printf("[WARN] git sync skipped %q, the filesystem cannot hold its file: %v", key, err)
 			res.Skipped++
 			continue
 		}

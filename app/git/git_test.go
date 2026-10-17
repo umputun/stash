@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1787,6 +1788,40 @@ func TestStore_Sync(t *testing.T) {
 		all, err := rotated.ReadAll()
 		require.NoError(t, err)
 		assert.Equal(t, KeyValue{Value: []byte("pw"), Format: "json"}, all["app/secrets/db"])
+	})
+
+	t.Run("keys whose files collide are skipped", func(t *testing.T) {
+		// a and a.val/b need a.val as both a file and a directory, and the failed commit stopped startup
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		res, err := st.Sync(map[string]KeyValue{"a": {Value: []byte("1"), Format: "text"}, "a.val/b": {Value: []byte("2"), Format: "text"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 1, Skipped: 1}, res)
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"a": {Value: []byte("1"), Format: "text"}}, all)
+
+		other, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		require.NoError(t, other.Commit(CommitRequest{Key: "a.val/b", Value: []byte("2"), Operation: "set", Author: author}))
+		res, err = other.Sync(map[string]KeyValue{"a": {Value: []byte("1"), Format: "text"}, "a.val/b": {Value: []byte("2"), Format: "text"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Skipped: 1}, res)
+		all, err = other.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"a.val/b": {Value: []byte("2"), Format: "text"}}, all)
+	})
+
+	t.Run("staging failure with a skippable errno still stops the sync", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".history")
+		st, err := New(Config{Path: path})
+		require.NoError(t, err)
+		require.NoError(t, os.Remove(filepath.Join(path, ".git", "index")))
+		require.NoError(t, os.Mkdir(filepath.Join(path, ".git", "index"), 0o750))
+
+		_, err = st.Sync(map[string]KeyValue{"k": {Value: []byte("v"), Format: "text"}})
+		require.Error(t, err)
+		require.ErrorIs(t, err, syscall.EISDIR)
 	})
 
 	t.Run("key whose file name is too long is skipped", func(t *testing.T) {
