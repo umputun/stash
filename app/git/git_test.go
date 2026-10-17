@@ -2,7 +2,10 @@ package git
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/pem"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gossh "golang.org/x/crypto/ssh"
 
 	kvstore "github.com/umputun/stash/app/store"
 )
@@ -355,6 +359,62 @@ func TestStore_Push(t *testing.T) {
 		head, err := st.repo.Head()
 		require.NoError(t, err)
 		assert.Equal(t, head.Hash(), ref.Hash())
+	})
+
+	t.Run("push context gives up on an ssh remote that accepts and never answers", func(t *testing.T) {
+		// the dial deadline did not reach the ssh handshake, so a stalled remote held the store lock indefinitely
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		accepted := make(chan net.Conn, 4)
+		go func() {
+			for {
+				c, accErr := l.Accept()
+				if accErr != nil {
+					return
+				}
+				accepted <- c
+			}
+		}()
+		t.Cleanup(func() {
+			_ = l.Close()
+			for len(accepted) > 0 {
+				_ = (<-accepted).Close()
+			}
+		})
+
+		dir := t.TempDir()
+		knownHosts := filepath.Join(dir, "known_hosts")
+		require.NoError(t, os.WriteFile(knownHosts, nil, 0o600))
+		t.Setenv("SSH_KNOWN_HOSTS", knownHosts)
+		_, priv, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err)
+		block, err := gossh.MarshalPrivateKey(priv, "")
+		require.NoError(t, err)
+		keyPath := filepath.Join(dir, "id_ed25519")
+		require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(block), 0o600))
+
+		st, err := New(Config{Path: filepath.Join(dir, ".history"), Remote: "origin", SSHKey: keyPath})
+		require.NoError(t, err)
+		_, err = st.repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"ssh://stash@" + l.Addr().String() + "/repo.git"}})
+		require.NoError(t, err)
+		require.NoError(t, st.Commit(CommitRequest{Key: "k", Value: []byte("v"), Operation: "set", Author: DefaultAuthor()}))
+
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- st.PushContext(ctx) }()
+		select {
+		case pushErr := <-done:
+			require.Error(t, pushErr)
+		case <-time.After(3 * time.Second):
+			t.Fatal("push did not return after its deadline")
+		}
+		select {
+		case c := <-accepted:
+			accepted <- c
+		default:
+			t.Fatal("the remote never accepted a connection, so the push failed before reaching it")
+		}
 	})
 
 	t.Run("push context respects a canceled context", func(t *testing.T) {
@@ -1709,17 +1769,38 @@ func TestStore_Sync(t *testing.T) {
 		assert.Equal(t, SyncResult{Deleted: 1}, res)
 	})
 
-	t.Run("undecodable stored value of a present key is an error", func(t *testing.T) {
+	t.Run("secret encrypted with a rotated-out key is replaced by the database value", func(t *testing.T) {
+		// the old ciphertext could not be decoded, and the sync stopped startup on every restart
 		path := filepath.Join(t.TempDir(), ".history")
-		withKey, err := New(Config{Path: path, Encryptor: newCrypto(t)})
+		oldKey, err := New(Config{Path: path, Encryptor: newCrypto(t)})
 		require.NoError(t, err)
-		require.NoError(t, withKey.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
+		require.NoError(t, oldKey.Commit(CommitRequest{Key: "app/secrets/db", Value: []byte("pw"), Operation: "set", Author: author}))
 
-		noKey, err := New(Config{Path: path})
+		newCrypt, err := kvstore.NewCrypto([]byte("another-master-key-0123"))
 		require.NoError(t, err)
-		_, err = noKey.Sync(map[string]KeyValue{"app/secrets/db": {Value: []byte("pw"), Format: "text"}})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "app/secrets/db")
+		rotated, err := New(Config{Path: path, Encryptor: newCrypt})
+		require.NoError(t, err)
+		res, err := rotated.Sync(map[string]KeyValue{"app/secrets/db": {Value: []byte("pw"), Format: "json"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 1}, res)
+
+		all, err := rotated.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, KeyValue{Value: []byte("pw"), Format: "json"}, all["app/secrets/db"])
+	})
+
+	t.Run("key whose file name is too long is skipped", func(t *testing.T) {
+		// such a key reached the database, and its failed commit stopped startup
+		st, err := New(Config{Path: filepath.Join(t.TempDir(), ".history")})
+		require.NoError(t, err)
+		long := "app/" + strings.Repeat("k", 300)
+		res, err := st.Sync(map[string]KeyValue{long: {Value: []byte("v"), Format: "text"}, "ok": {Value: []byte("1"), Format: "text"}})
+		require.NoError(t, err)
+		assert.Equal(t, SyncResult{Updated: 1, Skipped: 1}, res)
+
+		all, err := st.ReadAll()
+		require.NoError(t, err)
+		assert.Equal(t, map[string]KeyValue{"ok": {Value: []byte("1"), Format: "text"}}, all)
 	})
 
 	t.Run("keys git cannot store are skipped and their files kept", func(t *testing.T) {

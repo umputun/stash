@@ -33,7 +33,7 @@ var opts struct {
 		Remote  string `long:"remote" env:"REMOTE" description:"git remote name (optional)"`
 		URL     string `long:"url" env:"URL" description:"git remote URL; the local repository becomes a clone of it"`
 		Push    bool   `long:"push" env:"PUSH" description:"auto-push after commits"`
-		SSHKey  string `long:"ssh-key" env:"SSH_KEY" description:"SSH private key path for git push"`
+		SSHKey  string `long:"ssh-key" env:"SSH_KEY" description:"SSH private key path for git clone, pull and push"`
 	} `group:"git" namespace:"git" env-namespace:"STASH_GIT"`
 
 	Server struct {
@@ -526,7 +526,7 @@ func syncGit(ctx context.Context, kv *store.Store, gs *git.Store) error {
 	if err != nil {
 		return fmt.Errorf("git sync failed: %w", err)
 	}
-	log.Printf("[INFO] git sync: %d keys committed, %d deleted", res.Updated, res.Deleted)
+	log.Printf("[INFO] git sync: %d keys committed, %d deleted, %d skipped", res.Updated, res.Deleted, res.Skipped)
 	return nil
 }
 

@@ -187,7 +187,8 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - `main.go` builds `want` from `rawStore.List` + `rawStore.GetWithFormat` (decrypted secrets, opaque ZK)
 - any DB read error aborts startup, including a secret that cannot be decrypted because `--secrets.key` is missing; a partial `want` would make the sync incomplete, so stash refuses to start instead
 - deletion decisions use key presence only: a key in HEAD but absent from `want` is deleted without decoding its value, so stale encrypted secrets are removed too
-- for keys present on both sides, the HEAD value is decoded and compared with `want`; a decode failure aborts startup
+- for keys present on both sides, the HEAD value is decoded and compared with `want`; a value that does not decode (secrets key rotated) is overwritten with the database value (revised after review round 1; originally a decode failure aborted startup)
+- a key whose commit fails with ENAMETOOLONG is skipped and counted; any other commit or delete failure aborts startup (added after review round 1)
 - Sync itself drops keys that `validateKey` rejects, from `want` and from the HEAD deletion candidates alike (old repos can hold keys written by earlier versions that the stricter check now refuses; Sync leaves those files alone; rejected means `.git` or `.` path parts or control characters, see Task 2) and logs one warning listing them; they can never be stored in git, stay DB-only and cannot be recovered from it. This differs from an unreadable supported key, which still aborts startup because it is unknown data, not a known exclusion
 - so the guarantee is: once a push succeeds, the remote matches every database key git can represent
 - the unreadable-secret abort applies to url mode only; without `--git.url` there is no startup sync

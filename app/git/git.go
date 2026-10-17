@@ -10,12 +10,16 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
@@ -28,6 +32,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"golang.org/x/net/proxy"
 
 	"github.com/umputun/stash/app/store"
 	"github.com/umputun/stash/lib/stash"
@@ -516,22 +521,78 @@ func (s *Store) PushContext(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	auth, err := s.auth(s.remoteURL())
+	remoteURL := s.remoteURL()
+	auth, err := s.auth(remoteURL)
 	if err != nil {
 		return err
 	}
 
-	err = s.repo.PushContext(ctx, &git.PushOptions{
+	opts := &git.PushOptions{
 		RemoteName: s.cfg.Remote,
 		Auth:       auth,
 		RefSpecs: []config.RefSpec{
 			config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", s.cfg.Branch, s.cfg.Branch)),
 		},
-	})
+	}
+	// go-git dials ssh and runs its handshake without the context, so a remote that accepts and
+	// never answers would hold s.mu forever; the deadline reaches the connection through a proxy dialer
+	if deadline, ok := ctx.Deadline(); ok && s.isSSH(remoteURL) {
+		registerDeadlineDialer.Do(func() { proxy.RegisterDialerType(deadlineScheme, newDeadlineDialer) })
+		opts.ProxyOptions = transport.ProxyOptions{URL: fmt.Sprintf("%s://push?deadline=%d", deadlineScheme, deadline.UnixNano())}
+	}
+
+	err = s.repo.PushContext(ctx, opts)
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return fmt.Errorf("failed to push: %w", err)
 	}
 	return nil
+}
+
+// isSSH reports whether remoteURL is reached over ssh.
+func (s *Store) isSSH(remoteURL string) bool {
+	ep, err := transport.NewEndpoint(remoteURL)
+	return err == nil && ep.Protocol == "ssh"
+}
+
+// deadlineScheme is the proxy scheme PushContext routes ssh pushes through.
+const deadlineScheme = "stash-deadline"
+
+// registerDeadlineDialer registers deadlineScheme once; the proxy registry is not safe for concurrent writes.
+var registerDeadlineDialer sync.Once
+
+// newDeadlineDialer builds a deadlineDialer from a deadlineScheme URL carrying the deadline in Unix nanoseconds.
+func newDeadlineDialer(u *url.URL, _ proxy.Dialer) (proxy.Dialer, error) {
+	ns, err := strconv.ParseInt(u.Query().Get("deadline"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid push deadline in %q: %w", u, err)
+	}
+	return deadlineDialer{deadline: time.Unix(0, ns)}, nil
+}
+
+// deadlineDialer dials through the environment's proxy settings, as go-git does without one, and
+// sets the deadline on the connection so the handshake and the transfer end with it.
+type deadlineDialer struct {
+	deadline time.Time
+}
+
+// Dial dials addr bounded by the deadline.
+func (d deadlineDialer) Dial(network, addr string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, addr)
+}
+
+// DialContext dials addr bounded by ctx and the deadline, and sets the deadline on the connection.
+func (d deadlineDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithDeadline(ctx, d.deadline)
+	defer cancel()
+	conn, err := proxy.Dial(ctx, network, addr)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s: %w", addr, err)
+	}
+	if err := conn.SetDeadline(d.deadline); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("set deadline on %s: %w", addr, err)
+	}
+	return conn, nil
 }
 
 // Head returns the current HEAD commit hash as a short string
@@ -648,12 +709,14 @@ func (s *Store) ReadAll() (map[string]KeyValue, error) {
 type SyncResult struct {
 	Updated int // keys committed with a new value or format
 	Deleted int // keys removed because the database no longer has them
+	Skipped int // keys whose file name the filesystem cannot hold
 }
 
 // Sync commits the differences between want, the full set of database values, and the HEAD tree,
 // one commit per key authored by DefaultAuthor. Keys the repository cannot hold (see validateKey)
-// are left alone on both sides. A key present on both sides whose stored value cannot be decoded
-// is an error; a stored key absent from want is deleted without decoding it.
+// are left alone on both sides, and a key whose file name is too long for the filesystem is skipped.
+// A stored value that cannot be decoded is overwritten with want's; a stored key absent from want is
+// deleted without decoding it.
 func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -696,21 +759,27 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error) {
 		if kv.Format == "" {
 			kv.Format = "text"
 		}
+		// a stored value that does not decode, such as a secret encrypted with a rotated-out key,
+		// is replaced by the database value rather than stopping the sync
 		if content, ok := stored[key]; ok {
 			current, decErr := s.decodeValue(key, content)
-			if decErr != nil {
-				return res, fmt.Errorf("sync %q: %w", key, decErr)
-			}
 			format, found := formats[key]
 			if !found {
 				format = "text"
 			}
-			if bytes.Equal(current, kv.Value) && format == kv.Format {
+			if decErr == nil && bytes.Equal(current, kv.Value) && format == kv.Format {
 				continue
 			}
 		}
 		req := CommitRequest{Key: key, Value: kv.Value, Operation: "sync", Format: kv.Format, Author: DefaultAuthor()}
-		if err := s.commitLocked(req); err != nil {
+		err := s.commitLocked(req)
+		if errors.Is(err, syscall.ENAMETOOLONG) {
+			// the value file is written before staging, so nothing of this key reaches the next commit
+			log.Printf("[WARN] git sync skipped %q: its file name is too long for the filesystem", key)
+			res.Skipped++
+			continue
+		}
+		if err != nil {
 			return res, fmt.Errorf("sync %q: %w", key, err)
 		}
 		res.Updated++
