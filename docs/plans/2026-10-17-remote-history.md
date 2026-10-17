@@ -188,7 +188,7 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - any DB read error aborts startup, including a secret that cannot be decrypted because `--secrets.key` is missing; a partial `want` would make the sync incomplete, so stash refuses to start instead
 - deletion decisions use key presence only: a key in HEAD but absent from `want` is deleted without decoding its value, so stale encrypted secrets are removed too
 - for keys present on both sides, the HEAD value is decoded and compared with `want`; a decode failure aborts startup
-- Sync itself drops keys that `validateKey` rejects, from `want` and from the HEAD deletion candidates alike (old repos can hold control-character keys written by earlier versions; Sync leaves those files alone) (inside the top-level `.git` directory or with control characters, see Task 2) and logs one warning listing them; they can never be stored in git, stay DB-only and cannot be recovered from it. This differs from an unreadable supported key, which still aborts startup because it is unknown data, not a known exclusion
+- Sync itself drops keys that `validateKey` rejects, from `want` and from the HEAD deletion candidates alike (old repos can hold keys written by earlier versions that the stricter check now refuses; Sync leaves those files alone; rejected means `.git` or `.` path parts or control characters, see Task 2) and logs one warning listing them; they can never be stored in git, stay DB-only and cannot be recovered from it. This differs from an unreadable supported key, which still aborts startup because it is unknown data, not a known exclusion
 - so the guarantee is: once a push succeeds, the remote matches every database key git can represent
 - the unreadable-secret abort applies to url mode only; without `--git.url` there is no startup sync
 - Sync runs before the HTTP listener starts; it does not push itself, the worker's initial attempt does, so an unreachable remote never blocks startup
@@ -213,10 +213,11 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 **Files:**
 - Modify: `app/git/git.go`, `app/git/git_test.go`
 
-- [ ] write failing tests: `validateKey` rejects `.git/x`, `.git/hooks/x`, `./.git/x` (web create accepts it, `NormalizeKey` keeps `./`), `.GIT/x`, and keys with `\n`, `\r` or other control characters; still accepts bare `.git` (stored as `.git.val`, an ordinary file), `.github/x` and nested `a/.git/x`
-- [ ] in `validateKey`, reject control characters, then clean the storage path `keyToPath(key)` and reject it when it has more than one segment and its first segment equals `.git` case-insensitively (covers case-insensitive filesystems)
-- [ ] the database still accepts such keys (no API change); git commit for them fails with the validation error and is logged as today
-- [ ] run tests - must pass before next task
+- [x] write failing tests: `validateKey` rejects `.git/x`, `.git/hooks/x`, `./.git/x` (web create accepts it, `NormalizeKey` keeps `./`), `.GIT/x`, nested `a/.git/x`, `.` parts (`a/./b` aliased key `a/b`), and keys with `\n`, `\r`, NUL, tab or DEL; still accepts bare `.git` and `a/.git` (stored as `.git.val`, an ordinary file), `.github/x`, `.gitignore`
+- [x] in `validateKey`, reject control characters, then reject any non-final part of `keyToPath(key)` equal to `.` or to `.git` case-insensitively; this mirrors go-git's own worktree rules (`worktree_fs.go` `validPath`), which today refuse these keys only at staging, after the value file is written
+- [x] the database still accepts such keys (no API change); git commit for them fails with the validation error and is logged as today
+- [x] run tests - must pass before next task
+- ⚠️ the plan first said nested `a/.git/x` stays allowed; go-git already refuses it at staging, so it is rejected up front. go-git's HFS/NTFS look-alikes of `.git` (internal package, not importable) are not mirrored and still fail at staging
 
 ### Task 3: Record format-only changes (both modes)
 

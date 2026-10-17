@@ -423,6 +423,28 @@ func TestStore_PathTraversal(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects keys inside the metadata directory or with control characters", func(t *testing.T) {
+		// keys under .git wrote into repository metadata, and a newline in a key could forge commit message lines
+		tmpDir := t.TempDir()
+		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
+		require.NoError(t, err)
+
+		invalidKeys := []string{".git/x", ".git/hooks/x", "./.git/x", ".GIT/x", ".Git/config", "a/.git/x", "a/./b", "./x",
+			"x\nkey: y", "x\rformat: json", "a\x00b", "tab\there", "del\x7f"}
+		for _, key := range invalidKeys {
+			err = store.Commit(CommitRequest{Key: key, Value: []byte("v"), Operation: "set", Author: DefaultAuthor()})
+			require.Error(t, err, "should reject key: %q", key)
+			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
+
+			err = store.Delete(key, DefaultAuthor())
+			require.Error(t, err, "delete should reject key: %q", key)
+			assert.Contains(t, err.Error(), "invalid key", "key: %q", key)
+		}
+
+		_, statErr := os.Stat(filepath.Join(tmpDir, ".history", ".git", "x.val"))
+		assert.True(t, os.IsNotExist(statErr))
+	})
+
 	t.Run("allows valid nested keys", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		store, err := New(Config{Path: filepath.Join(tmpDir, ".history")})
@@ -433,6 +455,11 @@ func TestStore_PathTraversal(t *testing.T) {
 			"app/config/db",
 			"deeply/nested/path/to/key",
 			"single",
+			".git",
+			"a/.git",
+			".github/workflow",
+			".gitignore",
+			"a/b.git/c",
 		}
 
 		for _, key := range validKeys {

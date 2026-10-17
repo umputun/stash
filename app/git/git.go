@@ -778,6 +778,20 @@ func (s *Store) validateKey(key string) error {
 		return errors.New("invalid key: path traversal not allowed")
 	}
 
+	// a newline would let a key forge the key: and format: lines of a commit message
+	if strings.IndexFunc(key, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return errors.New("invalid key: control characters not allowed")
+	}
+
+	// mirrors go-git's worktree path rules, which refuse these at staging after the file is written;
+	// "." would also make two keys share one file. The last part always ends in .val
+	parts := strings.Split(s.keyToPath(key), "/")
+	for _, part := range parts[:len(parts)-1] {
+		if part == "." || strings.EqualFold(part, ".git") {
+			return fmt.Errorf("invalid key: path component %q not allowed", part)
+		}
+	}
+
 	// double-check: resolved path must be within repo
 	filePath := filepath.Join(s.cfg.Path, s.keyToPath(key))
 	absPath, err := filepath.Abs(filePath)
