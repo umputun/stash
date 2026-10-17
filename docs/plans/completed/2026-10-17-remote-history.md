@@ -314,7 +314,8 @@ func (s *Store) Sync(want map[string]KeyValue) (SyncResult, error)
 - [x] README: SSH remote setup (key, ssh-agent fallback, known_hosts requirement in containers), the branch requirement for a non-empty remote, and that hand edits on the remote without a `key:` line do not show in History
 - [x] site/ docs mirror of the README git section, if present (site/ holds no markdown copy of the README sections; nothing to mirror)
 - [x] CLAUDE.md: git storage notes (format-only empty commits and key-line history selection, Record lock, url mode)
-- [ ] move this plan to `docs/plans/completed/`
+- [x] move this plan to `docs/plans/completed/`
+- ➕ revmux loop: round 1 (comprehensive) 3 major + 1 minor, round 2 (final) 1 major, round 3 (final) 0 gating + 1 minor; all fixed (ssh push deadline dialer, startup sync skips keys whose value files the filesystem cannot hold, old-key secrets replaced from the DB, empty directories removed on delete)
 
 ## Post-Completion
 *Items requiring manual intervention or external systems - no checkboxes, informational only*
