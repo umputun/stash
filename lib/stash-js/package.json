@@ -50,7 +50,7 @@
     "@types/node": "^26.6.5",
     "eslint": "^10.13.0",
     "tsup": "^9.0.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.2",
     "vitest": "^5.0.5"
   },
