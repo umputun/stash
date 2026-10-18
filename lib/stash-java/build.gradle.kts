@@ -2,7 +2,7 @@ plugins {
     `java-library`
     `maven-publish`
     signing
-    id("com.vanniktech.maven.publish") version "0.30.0"
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 group = "io.github.umputun"
@@ -19,16 +19,17 @@ java {
 
 dependencies {
     // json parsing
-    implementation("com.google.code.gson:gson:2.11.0")
+    implementation("com.google.code.gson:gson:2.14.0")
 
     // argon2id key derivation
-    implementation("org.bouncycastle:bcprov-jdk18on:1.79")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 
     // testing
-    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
-    testImplementation("org.assertj:assertj-core:3.27.3")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
+    testImplementation("org.assertj:assertj-core:3.27.7")
 }
 
 tasks.test {
@@ -40,7 +41,7 @@ tasks.test {
 
 // Vanniktech plugin for Maven Central publishing
 mavenPublishing {
-    publishToMavenCentral(com.vanniktech.maven.publish.SonatypeHost.CENTRAL_PORTAL)
+    publishToMavenCentral()
     signAllPublications()
 
     coordinates(group.toString(), "stash-client", version.toString())
