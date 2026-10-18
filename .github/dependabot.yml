@@ -25,6 +25,10 @@ updates:
       stash-js:
         patterns:
           - "*"
+    ignore:
+      # typescript-eslint supports typescript below 6.1 only
+      - dependency-name: typescript
+        versions: [">=7"]
 
   - package-ecosystem: cargo
     directory: /lib/stash-rust
@@ -35,6 +39,12 @@ updates:
       stash-rust:
         patterns:
           - "*"
+    ignore:
+      # 0.5 and 0.9 need reqwest 0.13, reqwest-eventsource 0.6 still needs reqwest 0.12
+      - dependency-name: reqwest-middleware
+        versions: [">=0.5"]
+      - dependency-name: reqwest-retry
+        versions: [">=0.8"]
 
   - package-ecosystem: gradle
     directory: /lib/stash-java
@@ -45,3 +55,7 @@ updates:
       stash-java:
         patterns:
           - "*"
+    ignore:
+      # junit 6 requires java 17, the library targets java 11
+      - dependency-name: org.junit:junit-bom
+        versions: [">=6"]
