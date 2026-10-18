@@ -9,7 +9,7 @@ use aes_gcm::{
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rand::RngCore;
+use rand::Rng;
 use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroizing;
 
@@ -66,7 +66,7 @@ impl ZKCrypto {
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<String, Error> {
         // generate random salt
         let mut salt = [0u8; ZK_SALT_SIZE];
-        rand::thread_rng().fill_bytes(&mut salt);
+        rand::rng().fill_bytes(&mut salt);
 
         // derive key using argon2id
         let key = self.derive_key(&salt)?;
@@ -77,12 +77,12 @@ impl ZKCrypto {
 
         // generate random nonce
         let mut nonce_bytes = [0u8; ZK_NONCE_SIZE];
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        rand::rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         // encrypt using GCM (includes authentication tag)
         let ciphertext = cipher
-            .encrypt(nonce, plaintext)
+            .encrypt(&nonce, plaintext)
             .map_err(|e| Error::Decryption(format!("encryption failed: {}", e)))?;
 
         // combine: salt || nonce || ciphertext (with tag appended)
@@ -126,10 +126,11 @@ impl ZKCrypto {
         let cipher = Aes256Gcm::new_from_slice(&key)
             .map_err(|e| Error::Decryption(format!("create cipher: {}", e)))?;
 
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes)
+            .map_err(|_| Error::Decryption("invalid nonce size".to_string()))?;
 
         // decrypt
-        let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|_| {
+        let plaintext = cipher.decrypt(&nonce, ciphertext).map_err(|_| {
             Error::Decryption("decryption failed (wrong key or corrupted data)".to_string())
         })?;
 
