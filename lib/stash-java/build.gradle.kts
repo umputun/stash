@@ -19,7 +19,7 @@ java {
 
 dependencies {
     // json parsing
-    implementation("com.google.code.gson:gson:2.14.0")
+    implementation("com.google.code.gson:gson:2.15.0")
 
     // argon2id key derivation
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
@@ -28,7 +28,7 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.1")
     testImplementation("org.assertj:assertj-core:3.27.7")
 }
 
